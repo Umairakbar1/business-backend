@@ -1,0 +1,52 @@
+{
+  "name": "soberin40",
+  "version": "1.0.0",
+  "description": "",
+  "main": "app.js",
+  "scripts": {
+    "start": "node src/app.js",
+    "nodemon": "nodemon src/app.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "type": "module",
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@instructor-ai/instructor": "^1.2.1",
+    "@sendgrid/mail": "^8.1.0",
+    "aws-sdk": "^2.1537.0",
+    "bcryptjs": "^2.4.3",
+    "body-parser": "^1.20.2",
+    "compression": "^1.7.4",
+    "cors": "^2.8.5",
+    "dotenv": "^16.3.1",
+    "express": "^4.18.2",
+    "helmet": "^7.1.0",
+    "joi": "^17.11.0",
+    "jsonwebtoken": "^9.0.2",
+    "moment": "^2.30.1",
+    "moment-timezone": "^0.5.44",
+    "mongoose": "^8.0.3",
+    "morgan": "^1.10.0",
+    "multer": "^1.4.5-lts.1",
+    "multer-s3": "^2.10.0",
+    "nodemailer": "^6.9.8",
+    "nodemon": "^3.1.4",
+    "openai": "^4.38.3",
+    "path": "^0.12.7",
+    "randomstring": "^1.3.0",
+    "rate-limiter-flexible": "^4.0.0",
+    "sharp": "^0.32.6",
+    "socket.io": "^4.7.5",
+    "stripe": "^14.19.0",
+    "swagger-jsdoc": "^6.2.8",
+    "swagger-ui-express": "^5.0.0",
+    "twilio": "^5.0.0-rc.1",
+    "uuid": "^9.0.1",
+    "zod": "^3.23.3"
+  },
+  "devDependencies": {
+    "swagger-autogen": "^2.23.7"
+  },
+  "packageManager": "yarn@4.3.0+sha512.1606bef7c84bc7d83b8576063de2fd08f7d69f9939015bed800f9585a002390268ecc777e9feeba7e26e9556aef6beaad4806968db2182ab5dd3e955ab3b9a0b"
+}
