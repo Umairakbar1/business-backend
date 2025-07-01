@@ -38,8 +38,7 @@ const loginAdmin = async (req, res) => {
     });
 };
 
-
 export {
     loginAdmin,
-    createAdmin
+    createAdmin,
 };

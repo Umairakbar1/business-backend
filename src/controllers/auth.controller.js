@@ -438,13 +438,6 @@ const updateNotificationsSettings = async (req, res) => {
   return successResponseHelper(res, user);
 }
 
-
-const getAllEnums = async (req, res) => {
-  return successResponseHelper(res, globalEnums);
-}
-
-
-
 const deleteProfile = async (req, res) => {
 
   const { _id } = req.user;
@@ -472,7 +465,6 @@ export {
   verifyOtpOnEmail,
   getPersonalQuestions,
   updateNotificationsSettings,
-  getAllEnums,
   preAccountCreation,
   syncAssessmentUser,
   deleteProfile

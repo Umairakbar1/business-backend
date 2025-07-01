@@ -1,10 +1,8 @@
-import Blog from '../../models/blog.model.js';
-import { asyncHandler } from '../../utils/asyncHandler.js';
-import { ApiError } from '../../utils/ApiError.js';
-import { ApiResponse } from '../../utils/ApiResponse.js';
+import Blog from '../../models/admin/blog.js';
 import { errorResponse, successResponseHelper } from '../../helpers/utilityHelper.js';
+
 // Create a new blog post
-const createBlog = asyncHandler(async (req, res) => {
+const createBlog = async (req, res) => {
     const { title, content, author, tags, status = 'draft' } = req.body;
 
     if (!title || !content || !author) {
@@ -21,10 +19,10 @@ const createBlog = asyncHandler(async (req, res) => {
     });
 
     return successResponseHelper(res, 201, "Blog post created successfully", blog);
-});
+};
 
 // Get all blog posts with pagination and filtering
-const getAllBlogs = asyncHandler(async (req, res) => {
+const getAllBlogs = async (req, res) => {
     const { page = 1, limit = 10, status, author, search } = req.query;
     
     const query = {};
@@ -58,10 +56,10 @@ const getAllBlogs = asyncHandler(async (req, res) => {
             }
         }
     );
-});
+};
 
 // Get a single blog post by ID
-const getBlogById = asyncHandler(async (req, res) => {
+const getBlogById = async (req, res) => {
     const { id } = req.params;
 
     const blog = await Blog.findById(id).populate('author', 'username email');
@@ -71,10 +69,10 @@ const getBlogById = asyncHandler(async (req, res) => {
     }
 
     return successResponseHelper(res, 200, "Blog post retrieved successfully", blog);
-});
+};
 
 // Update a blog post
-const updateBlog = asyncHandler(async (req, res) => {
+const updateBlog = async (req, res) => {
     const { id } = req.params;
     const { title, content, author, tags, status } = req.body;
 
@@ -102,10 +100,10 @@ const updateBlog = asyncHandler(async (req, res) => {
     await blog.save();
 
     return successResponseHelper(res, 200, "Blog post updated successfully", blog);
-});
+};
 
 // Delete a blog post
-const deleteBlog = asyncHandler(async (req, res) => {
+const deleteBlog = async (req, res) => {
     const { id } = req.params;
 
     const blog = await Blog.findByIdAndDelete(id);
@@ -115,10 +113,10 @@ const deleteBlog = asyncHandler(async (req, res) => {
     }
 
     return successResponseHelper(res, 200, "Blog post deleted successfully");
-});
+};
 
 // Publish a blog post
-const publishBlog = asyncHandler(async (req, res) => {
+const publishBlog = async (req, res) => {
     const { id } = req.params;
 
     const blog = await Blog.findById(id);
@@ -135,10 +133,10 @@ const publishBlog = asyncHandler(async (req, res) => {
     return res.status(200).json(
         new ApiResponse(200, blog, "Blog post published successfully")
     );
-});
+};
 
 // Unpublish a blog post
-const unpublishBlog = asyncHandler(async (req, res) => {
+const unpublishBlog = async (req, res) => {
     const { id } = req.params;
 
     const blog = await Blog.findById(id);
@@ -155,10 +153,10 @@ const unpublishBlog = asyncHandler(async (req, res) => {
     return res.status(200).json(
         new ApiResponse(200, blog, "Blog post unpublished successfully")
     );
-});
+};
 
 // Get blog statistics
-const getBlogStats = asyncHandler(async (req, res) => {
+const getBlogStats = async (req, res) => {
     const totalBlogs = await Blog.countDocuments();
     const publishedBlogs = await Blog.countDocuments({ status: 'published' });
     const draftBlogs = await Blog.countDocuments({ status: 'draft' });
@@ -178,7 +176,7 @@ const getBlogStats = asyncHandler(async (req, res) => {
     return res.status(200).json(
         new ApiResponse(200, stats, "Blog statistics retrieved successfully")
     );
-});
+};
 
 export {
     createBlog,
