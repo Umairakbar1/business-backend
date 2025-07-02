@@ -2,6 +2,7 @@ import { GLOBAL_ENUMS, GLOBAL_MESSAGES } from "../../config/globalConfig.js";
 import { signAccessTokenAdmin } from "../../helpers/jwtHelper.js";
 import { asyncWrapper, errorResponseHelper, serverErrorHelper, successResponseHelper } from "../../helpers/utilityHelper.js";
 import { AdminModal } from "../../models/index.js";
+import Admin from "../../models/admin/admin.js";
 
 
 const createAdmin = async (req, res) => {
@@ -38,7 +39,41 @@ const loginAdmin = async (req, res) => {
     });
 };
 
+const updateAdminProfile = async (req, res) => {
+    const adminId = req.user._id; // assuming req.user is set by auth middleware
+    const { firstName, lastName, phone, address, country, state, zip } = req.body;
+    const [admin, error] = await asyncWrapper(() =>
+        Admin.findByIdAndUpdate(
+            adminId,
+            { $set: { firstName, lastName, phone, address, country, state, zip } },
+            { new: true }
+        )
+    );
+    if (error) return serverErrorHelper(req, res, 500, error);
+    if (!admin) return errorResponseHelper(res, "Admin not found");
+    return successResponseHelper(res, { admin });
+};
+
+const updateAdminPassword = async (req, res) => {
+    const adminId = req.user._id; // assuming req.user is set by auth middleware
+    const { currentPassword, newPassword } = req.body;
+    const [admin, error] = await asyncWrapper(() =>
+        Admin.findById(adminId).select("+password")
+    );
+    if (error) return serverErrorHelper(req, res, 500, error);
+    if (!admin) return errorResponseHelper(res, "Admin not found");
+    if (admin.password !== currentPassword) {
+        return errorResponseHelper(res, "Current password is incorrect");
+    }
+    admin.password = newPassword;
+    const [updatedAdmin, saveError] = await asyncWrapper(() => admin.save());
+    if (saveError) return serverErrorHelper(req, res, 500, saveError);
+    return successResponseHelper(res, { message: "Password updated successfully" });
+};
+
 export {
     loginAdmin,
     createAdmin,
+    updateAdminProfile,
+    updateAdminPassword,
 };

@@ -389,7 +389,20 @@ const queryTicketUpdateValidator = queryTicketValidator.fork(
   (schema) => schema.optional()
 );
 
-module.exports = {
+export const validatePlan = (data) => {
+    const schema = Joi.object({
+        title: Joi.string().required(),
+        price: Joi.number().positive().required(),
+        duration: Joi.string().valid("day", "week", "month", "year").required(),
+        planType: Joi.string().optional(),
+        permission: Joi.array().items(Joi.string()).optional(),
+        status: Joi.string().valid("active", "inactive").optional(),
+        currency: Joi.string().default("usd").optional(),
+    });
+    return schema.validate(data);
+};
+
+export {
   categoryValidator,
   subCategoryValidator,
   categoryUpdateValidator,
@@ -397,5 +410,6 @@ module.exports = {
   blogValidator,
   queryTicketValidator,
   blogUpdateValidator,
-  queryTicketUpdateValidator
+  queryTicketUpdateValidator,
+  validatePlan
 };

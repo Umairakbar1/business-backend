@@ -1,5 +1,5 @@
 import mongoose from "mongoose";
-const { Schema, model } = mongoose;
+
 
 const PlanSchema = new mongoose.Schema({
     title: { type: String, required: true },
@@ -13,7 +13,7 @@ const PlanSchema = new mongoose.Schema({
 }, {
     timestamps: true,
 });
-  
-const Plan = model('Plan', PlanSchema);
+
+const Plan = mongoose.model('Plan', PlanSchema);
+
 export default Plan;
-  
