@@ -1,5 +1,5 @@
 import { CourseModal, OrdersModal, PersonalQuestionContentModal, UserModal } from "../../models/index.js";
-import { GLOBAL_ENUMS, GLOBAL_MESSAGES } from "../../config/globalConfig.js";
+import { GLOBAL_ENUMS, GLOBAL_MESSAGES } from "../config/globalConfig.js";
 import {
   serverErrorHelper,
   asyncWrapper,

@@ -10,7 +10,7 @@ import { GLOBAL_MESSAGES } from "../config/globalConfig.js";
 // import swaggerJson from "../../swagger-output.json" assert { type: "json" };
 import swaggerJson from "../../swagger-output.json" with { type: "json" };
 import swaggerUi from "swagger-ui-express"
-import { handleStripeWebhook } from "../helpers/stripeHelper.js";
+// import { handleStripeWebhook } from "../helpers/stripeHelper.js";
 
 export default (app) => {
   process.on("uncaughtException", async (error) => {
@@ -55,7 +55,7 @@ export default (app) => {
     return res.status(200).json(GLOBAL_MESSAGES.serverStatus).end();
   });
 
-  app.post('/webhook', express.raw({ type: 'application/json' }), handleStripeWebhook);  // Add the webhook route
+  // app.post('/webhook', express.raw({ type: 'application/json' }), handleStripeWebhook);  // Add the webhook route
 
   app.use((req, res, next) => {
     res.header("Access-Control-Allow-Origin", "*");

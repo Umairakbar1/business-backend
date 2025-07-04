@@ -1,12 +1,12 @@
 import Blog from '../../models/admin/blog.js';
-import { errorResponse, successResponseHelper } from '../../helpers/utilityHelper.js';
+import { errorResponseHelper, successResponseHelper } from '../../helpers/utilityHelper.js';
 
 // Create a new blog post
 const createBlog = async (req, res) => {
     const { title, content, author, tags, status = 'draft' } = req.body;
 
     if (!title || !content || !author) {
-        return errorResponse(res, 400, "Title, content, and author are required");
+        return errorResponseHelper(res, 400, "Title, content, and author are required");
     }
 
     const blog = await Blog.create({
@@ -65,7 +65,7 @@ const getBlogById = async (req, res) => {
     const blog = await Blog.findById(id).populate('author', 'username email');
 
     if (!blog) {
-        return errorResponse(res, 404, "Blog post not found");
+        return errorResponseHelper(res, 404, "Blog post not found");
     }
 
     return successResponseHelper(res, 200, "Blog post retrieved successfully", blog);
@@ -79,7 +79,7 @@ const updateBlog = async (req, res) => {
     const blog = await Blog.findById(id);
 
     if (!blog) {
-        return errorResponse(res, 404, "Blog post not found");
+        return errorResponseHelper(res, 404, "Blog post not found");
     }
 
     // Update fields if provided
@@ -109,7 +109,7 @@ const deleteBlog = async (req, res) => {
     const blog = await Blog.findByIdAndDelete(id);
 
     if (!blog) {
-        return errorResponse(res, 404, "Blog post not found");
+        return errorResponseHelper(res, 404, "Blog post not found");
     }
 
     return successResponseHelper(res, 200, "Blog post deleted successfully");

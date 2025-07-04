@@ -42,7 +42,7 @@ const serverErrorHelper = (req, res, code, error) => {
   });
 };
 
-const errorResponse = (res, error) => {
+const errorResponseHelper = (res, error) => {
   console.log("@errorResponseLog", error);
   let message = "client side error.";
   let code = "00005";
@@ -113,7 +113,7 @@ const asyncWrapper = async (_callBack = async () => false) => {
 
 export {
   serverErrorHelper,
-  errorResponse,
+  errorResponseHelper,
   successResponseHelper,
   // getUniqueUserName,
   generateRandomCode,

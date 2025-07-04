@@ -1,14 +1,14 @@
 import Category from '../../models/admin/category.js';
 import SubCategory from '../../models/admin/subCategory.js';
 
-import { categorySchema } from '../../validators/admin.js';
-import { successResponseHelper, errorResponse } from '../../helpers/utilityHelper.js';
+import { categoryValidator } from '../../validators/admin.js';
+import { successResponseHelper, errorResponseHelper } from '../../helpers/utilityHelper.js';
 
 const createCategory = async (req, res) => {
   try {
-    const { error, value } = categorySchema.validate(req.body);
+    const { error, value } = categoryValidator.validate(req.body);
     if (error) {
-      return errorResponse(res, 400, error.details[0].message);
+      return errorResponseHelper(res, 400, error.details[0].message);
     }
 
     // Check if category with same name already exists
@@ -17,7 +17,7 @@ const createCategory = async (req, res) => {
     });
     
     if (existingCategory) {
-      return errorResponse(res, 400, 'Category with this name already exists');
+      return errorResponseHelper(res, 400, 'Category with this name already exists');
     }
 
     const category = new Category(value);
@@ -40,7 +40,7 @@ const createCategory = async (req, res) => {
     return successResponseHelper(res, 201, 'Category created successfully', category);
   } catch (error) {
     console.error('Create category error:', error);
-    return errorResponse(res, 500, 'Internal server error');
+    return errorResponseHelper(res, 500, 'Internal server error');
   }
 };
 
@@ -83,7 +83,7 @@ const getAllCategories = async (req, res) => {
     });
   } catch (error) {
     console.error('Get all categories error:', error);
-    return errorResponse(res, 500, 'Internal server error');
+    return errorResponseHelper(res, 500, 'Internal server error');
   }
 };
 
@@ -94,32 +94,32 @@ const getCategoryById = async (req, res) => {
     const category = await Category.findById(id).populate('parent', 'name');
     
     if (!category) {
-      return errorResponse(res, 404, 'Category not found');
+      return errorResponseHelper(res, 404, 'Category not found');
     }
 
     return successResponseHelper(res, 200, 'Category retrieved successfully', category);
   } catch (error) {
     console.error('Get category by ID error:', error);
     if (error.kind === 'ObjectId') {
-      return errorResponse(res, 400, 'Invalid category ID');
+      return errorResponseHelper(res, 400, 'Invalid category ID');
     }
-    return errorResponse(res, 500, 'Internal server error');
+    return errorResponseHelper(res, 500, 'Internal server error');
   }
 };
 
 const updateCategory = async (req, res) => {
   try {
     const { id } = req.params;
-    const { error, value } = categorySchema.validate(req.body);
+    const { error, value } = categoryValidator.validate(req.body);
     
     if (error) {
-      return errorResponse(res, 400, error.details[0].message);
+      return errorResponseHelper(res, 400, error.details[0].message);
     }
 
     // Check if category exists
     const existingCategory = await Category.findById(id);
     if (!existingCategory) {
-      return errorResponse(res, 404, 'Category not found');
+      return errorResponseHelper(res, 404, 'Category not found');
     }
 
     // Check if category with same name already exists (excluding current category)
@@ -129,12 +129,12 @@ const updateCategory = async (req, res) => {
     });
     
     if (duplicateCategory) {
-      return errorResponse(res, 400, 'Category with this name already exists');
+      return errorResponseHelper(res, 400, 'Category with this name already exists');
     }
 
     // Prevent circular reference if updating parent
     if (value.parent && value.parent.toString() === id) {
-      return errorResponse(res, 400, 'Category cannot be its own parent');
+      return errorResponseHelper(res, 400, 'Category cannot be its own parent');
     }
 
     const updatedCategory = await Category.findByIdAndUpdate(
@@ -147,9 +147,9 @@ const updateCategory = async (req, res) => {
   } catch (error) {
     console.error('Update category error:', error);
     if (error.kind === 'ObjectId') {
-      return errorResponse(res, 400, 'Invalid category ID');
+      return errorResponseHelper(res, 400, 'Invalid category ID');
     }
-    return errorResponse(res, 500, 'Internal server error');
+    return errorResponseHelper(res, 500, 'Internal server error');
   }
 };
 
@@ -160,13 +160,13 @@ const deleteCategory = async (req, res) => {
     // Check if category exists
     const category = await Category.findById(id);
     if (!category) {
-      return errorResponse(res, 404, 'Category not found');
+      return errorResponseHelper(res, 404, 'Category not found');
     }
 
     // Check if category has children
     const hasChildren = await Category.findOne({ parent: id });
     if (hasChildren) {
-      return errorResponse(res, 400, 'Cannot delete category with subcategories. Please move or delete subcategories first.');
+      return errorResponseHelper(res, 400, 'Cannot delete category with subcategories. Please move or delete subcategories first.');
     }
 
     // Check if category has subcategories
@@ -175,7 +175,7 @@ const deleteCategory = async (req, res) => {
     // const subcategoryIds = subcategories.map(sub => sub._id);
     // const hasProducts = await Product.findOne({ subcategory: { $in: subcategoryIds } });
     // if (hasProducts) {
-    //   return errorResponse(res, 400, 'Cannot delete category that has subcategories being used by products');
+    //   return errorResponseHelper(res, 400, 'Cannot delete category that has subcategories being used by products');
     // }
 
     // Delete all subcategories first
@@ -185,7 +185,7 @@ const deleteCategory = async (req, res) => {
 
     // const hasProducts = await Product.findOne({ category: id });
     // if (hasProducts) {
-    //   return errorResponse(res, 400, 'Cannot delete category that is being used by products');
+    //   return errorResponseHelper(res, 400, 'Cannot delete category that is being used by products');
     // }
 
     await Category.findByIdAndDelete(id);
@@ -194,9 +194,9 @@ const deleteCategory = async (req, res) => {
   } catch (error) {
     console.error('Delete category error:', error);
     if (error.kind === 'ObjectId') {
-      return errorResponse(res, 400, 'Invalid category ID');
+      return errorResponseHelper(res, 400, 'Invalid category ID');
     }
-    return errorResponse(res, 500, 'Internal server error');
+    return errorResponseHelper(res, 500, 'Internal server error');
   }
 };
 
@@ -219,7 +219,7 @@ const getCategoryHierarchy = async (req, res) => {
     return successResponseHelper(res, 200, 'Category hierarchy retrieved successfully', hierarchy);
   } catch (error) {
     console.error('Get category hierarchy error:', error);
-    return errorResponse(res, 500, 'Internal server error');
+    return errorResponseHelper(res, 500, 'Internal server error');
   }
 };
 
@@ -228,11 +228,11 @@ const bulkUpdateStatus = async (req, res) => {
     const { categoryIds, status } = req.body;
 
     if (!categoryIds || !Array.isArray(categoryIds) || categoryIds.length === 0) {
-      return errorResponse(res, 400, 'Category IDs array is required');
+      return errorResponseHelper(res, 400, 'Category IDs array is required');
     }
 
     if (!['active', 'inactive'].includes(status)) {
-      return errorResponse(res, 400, 'Status must be either "active" or "inactive"');
+      return errorResponseHelper(res, 400, 'Status must be either "active" or "inactive"');
     }
 
     const result = await Category.updateMany(
@@ -243,7 +243,7 @@ const bulkUpdateStatus = async (req, res) => {
     return successResponseHelper(res, 200, `Status updated for ${result.modifiedCount} categories`);
   } catch (error) {
     console.error('Bulk update status error:', error);
-    return errorResponse(res, 500, 'Internal server error');
+    return errorResponseHelper(res, 500, 'Internal server error');
   }
 };
 

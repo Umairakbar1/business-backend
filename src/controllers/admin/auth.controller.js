@@ -1,12 +1,11 @@
 import { GLOBAL_ENUMS, GLOBAL_MESSAGES } from "../../config/globalConfig.js";
 import { signAccessTokenAdmin } from "../../helpers/jwtHelper.js";
 import { asyncWrapper, errorResponseHelper, serverErrorHelper, successResponseHelper } from "../../helpers/utilityHelper.js";
-import { AdminModal } from "../../models/index.js";
-import Admin from "../../models/admin/admin.js";
+import { Admin } from "../../models/index.js";
 
 
 const createAdmin = async (req, res) => {
-    const newUser = new AdminModal({
+    const newUser = new Admin({
         profilePhoto: GLOBAL_ENUMS.defaultProfilePhoto,
         firstName: "Alex",
         lastName: "Andrew",
@@ -25,7 +24,7 @@ const createAdmin = async (req, res) => {
 const loginAdmin = async (req, res) => {
     const { email, password } = req.body;
     const [admin, error] = await asyncWrapper(() =>
-        AdminModal.findOne({ email }).select("+password")
+        Admin.findOne({ email }).select("+password")
     );
     if (error) return serverErrorHelper(req, res, 500, error);
     if (!admin) return errorResponseHelper(res, GLOBAL_MESSAGES.emailNotFound);

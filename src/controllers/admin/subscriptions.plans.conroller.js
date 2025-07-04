@@ -2,7 +2,7 @@ import Plan from "../../models/admin/subscriptionPlans.js";
 import Stripe from "stripe";
 import { asyncWrapper, errorResponseHelper, serverErrorHelper, successResponseHelper } from "../../helpers/utilityHelper.js";
 import Admin from "../../models/admin/admin.js";
-import { validatePlan } from "../../validators/admin.js";
+import { planValidator } from "../../validators/admin.js";
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 
 // Create a new subscription plan (Stripe + DB)
@@ -15,7 +15,7 @@ const createPlan = async (req, res) => {
     if (admin.role !== "admin") return errorResponseHelper(res, "Admin not found");
 
     const { title, price, duration, planType, permission, status, currency = "usd" } = req.body;
-    const { error } = validatePlan(req.body);
+    const { error } = planValidator(req.body);
     if (error) return errorResponseHelper(res, error.details[0].message);
     // Create product and price in Stripe
     let stripeProduct, stripePrice;
