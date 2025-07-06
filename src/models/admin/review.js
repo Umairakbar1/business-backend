@@ -5,7 +5,9 @@ const ReviewSchema = new mongoose.Schema({
     userId: mongoose.Schema.Types.ObjectId,
     businessId: mongoose.Schema.Types.ObjectId,
     rating: Number,
+    title: String,
     comment: String,
+    media: [String],
     createdAt: Date,
   });
   

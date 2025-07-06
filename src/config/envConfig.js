@@ -8,24 +8,40 @@ const {
   JWT_SECRET_KEY_ADMIN,
   JWT_EXPIRES_IN,
   JWT_EXPIRES_IN_ADMIN,
-  JWT_REFRESH_TOKEN_SECRET_KEY,
-  JWT_REFRESH_TOKEN_EXPIRES_IN,
-  JWT_REFRESH_TOKEN_EXPIRES_IN_ADMIN,
-  JWT_REFRESH_TOKEN_SECRET_KEY_ADMIN,
-  JWT_REFRESH_TOKEN_SECRET_KEY_USER,
-  JWT_REFRESH_TOKEN_EXPIRES_IN_USER,
-  }= process.env;
+  PORT,
+  SERVER_IP,
+  SENDGRID_API_KEY,
+  SENDGRID_EMAIL_SEND_FROM,
+  GOOGLE_CLIENT_ID,
+  GOOGLE_CLIENT_SECRET
+} = process.env;
 
 const dbUri = DB_URI;
 const jwtSecretKeyUser = JWT_SECRET_KEY;
 const jwtSecretKeyAdmin = JWT_SECRET_KEY_ADMIN;
 const jwtExpiresInUser = JWT_EXPIRES_IN;
 const jwtExpiresInAdmin = JWT_EXPIRES_IN_ADMIN;
-const jwtRefreshTokenSecretKey = JWT_REFRESH_TOKEN_SECRET_KEY;
-const jwtRefreshTokenExpiresIn = JWT_REFRESH_TOKEN_EXPIRES_IN;
-const jwtRefreshTokenExpiresInAdmin = JWT_REFRESH_TOKEN_EXPIRES_IN_ADMIN;
-const jwtRefreshTokenSecretKeyAdmin = JWT_REFRESH_TOKEN_SECRET_KEY_ADMIN;
-const jwtRefreshTokenSecretKeyUser = JWT_REFRESH_TOKEN_SECRET_KEY_USER;
-const jwtRefreshTokenExpiresInUser = JWT_REFRESH_TOKEN_EXPIRES_IN_USER;
+const port = PORT;
+const serverIP = SERVER_IP;
 
-export default {dbUri, jwtSecretKeyUser, jwtSecretKeyAdmin, jwtExpiresInUser, jwtExpiresInAdmin, jwtRefreshTokenSecretKey, jwtRefreshTokenExpiresIn, jwtRefreshTokenExpiresInAdmin, jwtRefreshTokenSecretKeyAdmin, jwtRefreshTokenSecretKeyUser, jwtRefreshTokenExpiresInUser  }
+// SendGrid Configuration
+const sendGridApiKey = SENDGRID_API_KEY;
+const sendGridEmailSendFrom = SENDGRID_EMAIL_SEND_FROM;
+
+// Google OAuth Configuration
+const googleClientId = GOOGLE_CLIENT_ID;
+const googleClientSecret = GOOGLE_CLIENT_SECRET;
+
+export default {
+  dbUri, 
+  jwtSecretKeyUser, 
+  jwtSecretKeyAdmin, 
+  jwtExpiresInUser, 
+  jwtExpiresInAdmin, 
+  port, 
+  serverIP,
+  sendGridApiKey,
+  sendGridEmailSendFrom,
+  googleClientId,
+  googleClientSecret
+}
