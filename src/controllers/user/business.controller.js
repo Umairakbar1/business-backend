@@ -22,14 +22,21 @@ export const getBusinessListings = async (req, res) => {
     if (status) filter.status = status;
     if (location) filter.location = { $regex: location, $options: 'i' };
 
-    // Aggregate to filter by average rating if needed
+    // Aggregate to filter by average rating if needed - Only approved reviews
     let pipeline = [
       { $match: filter },
       {
         $lookup: {
           from: 'reviews',
-          localField: '_id',
-          foreignField: 'businessId',
+          let: { businessId: '$_id' },
+          pipeline: [
+            {
+              $match: {
+                $expr: { $eq: ['$businessId', '$$businessId'] },
+                status: 'approved'
+              }
+            }
+          ],
           as: 'reviews',
         },
       },
@@ -87,9 +94,12 @@ export const getBusinessDetails = async (req, res) => {
     // Get all media
     const media = await Media.find({ businessId: id });
 
-    // Aggregate reviews for average and breakdown
+    // Aggregate reviews for average and breakdown - Only approved reviews
     const reviewStats = await Review.aggregate([
-      { $match: { businessId: new mongoose.Types.ObjectId(id) } },
+      { $match: { 
+        businessId: new mongoose.Types.ObjectId(id),
+        status: 'approved'
+      }},
       {
         $group: {
           _id: '$rating',
@@ -99,7 +109,10 @@ export const getBusinessDetails = async (req, res) => {
     ]);
     const totalReviews = reviewStats.reduce((sum, r) => sum + r.count, 0);
     const avgRatingAgg = await Review.aggregate([
-      { $match: { businessId: new mongoose.Types.ObjectId(id) } },
+      { $match: { 
+        businessId: new mongoose.Types.ObjectId(id),
+        status: 'approved'
+      }},
       { $group: { _id: null, avg: { $avg: '$rating' } } },
     ]);
     const avgRating = avgRatingAgg[0]?.avg || 0;
@@ -123,7 +136,7 @@ export const getBusinessDetails = async (req, res) => {
   }
 };
 
-// 3. Get reviews for a business (with pagination and sorting)
+// 3. Get reviews for a business (with pagination and sorting) - Only approved reviews
 export const getBusinessReviews = async (req, res) => {
   try {
     const { id } = req.params;
@@ -134,12 +147,20 @@ export const getBusinessReviews = async (req, res) => {
     if (sortBy === 'rating') sort.rating = -1;
     else sort.createdAt = -1;
 
-    const reviews = await Review.find({ businessId: id })
+    // Only get approved reviews for user side
+    const reviews = await Review.find({ 
+      businessId: id, 
+      status: 'approved' 
+    })
+      .populate('userId', 'name profilePhoto')
       .sort(sort)
       .skip((Number(page) - 1) * Number(limit))
       .limit(Number(limit));
 
-    const total = await Review.countDocuments({ businessId: id });
+    const total = await Review.countDocuments({ 
+      businessId: id, 
+      status: 'approved' 
+    });
 
     res.json({
       success: true,

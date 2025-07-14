@@ -1,23 +1,15 @@
 import Joi from "joi"
 const categoryValidator = Joi.object({
-  name: Joi.string()
+  title: Joi.string()
     .min(2)
-    .max(50)
+    .max(100)
     .required()
     .trim()
     .messages({
-      'string.empty': 'Category name is required',
-      'string.min': 'Category name must be at least 2 characters long',
-      'string.max': 'Category name cannot exceed 50 characters',
-      'any.required': 'Category name is required'
-    }),
-  
-  description: Joi.string()
-    .max(200)
-    .optional()
-    .trim()
-    .messages({
-      'string.max': 'Category description cannot exceed 200 characters'
+      'string.empty': 'Category title is required',
+      'string.min': 'Category title must be at least 2 characters long',
+      'string.max': 'Category title cannot exceed 100 characters',
+      'any.required': 'Category title is required'
     }),
   
   slug: Joi.string()
@@ -33,10 +25,34 @@ const categoryValidator = Joi.object({
       'any.required': 'Slug is required'
     }),
   
-  isActive: Joi.boolean()
-    .default(true)
+  description: Joi.string()
+    .max(500)
+    .optional()
+    .trim()
     .messages({
-      'boolean.base': 'isActive must be a boolean value'
+      'string.max': 'Category description cannot exceed 500 characters'
+    }),
+  
+  image: Joi.string()
+    .uri()
+    .optional()
+    .messages({
+      'string.uri': 'Image must be a valid URL'
+    }),
+  
+  status: Joi.string()
+    .valid('active', 'inactive', 'draft')
+    .default('active')
+    .messages({
+      'string.empty': 'Status is required',
+      'any.only': 'Status must be one of: active, inactive, draft'
+    }),
+  
+  color: Joi.string()
+    .pattern(/^#[0-9A-Fa-f]{6}$/)
+    .optional()
+    .messages({
+      'string.pattern.base': 'Color must be a valid hex color code (e.g., #FF0000)'
     }),
   
   sortOrder: Joi.number()
@@ -47,13 +63,6 @@ const categoryValidator = Joi.object({
       'number.base': 'Sort order must be a number',
       'number.integer': 'Sort order must be an integer',
       'number.min': 'Sort order cannot be negative'
-    }),
-  
-  image: Joi.string()
-    .uri()
-    .optional()
-    .messages({
-      'string.uri': 'Image must be a valid URL'
     }),
   
   metaTitle: Joi.string()
@@ -70,31 +79,68 @@ const categoryValidator = Joi.object({
     .trim()
     .messages({
       'string.max': 'Meta description cannot exceed 160 characters'
+    }),
+  
+  subcategories: Joi.array()
+    .items(Joi.object({
+      subCategoryName: Joi.string()
+        .min(2)
+        .max(100)
+        .optional()
+        .trim()
+        .messages({
+          'string.min': 'Sub-category name must be at least 2 characters long',
+          'string.max': 'Sub-category name cannot exceed 100 characters',
+        }),
+      description: Joi.string()
+        .max(300)
+        .optional()
+        .trim()
+        .messages({
+          'string.max': 'Sub-category description cannot exceed 300 characters'
+        }),
+      status: Joi.string()
+        .valid('active', 'inactive', 'draft')
+        .default('active')
+        .messages({
+          'any.only': 'Status must be one of: active, inactive, draft'
+        }),
+      categoryId: Joi.string()
+        .pattern(/^[0-9a-fA-F]{24}$/)
+        .required()
+        .messages({
+          'string.pattern.base': 'Category ID must be a valid MongoDB ObjectId',
+          'any.required': 'Category ID is required'
+        })
+    }))
+    .optional()
+    .messages({
+      'array.base': 'Subcategories must be an array'
+    }),
+  
+  parentCategory: Joi.string()
+    .pattern(/^[0-9a-fA-F]{24}$/)
+    .optional()
+    .allow(null)
+    .messages({
+      'string.pattern.base': 'Parent category ID must be a valid MongoDB ObjectId'
     })
 });
 
 const subCategoryValidator = Joi.object({
-  name: Joi.string()
+  subCategoryName: Joi.string()
     .min(2)
-    .max(50)
+    .max(100)
     .required()
     .trim()
     .messages({
       'string.empty': 'Sub-category name is required',
       'string.min': 'Sub-category name must be at least 2 characters long',
-      'string.max': 'Sub-category name cannot exceed 50 characters',
+      'string.max': 'Sub-category name cannot exceed 100 characters',
       'any.required': 'Sub-category name is required'
     }),
   
-  description: Joi.string()
-    .max(200)
-    .optional()
-    .trim()
-    .messages({
-      'string.max': 'Sub-category description cannot exceed 200 characters'
-    }),
-  
-  slug: Joi.string()
+  subCategorySlug: Joi.string()
     .pattern(/^[a-z0-9-]+$/)
     .min(3)
     .max(50)
@@ -107,29 +153,6 @@ const subCategoryValidator = Joi.object({
       'any.required': 'Slug is required'
     }),
   
-  categoryId: Joi.string()
-    .required()
-    .messages({
-      'string.empty': 'Category ID is required',
-      'any.required': 'Category ID is required'
-    }),
-  
-  isActive: Joi.boolean()
-    .default(true)
-    .messages({
-      'boolean.base': 'isActive must be a boolean value'
-    }),
-  
-  sortOrder: Joi.number()
-    .integer()
-    .min(0)
-    .default(0)
-    .messages({
-      'number.base': 'Sort order must be a number',
-      'number.integer': 'Sort order must be an integer',
-      'number.min': 'Sort order cannot be negative'
-    }),
-  
   image: Joi.string()
     .uri()
     .optional()
@@ -137,31 +160,32 @@ const subCategoryValidator = Joi.object({
       'string.uri': 'Image must be a valid URL'
     }),
   
-  metaTitle: Joi.string()
-    .max(60)
-    .optional()
-    .trim()
+  categoryId: Joi.string()
+    .pattern(/^[0-9a-fA-F]{24}$/)
+    .required()
     .messages({
-      'string.max': 'Meta title cannot exceed 60 characters'
+      'string.empty': 'Category ID is required',
+      'string.pattern.base': 'Category ID must be a valid MongoDB ObjectId',
+      'any.required': 'Category ID is required'
     }),
   
-  metaDescription: Joi.string()
-    .max(160)
-    .optional()
-    .trim()
+  status: Joi.string()
+    .valid('active', 'inactive', 'draft')
+    .default('active')
     .messages({
-      'string.max': 'Meta description cannot exceed 160 characters'
+      'string.empty': 'Status is required',
+      'any.only': 'Status must be one of: active, inactive, draft'
     })
 });
 
 // Update validators (for PATCH requests)
 const categoryUpdateValidator = categoryValidator.fork(
-  ['name', 'slug', 'description', 'isActive', 'sortOrder', 'image', 'metaTitle', 'metaDescription'],
+  ['title', 'slug', 'description', 'status', 'color', 'sortOrder', 'image', 'metaTitle', 'metaDescription', 'subcategories', 'parentCategory'],
   (schema) => schema.optional()
 );
 
 const subCategoryUpdateValidator = subCategoryValidator.fork(
-  ['name', 'slug', 'description', 'categoryId', 'isActive', 'sortOrder', 'image', 'metaTitle', 'metaDescription'],
+  ['subCategoryName', 'subCategorySlug', 'image', 'categoryId', 'status'],
   (schema) => schema.optional()
 );
 
@@ -399,6 +423,111 @@ const planValidator = Joi.object({
     currency: Joi.string().default("usd").optional(),
 });
 
+// Metadata validators
+const metadataValidator = Joi.object({
+  pageName: Joi.string()
+    .min(2)
+    .max(100)
+    .required()
+    .trim()
+    .messages({
+      'string.empty': 'Page name is required',
+      'string.min': 'Page name must be at least 2 characters long',
+      'string.max': 'Page name cannot exceed 100 characters',
+      'any.required': 'Page name is required'
+    }),
+  
+  pageUrl: Joi.string()
+    .uri()
+    .required()
+    .trim()
+    .messages({
+      'string.uri': 'Page URL must be a valid URL',
+      'string.empty': 'Page URL is required',
+      'any.required': 'Page URL is required'
+    }),
+  
+  title: Joi.string()
+    .min(10)
+    .max(60)
+    .required()
+    .trim()
+    .messages({
+      'string.empty': 'Title is required',
+      'string.min': 'Title must be at least 10 characters long',
+      'string.max': 'Title cannot exceed 60 characters',
+      'any.required': 'Title is required'
+    }),
+  
+  description: Joi.string()
+    .min(20)
+    .max(160)
+    .required()
+    .trim()
+    .messages({
+      'string.empty': 'Description is required',
+      'string.min': 'Description must be at least 20 characters long',
+      'string.max': 'Description cannot exceed 160 characters',
+      'any.required': 'Description is required'
+    }),
+  
+  focusKeywords: Joi.array()
+    .items(Joi.string().min(1).max(50).trim())
+    .min(1)
+    .max(10)
+    .optional()
+    .messages({
+      'array.min': 'At least one focus keyword is required',
+      'array.max': 'Cannot exceed 10 focus keywords',
+      'string.min': 'Focus keyword must be at least 1 character long',
+      'string.max': 'Focus keyword cannot exceed 50 characters'
+    }),
+  
+  ogTitle: Joi.string()
+    .max(60)
+    .optional()
+    .trim()
+    .messages({
+      'string.max': 'Open Graph title cannot exceed 60 characters'
+    }),
+  
+  ogDescription: Joi.string()
+    .max(160)
+    .optional()
+    .trim()
+    .messages({
+      'string.max': 'Open Graph description cannot exceed 160 characters'
+    }),
+  
+  ogImage: Joi.string()
+    .uri()
+    .optional()
+    .trim()
+    .messages({
+      'string.uri': 'Open Graph image must be a valid URL'
+    }),
+  
+  canonicalUrl: Joi.string()
+    .uri()
+    .optional()
+    .trim()
+    .messages({
+      'string.uri': 'Canonical URL must be a valid URL'
+    }),
+  
+  status: Joi.string()
+    .valid('active', 'inactive')
+    .default('active')
+    .messages({
+      'any.only': 'Status must be either active or inactive'
+    })
+});
+
+const metadataUpdateValidator = metadataValidator.fork(
+  ['pageName', 'pageUrl', 'title', 'description', 'focusKeywords', 'ogTitle', 'ogDescription', 'ogImage', 'canonicalUrl', 'status'],
+  (schema) => schema.optional()
+);
+
 export {
   categoryValidator,
   subCategoryValidator,
@@ -408,5 +537,7 @@ export {
   queryTicketValidator,
   blogUpdateValidator,
   queryTicketUpdateValidator,
-  planValidator
+  planValidator,
+  metadataValidator,
+  metadataUpdateValidator
 };

@@ -57,8 +57,33 @@ const authorizedAccessAdmin = async (req, res, next) => {
   }
 };
 
+const authorizedAccessBusiness = async (req, res, next) => {
+  let token = req.header("Authorization");
+  if (!token) return errorResponseHelper(res, {message:GLOBAL_MESSAGES.jwtRequired,code:"00401"});
+
+  if (token.includes("Bearer"))
+    token = req.header("Authorization").replace("Bearer ", "");
+
+  try {
+    req.business = verify(token, GLOBAL_ENV.jwtSecretKeyBusiness || GLOBAL_ENV.jwtSecretKeyAdmin, { expiresIn: GLOBAL_ENV.jwtExpiresInBusiness || GLOBAL_ENV.jwtExpiresInAdmin });
+    if (!mongoose.Types.ObjectId.isValid(req.business._id))
+      return errorResponseHelper(res, {message:GLOBAL_MESSAGES.invalidData,code:"00401"});
+
+    const Business = (await import("../models/business/business.js")).default;
+    const businessExists = await Business.findById(req.business._id);
+
+    if (!businessExists)
+      return errorResponseHelper(res, {message:GLOBAL_MESSAGES.dataNotFound,code:"00401"});
+
+    next();
+  } catch (error) {
+    return serverErrorHelper(req, res, 500, error);
+  }
+};
+
 
 export {
   authorizedAccessUser,
-  authorizedAccessAdmin
+  authorizedAccessAdmin,
+  authorizedAccessBusiness
 };

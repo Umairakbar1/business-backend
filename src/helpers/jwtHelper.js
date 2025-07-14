@@ -24,6 +24,12 @@ const signAccessTokenAdmin = (_id) => {
   return accessToken;
 };
 
+const signAccessTokenBusiness = (_id) => {
+  const accessToken = sign({ _id }, GLOBAL_ENV.jwtSecretKeyBusiness || GLOBAL_ENV.jwtSecretKeyAdmin, {
+    expiresIn: "7d",
+  });
+  return accessToken;
+};
 
 const signConfirmCodeToken = (_id, code) => {
   const confirmCodeToken = sign({ _id, code }, GLOBAL_ENV.jwtSecretKey, {
@@ -36,5 +42,6 @@ export {
   signAccessToken,
   signRefreshToken,
   signConfirmCodeToken,
-  signAccessTokenAdmin
+  signAccessTokenAdmin,
+  signAccessTokenBusiness
 };

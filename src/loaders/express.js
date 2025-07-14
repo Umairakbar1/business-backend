@@ -43,6 +43,7 @@ export default (app) => {
   );
   app.use(compression());
   app.use(express.static("public"));
+  app.use('/uploads', express.static('uploads'));
   app.disable("x-powered-by");
   app.disable("etag");
 

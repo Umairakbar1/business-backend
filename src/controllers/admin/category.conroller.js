@@ -1,8 +1,8 @@
 import Category from '../../models/admin/category.js';
 import SubCategory from '../../models/admin/subCategory.js';
-
 import { categoryValidator } from '../../validators/admin.js';
 import { successResponseHelper, errorResponseHelper } from '../../helpers/utilityHelper.js';
+import { deleteFile, getFileUrl } from '../../middleware/fileUpload.js';
 
 const createCategory = async (req, res) => {
   try {
@@ -13,11 +13,16 @@ const createCategory = async (req, res) => {
 
     // Check if category with same name already exists
     const existingCategory = await Category.findOne({ 
-      name: { $regex: new RegExp(`^${value.name}$`, 'i') } 
+      title: { $regex: new RegExp(`^${value.title}$`, 'i') } 
     });
     
     if (existingCategory) {
       return errorResponseHelper(res, 400, 'Category with this name already exists');
+    }
+
+    // Handle image upload
+    if (req.file) {
+      value.image = getFileUrl(req.file.filename);
     }
 
     const category = new Category(value);
@@ -27,9 +32,9 @@ const createCategory = async (req, res) => {
     if (req.body.subcategories && Array.isArray(req.body.subcategories)) {
       const subcategoryPromises = req.body.subcategories.map(subcat => {
         return new SubCategory({
-          name: subcat.name,
+          subCategoryName: subcat.subCategoryName,
           description: subcat.description,
-          category: category._id,
+          categoryId: category._id,
           status: subcat.status || 'active'
         }).save();
       });
@@ -51,7 +56,7 @@ const getAllCategories = async (req, res) => {
     // Build filter object
     const filter = {};
     if (search) {
-      filter.name = { $regex: search, $options: 'i' };
+      filter.title = { $regex: search, $options: 'i' };
     }
     if (status) {
       filter.status = status;
@@ -67,7 +72,7 @@ const getAllCategories = async (req, res) => {
       .sort(sort)
       .skip(skip)
       .limit(parseInt(limit))
-      .populate('parent', 'name');
+      .populate('parent', 'title');
 
     const total = await Category.countDocuments(filter);
     const totalPages = Math.ceil(total / parseInt(limit));
@@ -91,7 +96,7 @@ const getCategoryById = async (req, res) => {
   try {
     const { id } = req.params;
     
-    const category = await Category.findById(id).populate('parent', 'name');
+    const category = await Category.findById(id).populate('parent', 'title');
     
     if (!category) {
       return errorResponseHelper(res, 404, 'Category not found');
@@ -106,6 +111,7 @@ const getCategoryById = async (req, res) => {
     return errorResponseHelper(res, 500, 'Internal server error');
   }
 };
+
 
 const updateCategory = async (req, res) => {
   try {
@@ -124,7 +130,7 @@ const updateCategory = async (req, res) => {
 
     // Check if category with same name already exists (excluding current category)
     const duplicateCategory = await Category.findOne({
-      name: { $regex: new RegExp(`^${value.name}$`, 'i') },
+      title: { $regex: new RegExp(`^${value.title}$`, 'i') },
       _id: { $ne: id }
     });
     
@@ -137,11 +143,26 @@ const updateCategory = async (req, res) => {
       return errorResponseHelper(res, 400, 'Category cannot be its own parent');
     }
 
+    // Handle image upload and deletion of previous image
+    if (req.file) {
+      // Delete previous image if it exists
+      if (existingCategory.image) {
+        const fs = await import('fs');
+        const path = await import('path');
+        const imagePath = path.join(process.cwd(), 'uploads', existingCategory.image.split('/').pop());
+        if (fs.existsSync(imagePath)) {
+          fs.unlinkSync(imagePath);
+        }
+      }
+      // Set new image
+      value.image = getFileUrl(req.file.filename);
+    }
+
     const updatedCategory = await Category.findByIdAndUpdate(
       id,
       { ...value, updatedAt: Date.now() },
       { new: true, runValidators: true }
-    ).populate('parent', 'name');
+    ).populate('parent', 'title');
 
     return successResponseHelper(res, 200, 'Category updated successfully', updatedCategory);
   } catch (error) {
@@ -170,7 +191,7 @@ const deleteCategory = async (req, res) => {
     }
 
     // Check if category has subcategories
-    const subcategories = await SubCategory.find({ category: id });
+    const subcategories = await SubCategory.find({ categoryId: id });
     
     // const subcategoryIds = subcategories.map(sub => sub._id);
     // const hasProducts = await Product.findOne({ subcategory: { $in: subcategoryIds } });
@@ -180,7 +201,17 @@ const deleteCategory = async (req, res) => {
 
     // Delete all subcategories first
     if (subcategories.length > 0) {
-      await SubCategory.deleteMany({ category: id });
+      await SubCategory.deleteMany({ categoryId: id });
+    }
+
+    // Delete category image if it exists
+    if (category.image) {
+      const fs = await import('fs');
+      const path = await import('path');
+      const imagePath = path.join(process.cwd(), 'uploads', category.image.split('/').pop());
+      if (fs.existsSync(imagePath)) {
+        fs.unlinkSync(imagePath);
+      }
     }
 
     // const hasProducts = await Product.findOne({ category: id });
@@ -202,12 +233,12 @@ const deleteCategory = async (req, res) => {
 
 const getCategoryHierarchy = async (req, res) => {
   try {
-    const categories = await Category.find({ status: 'active' }).sort('name');
+    const categories = await Category.find({ status: 'active' }).sort('title');
     
     // Build hierarchy
     const buildHierarchy = (parentId = null) => {
       return categories
-        .filter(cat => String(cat.parent) === String(parentId))
+        .filter(cat => String(cat.parentCategory) === String(parentId))
         .map(cat => ({
           ...cat.toObject(),
           children: buildHierarchy(cat._id)

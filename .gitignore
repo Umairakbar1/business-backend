@@ -29,6 +29,8 @@ coverage
 # Grunt intermediate storage (https://gruntjs.com/creating-plugins#storing-task-files)
 .grunt
 
+# Uploaded files
+uploads/
 # Bower dependency directory (https://bower.io/)
 bower_components
 
@@ -163,6 +165,8 @@ Temporary Items
 #vs code setting
 .vscode
 
+# Uploaded files
+uploads/
 
 #lock files
 yarn.lock

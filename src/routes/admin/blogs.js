@@ -11,6 +11,7 @@ import {
 } from "../../controllers/admin/blog.controller.js";
 import { authorizedAccessAdmin } from "../../middleware/authorization.js";
 import { blogValidator, blogUpdateValidator } from "../../validators/admin.js";
+import { uploadSingleImage, handleUploadError } from "../../middleware/fileUpload.js";
 
 const router = Router();
 
@@ -26,13 +27,13 @@ function validate(schema) {
 }
 
 // Create a new blog post
-router.post("/", authorizedAccessAdmin, validate(blogValidator), createBlog);
+router.post("/", authorizedAccessAdmin, uploadSingleImage, handleUploadError, validate(blogValidator), createBlog);
 // Get all blogs
 router.get("/", authorizedAccessAdmin, getAllBlogs);
 // Get blog by ID
 router.get("/:id", authorizedAccessAdmin, getBlogById);
 // Update blog
-router.put("/:id", authorizedAccessAdmin, validate(blogUpdateValidator), updateBlog);
+router.put("/:id", authorizedAccessAdmin, uploadSingleImage, handleUploadError, validate(blogUpdateValidator), updateBlog);
 // Delete blog
 router.delete("/:id", authorizedAccessAdmin, deleteBlog);
 // Publish blog

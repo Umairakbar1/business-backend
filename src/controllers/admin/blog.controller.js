@@ -1,22 +1,31 @@
 import Blog from '../../models/admin/blog.js';
 import { errorResponseHelper, successResponseHelper } from '../../helpers/utilityHelper.js';
+import { getFileUrl } from '../../middleware/fileUpload.js';
 
 // Create a new blog post
 const createBlog = async (req, res) => {
-    const { title, content, author, tags, status = 'draft' } = req.body;
+    const { title, description, author, category, subCategory, status = 'draft' } = req.body;
 
-    if (!title || !content || !author) {
-        return errorResponseHelper(res, 400, "Title, content, and author are required");
+    if (!title || !description || !author || !category) {
+        return errorResponseHelper(res, 400, "Title, description, author, and category are required");
     }
 
-    const blog = await Blog.create({
+    const blogData = {
         title,
-        content,
+        description,
         author,
-        tags: tags || [],
+        category,
+        subCategory,
         status,
         publishedAt: status === 'published' ? new Date() : null
-    });
+    };
+
+    // Handle image upload
+    if (req.file) {
+        blogData.image = getFileUrl(req.file.filename);
+    }
+
+    const blog = await Blog.create(blogData);
 
     return successResponseHelper(res, 201, "Blog post created successfully", blog);
 };
@@ -74,7 +83,7 @@ const getBlogById = async (req, res) => {
 // Update a blog post
 const updateBlog = async (req, res) => {
     const { id } = req.params;
-    const { title, content, author, tags, status } = req.body;
+    const { title, description, author, category, subCategory, status } = req.body;
 
     const blog = await Blog.findById(id);
 
@@ -84,9 +93,10 @@ const updateBlog = async (req, res) => {
 
     // Update fields if provided
     if (title !== undefined) blog.title = title;
-    if (content !== undefined) blog.content = content;
+    if (description !== undefined) blog.description = description;
     if (author !== undefined) blog.author = author;
-    if (tags !== undefined) blog.tags = tags;
+    if (category !== undefined) blog.category = category;
+    if (subCategory !== undefined) blog.subCategory = subCategory;
     
     // Handle status change
     if (status !== undefined) {
@@ -94,6 +104,21 @@ const updateBlog = async (req, res) => {
         if (status === 'published' && !blog.publishedAt) {
             blog.publishedAt = new Date();
         }
+    }
+
+    // Handle image upload and deletion of previous image
+    if (req.file) {
+        // Delete previous image if it exists
+        if (blog.image) {
+            const fs = await import('fs');
+            const path = await import('path');
+            const imagePath = path.join(process.cwd(), 'uploads', blog.image.split('/').pop());
+            if (fs.existsSync(imagePath)) {
+                fs.unlinkSync(imagePath);
+            }
+        }
+        // Set new image
+        blog.image = getFileUrl(req.file.filename);
     }
 
     blog.updatedAt = new Date();
@@ -106,11 +131,23 @@ const updateBlog = async (req, res) => {
 const deleteBlog = async (req, res) => {
     const { id } = req.params;
 
-    const blog = await Blog.findByIdAndDelete(id);
+    const blog = await Blog.findById(id);
 
     if (!blog) {
         return errorResponseHelper(res, 404, "Blog post not found");
     }
+
+    // Delete blog image if it exists
+    if (blog.image) {
+        const fs = await import('fs');
+        const path = await import('path');
+        const imagePath = path.join(process.cwd(), 'uploads', blog.image.split('/').pop());
+        if (fs.existsSync(imagePath)) {
+            fs.unlinkSync(imagePath);
+        }
+    }
+
+    await Blog.findByIdAndDelete(id);
 
     return successResponseHelper(res, 200, "Blog post deleted successfully");
 };
