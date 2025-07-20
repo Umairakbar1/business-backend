@@ -1,35 +1,47 @@
 import SubCategory from '../../models/admin/subCategory.js';
 import Category from '../../models/admin/category.js';
-import { subCategoryValidator } from '../../validators/admin.js';
-import { successResponseHelper, errorResponseHelper } from '../../helpers/utilityHelper.js';
+import { subCategoryValidator, subCategoryUpdateValidator } from '../../validators/admin.js';
+import { successResponseHelper, errorResponseHelper, generateSlug } from '../../helpers/utilityHelper.js';
 
 const createSubCategory = async (req, res) => {
   try {
     const { error, value } = subCategoryValidator.validate(req.body);
     if (error) {
-      return errorResponseHelper(res, 400, error.details[0].message);
+      return errorResponseHelper(res, { message: error.details[0].message, code: '00400' });
     }
 
-    const { name, description, categoryId, isActive = true } = value;
+    const { title, description, categoryId, isActive = true } = value;
+
+    // Generate slug from title if not provided
+    if (!value.slug) {
+      value.slug = generateSlug(title);
+    }
 
     // Check if category exists
     const category = await Category.findById(categoryId);
     if (!category) {
-      return errorResponseHelper(res, 404, 'Category not found');
+      return errorResponseHelper(res, { message: 'Category not found', code: '00404' });
     }
 
     // Check if subcategory with same name exists in the same category
     const existingSubCategory = await SubCategory.findOne({
-      name: { $regex: new RegExp(`^${name}$`, 'i') },
+      title: { $regex: new RegExp(`^${title}$`, 'i') },
       categoryId
     });
 
     if (existingSubCategory) {
-      return errorResponseHelper(res, 400, 'Subcategory with this name already exists in this category');
+      return errorResponseHelper(res, { message: 'Subcategory with this name already exists in this category', code: '00400' });
+    }
+
+    // Check if slug already exists
+    const existingSlug = await SubCategory.findOne({ slug: value.slug });
+    if (existingSlug) {
+      return errorResponseHelper(res, { message: 'Subcategory with this slug already exists', code: '00400' });
     }
 
     const subCategory = new SubCategory({
-      name,
+      title,
+      slug: value.slug,
       description,
       categoryId,
       isActive,
@@ -39,12 +51,15 @@ const createSubCategory = async (req, res) => {
     await subCategory.save();
 
     // Populate category details
-    await subCategory.populate('categoryId', 'name');
+    await subCategory.populate('categoryId', 'title');
 
-    return successResponseHelper(res, 201, 'Subcategory created successfully', subCategory);
+    return successResponseHelper(res, {
+      message: 'Subcategory created successfully',
+      data:subCategory
+    });
   } catch (error) {
     console.error('Error creating subcategory:', error);
-    return errorResponseHelper(res, 500, 'Internal server error');
+      return errorResponseHelper(res, { message: 'Internal server error', code: '00500' });
   }
 };
 
@@ -65,7 +80,7 @@ const getAllSubCategories = async (req, res) => {
 
     // Search filter
     if (search) {
-      query.name = { $regex: search, $options: 'i' };
+      query.title = { $regex: search, $options: 'i' };
     }
 
     // Category filter
@@ -85,7 +100,7 @@ const getAllSubCategories = async (req, res) => {
     const skip = (parseInt(page) - 1) * parseInt(limit);
 
     const subCategories = await SubCategory.find(query)
-      .populate('categoryId', 'name')
+      .populate('categoryId', 'title')
       .populate('createdBy', 'name email')
       .sort(sortOptions)
       .skip(skip)
@@ -100,13 +115,14 @@ const getAllSubCategories = async (req, res) => {
       itemsPerPage: parseInt(limit)
     };
 
-    return successResponseHelper(res, 200, 'Subcategories retrieved successfully', {
-      subCategories,
+    return successResponseHelper(res, {
+      message: 'Subcategories retrieved successfully',
+      data:subCategories,
       pagination
     });
   } catch (error) {
     console.error('Error fetching subcategories:', error);
-    return errorResponseHelper(res, 500, 'Internal server error');
+    return errorResponseHelper(res, { message: 'Internal server error', code: '00500' });
   }
 };
 
@@ -116,18 +132,21 @@ const getSubCategoryById = async (req, res) => {
     const { id } = req.params;
 
     const subCategory = await SubCategory.findById(id)
-      .populate('categoryId', 'name description')
+      .populate('categoryId', 'title description')
       .populate('createdBy', 'name email')
       .populate('updatedBy', 'name email');
 
     if (!subCategory) {
-      return errorResponseHelper(res, 404, 'Subcategory not found');
+      return errorResponseHelper(res, { message: 'Subcategory not found', code: '00404' });
     }
 
-    return successResponseHelper(res, 200, 'Subcategory retrieved successfully', subCategory);
+    return successResponseHelper(res, {
+      message: 'Subcategory retrieved successfully',
+      data:subCategory
+    });
   } catch (error) {
     console.error('Error fetching subcategory:', error);
-    return errorResponseHelper(res, 500, 'Internal server error');
+    return errorResponseHelper(res, { message: 'Internal server error', code: '00500' });
   }
 };
 
@@ -135,42 +154,63 @@ const getSubCategoryById = async (req, res) => {
 const updateSubCategory = async (req, res) => {
   try {
     const { id } = req.params;
-    const { error, value } = subCategoryValidator.validate(req.body, true);
+    const { error, value } = subCategoryUpdateValidator.validate(req.body);
     
     if (error) {
-      return errorResponseHelper(res, 400, error.details[0].message);
+      return errorResponseHelper(res, { message: error.details[0].message, code: '00400' });
     }
 
     const subCategory = await SubCategory.findById(id);
     if (!subCategory) {
-      return errorResponseHelper(res, 404, 'Subcategory not found');
+      return errorResponseHelper(res, { message: 'Subcategory not found', code: '00404' });
     }
 
-    const { name, description, categoryId, isActive } = value;
+    const { title, description, categoryId, isActive } = value;
+
+    // Generate slug from title if not provided or if title is being updated
+    if (!value.slug && title) {
+      value.slug = generateSlug(title);
+    } else if (title && title !== subCategory.title) {
+      // If title is being updated, regenerate slug
+      value.slug = generateSlug(title);
+    }
 
     // If categoryId is being updated, check if new category exists
     if (categoryId && categoryId !== subCategory.categoryId.toString()) {
       const category = await Category.findById(categoryId);
       if (!category) {
-        return errorResponseHelper(res, 404, 'Category not found');
+        return errorResponseHelper(res, { message: 'Category not found', code: '00404' });
       }
     }
 
     // Check for duplicate name in the same category
-    if (name && name !== subCategory.name) {
+    if (title && title !== subCategory.title) {
       const existingSubCategory = await SubCategory.findOne({
-        name: { $regex: new RegExp(`^${name}$`, 'i') },
+        title: { $regex: new RegExp(`^${title}$`, 'i') },
         categoryId: categoryId || subCategory.categoryId,
         _id: { $ne: id }
       });
 
       if (existingSubCategory) {
-        return errorResponseHelper(res, 400, 'Subcategory with this name already exists in this category');
+        return errorResponseHelper(res, { message: 'Subcategory with this name already exists in this category', code: '00400' });
+      }
+    }
+
+    // Check for duplicate slug (excluding current subcategory)
+    if (value.slug && value.slug !== subCategory.slug) {
+      const existingSlug = await SubCategory.findOne({
+        slug: value.slug,
+        _id: { $ne: id }
+      });
+
+      if (existingSlug) {
+        return errorResponseHelper(res, { message: 'Subcategory with this slug already exists', code: '00400' });
       }
     }
 
     // Update fields
-    if (name) subCategory.name = name;
+    if (title) subCategory.title = title;
+    if (value.slug) subCategory.slug = value.slug;
     if (description !== undefined) subCategory.description = description;
     if (categoryId) subCategory.categoryId = categoryId;
     if (isActive !== undefined) subCategory.isActive = isActive;
@@ -181,12 +221,15 @@ const updateSubCategory = async (req, res) => {
     await subCategory.save();
 
     // Populate category details
-    await subCategory.populate('categoryId', 'name');
+    await subCategory.populate('categoryId', 'title');
 
-    return successResponseHelper(res, 200, 'Subcategory updated successfully', subCategory);
+    return successResponseHelper(res, {
+      message: 'Subcategory updated successfully',
+      data:subCategory
+    });
   } catch (error) {
     console.error('Error updating subcategory:', error);
-    return errorResponseHelper(res, 500, 'Internal server error');
+    return errorResponseHelper(res, { message: 'Internal server error', code: '00500' });
   }
 };
 
@@ -197,7 +240,7 @@ const deleteSubCategory = async (req, res) => {
 
     const subCategory = await SubCategory.findById(id);
     if (!subCategory) {
-      return errorResponseHelper(res, 404, 'Subcategory not found');
+      return errorResponseHelper(res, { message: 'Subcategory not found', code: '00404' });
     }
 
     // const productsUsingSubCategory = await Product.countDocuments({ subCategoryId: id });
@@ -207,10 +250,12 @@ const deleteSubCategory = async (req, res) => {
 
     await SubCategory.findByIdAndDelete(id);
 
-    return successResponseHelper(res, 200, 'Subcategory deleted successfully');
+    return successResponseHelper(res, {
+      message: 'Subcategory deleted successfully'
+    });
   } catch (error) {
     console.error('Error deleting subcategory:', error);
-    return errorResponseHelper(res, 500, 'Internal server error');
+    return errorResponseHelper(res, { message: 'Internal server error', code: '00500' });
   }
 };
 
@@ -223,7 +268,7 @@ const getSubCategoriesByCategory = async (req, res) => {
     // Check if category exists
     const category = await Category.findById(categoryId);
     if (!category) {
-      return errorResponseHelper(res, 404, 'Category not found');
+      return errorResponseHelper(res, { message: 'Category not found', code: '00404' });
     }
 
     const query = { categoryId };
@@ -233,13 +278,22 @@ const getSubCategoriesByCategory = async (req, res) => {
     }
 
     const subCategories = await SubCategory.find(query)
-      .populate('categoryId', 'name')
-      .sort({ name: 1 });
+      .populate('categoryId', 'title')
+      .sort({ title: 1 });
 
-    return successResponseHelper(res, 200, 'Subcategories retrieved successfully', subCategories);
+    return successResponseHelper(res, {
+      message: 'Subcategories retrieved successfully',
+      data:subCategories,
+      pagination: {
+        currentPage: 1,
+        totalPages: 1,
+        totalItems: subCategories.length,
+        itemsPerPage: subCategories.length
+      }
+    });
   } catch (error) {
     console.error('Error fetching subcategories by category:', error);
-    return errorResponseHelper(res, 500, 'Internal server error');
+    return errorResponseHelper(res, { message: 'Internal server error', code: '00500' });
   }
 };
 
@@ -249,11 +303,11 @@ const bulkUpdateStatus = async (req, res) => {
     const { subCategoryIds, isActive } = req.body;
 
     if (!Array.isArray(subCategoryIds) || subCategoryIds.length === 0) {
-      return errorResponseHelper(res, 400, 'Subcategory IDs array is required');
+      return errorResponseHelper(res, { message: 'Subcategory IDs array is required', code: '00400' });
     }
 
     if (typeof isActive !== 'boolean') {
-      return errorResponseHelper(res, 400, 'isActive must be a boolean value');
+      return errorResponseHelper(res, { message: 'isActive must be a boolean value', code: '00400' });
     }
 
     const result = await SubCategory.updateMany(
@@ -265,10 +319,12 @@ const bulkUpdateStatus = async (req, res) => {
       }
     );
 
-    return successResponseHelper(res, 200, `${result.modifiedCount} subcategories updated successfully`);
+      return successResponseHelper(res, {
+      message: `${result.modifiedCount} subcategories updated successfully`
+    });
   } catch (error) {
     console.error('Error bulk updating subcategories:', error);
-    return errorResponseHelper(res, 500, 'Internal server error');
+    return errorResponseHelper(res, { message: 'Internal server error', code: '00500' });
   }
 };
 

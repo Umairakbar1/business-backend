@@ -82,7 +82,7 @@ const categoryValidator = Joi.object({
   
   subcategories: Joi.array()
     .items(Joi.object({
-      subCategoryName: Joi.string()
+      title: Joi.string()
         .min(2)
         .max(100)
         .required()
@@ -100,11 +100,10 @@ const categoryValidator = Joi.object({
         .messages({
           'string.max': 'Sub-category description cannot exceed 300 characters'
         }),
-      status: Joi.string()
-        .valid('active', 'inactive', 'draft')
-        .default('active')
+      isActive: Joi.boolean()
+        .default(true)
         .messages({
-          'any.only': 'Status must be one of: active, inactive, draft'
+          'boolean.base': 'isActive must be a boolean value'
         })
     }))
     .optional()
@@ -122,7 +121,7 @@ const categoryValidator = Joi.object({
 });
 
 const subCategoryValidator = Joi.object({
-  subCategoryName: Joi.string()
+  title: Joi.string()
     .min(2)
     .max(100)
     .required()
@@ -134,24 +133,25 @@ const subCategoryValidator = Joi.object({
       'any.required': 'Sub-category name is required'
     }),
   
-  subCategorySlug: Joi.string()
+  slug: Joi.string()
     .pattern(/^[a-z0-9-]+$/)
     .min(3)
     .max(50)
-    .required()
+    .optional()
     .trim()
     .messages({
       'string.pattern.base': 'Slug must contain only lowercase letters, numbers, and hyphens',
       'string.min': 'Slug must be at least 3 characters long',
-      'string.max': 'Slug cannot exceed 50 characters',
-      'any.required': 'Slug is required'
+      'string.max': 'Slug cannot exceed 50 characters'
     }),
   
-  image: Joi.string()
-    .uri()
+  
+  description: Joi.string()
+    .max(500)
     .optional()
+    .trim()
     .messages({
-      'string.uri': 'Image must be a valid URL'
+      'string.max': 'Subcategory description cannot exceed 500 characters'
     }),
   
   categoryId: Joi.string()
@@ -163,12 +163,10 @@ const subCategoryValidator = Joi.object({
       'any.required': 'Category ID is required'
     }),
   
-  status: Joi.string()
-    .valid('active', 'inactive', 'draft')
-    .default('active')
+  isActive: Joi.boolean()
+    .default(true)
     .messages({
-      'string.empty': 'Status is required',
-      'any.only': 'Status must be one of: active, inactive, draft'
+      'boolean.base': 'isActive must be a boolean value'
     })
 });
 
@@ -179,7 +177,7 @@ const categoryUpdateValidator = categoryValidator.fork(
 );
 
 const subCategoryUpdateValidator = subCategoryValidator.fork(
-  ['subCategoryName', 'subCategorySlug', 'image', 'categoryId', 'status'],
+  ['title', 'slug', 'description', 'categoryId', 'isActive'],
   (schema) => schema.optional()
 );
 

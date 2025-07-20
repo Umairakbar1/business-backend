@@ -17,7 +17,10 @@ const {
   GOOGLE_CLIENT_ID,
   GOOGLE_CLIENT_SECRET,
   NODEMAILER_EMAIL,
-  NODEMAILER_APP_PASSWORD
+  NODEMAILER_APP_PASSWORD,
+  CLOUDINARY_CLOUD_NAME,
+  CLOUDINARY_API_KEY,
+  CLOUDINARY_API_SECRET
 } = process.env;
 
 const dbUri = DB_URI;
@@ -42,6 +45,11 @@ const googleClientSecret = GOOGLE_CLIENT_SECRET;
 const nodemailerEmail = NODEMAILER_EMAIL;
 const nodemailerAppPassword = NODEMAILER_APP_PASSWORD;
 
+// Cloudinary Configuration
+const cloudinaryCloudName = CLOUDINARY_CLOUD_NAME;
+const cloudinaryApiKey = CLOUDINARY_API_KEY;
+const cloudinaryApiSecret = CLOUDINARY_API_SECRET;
+
 export default {
   dbUri, 
   jwtSecretKeyUser, 
@@ -57,5 +65,8 @@ export default {
   googleClientId,
   googleClientSecret,
   nodemailerEmail,
-  nodemailerAppPassword
+  nodemailerAppPassword,
+  cloudinaryCloudName,
+  cloudinaryApiKey,
+  cloudinaryApiSecret
 }

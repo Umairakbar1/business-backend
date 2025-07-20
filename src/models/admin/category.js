@@ -1,31 +1,69 @@
 import mongoose from "mongoose";
 const { Schema, model } = mongoose;
 
-const SubCategorySchema = new mongoose.Schema({
-    subCategoryName: String,
-    description:String, 
-    status: String,
-    categoryId: mongoose.Schema.Types.ObjectId,
-});
-
 const CategorySchema = new mongoose.Schema({
-    title: String,
-    slug: String,
-    description:String,
-    image: String,
-    status: String,
-    color:String,
-    sortOrder:Number,
-    metaTitle:String,
-    metaDescription:String,
-    subcategories: [SubCategorySchema],
+    title: {
+        type: String,
+        required: true,
+        trim: true
+    },
+    slug: {
+        type: String,
+        unique: true,
+        lowercase: true
+    },
+    description: {
+        type: String,
+        trim: true
+    },
+    image: {
+        type: String
+    },
+    status: {
+        type: String,
+        enum: ['active', 'inactive', 'draft'],
+        default: 'active'
+    },
+    color: {
+        type: String
+    },
+    sortOrder: {
+        type: Number,
+        default: 0
+    },
+    metaTitle: {
+        type: String,
+        trim: true
+    },
+    metaDescription: {
+        type: String,
+        trim: true
+    },
     parentCategory: {
         type: Schema.Types.ObjectId,
         ref: 'Category',
         default: null
     },
-  });
+    createdBy: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'Admin'
+    },
+    updatedBy: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'Admin'
+    }
+}, {
+    timestamps: true
+});
+
+// Create slug from title before saving
+CategorySchema.pre('save', function(next) {
+    if (this.isModified('title') && !this.slug) {
+        this.slug = this.title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
+    }
+    next();
+});
   
-  const Category = model('Category', CategorySchema);
-  export default Category;
+const Category = model('Category', CategorySchema);
+export default Category;
   

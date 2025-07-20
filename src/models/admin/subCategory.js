@@ -2,14 +2,49 @@ import mongoose from "mongoose";
 const { Schema, model } = mongoose;
 
 const SubCategorySchema = new mongoose.Schema({
-    subCategoryName: String,
-    subCategorySlug: String,
-    description: String,
-    image: String,
-    categoryId: mongoose.Schema.Types.ObjectId,
-    status: String,
-  });
+    title: {
+        type: String,
+        required: true,
+        trim: true
+    },
+    slug: {
+        type: String,
+        unique: true,
+        lowercase: true
+    },
+    description: {
+        type: String,
+        trim: true
+    },
+    categoryId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'Category',
+        required: true
+    },
+    isActive: {
+        type: Boolean,
+        default: true
+    },
+    createdBy: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'Admin'
+    },
+    updatedBy: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'Admin'
+    }
+}, {
+    timestamps: true
+});
+
+// Create slug from title before saving
+SubCategorySchema.pre('save', function(next) {
+    if (this.isModified('title') && !this.slug) {
+        this.slug = this.title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
+    }
+    next();
+});
   
-  const SubCategory = model('SubCategory', SubCategorySchema);
-  export default SubCategory;
+const SubCategory = model('SubCategory', SubCategorySchema);
+export default SubCategory;
   

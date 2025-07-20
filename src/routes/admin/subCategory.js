@@ -5,10 +5,12 @@ import { authorizedAccessAdmin } from '../../middleware/authorization.js';
 const router = Router();
 
 // SubCategory routes
-router.post('/:categoryId/subcategories', authorizedAccessAdmin, subCategoryController.createSubCategory);
-router.get('/:categoryId/subcategories', authorizedAccessAdmin, subCategoryController.getSubCategoriesByCategory);
-router.get('/subcategories/:id', authorizedAccessAdmin, subCategoryController.getSubCategoryById);
-router.put('/subcategories/:id', authorizedAccessAdmin, subCategoryController.updateSubCategory);
-router.delete('/subcategories/:id', authorizedAccessAdmin, subCategoryController.deleteSubCategory);
+router.post('/', authorizedAccessAdmin, subCategoryController.createSubCategory);
+router.get('/', authorizedAccessAdmin, subCategoryController.getAllSubCategories);
+router.get('/category/:categoryId', authorizedAccessAdmin, subCategoryController.getSubCategoriesByCategory);
+router.get('/:id', authorizedAccessAdmin, subCategoryController.getSubCategoryById);
+router.put('/:id', authorizedAccessAdmin, subCategoryController.updateSubCategory);
+router.delete('/:id', authorizedAccessAdmin, subCategoryController.deleteSubCategory);
+router.patch('/bulk-status', authorizedAccessAdmin, subCategoryController.bulkUpdateStatus);
 
 export default router;

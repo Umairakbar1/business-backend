@@ -43,14 +43,15 @@ const createCategory = async (req, res) => {
     if (req.body.subcategories && Array.isArray(req.body.subcategories)) {
       const subcategoryPromises = req.body.subcategories.map(subcat => {
         // Generate slug for subcategory
-        const subCategorySlug = generateSlug(subcat.subCategoryName);
+        const subCategorySlug = generateSlug(subcat.title || subcat.subCategoryName);
         
         return new SubCategory({
-          subCategoryName: subcat.subCategoryName,
-          subCategorySlug: subCategorySlug,
+          title: subcat.title || subcat.subCategoryName,
+          slug: subCategorySlug,
           description: subcat.description,
           categoryId: category._id,
-          status: subcat.status || 'active'
+          isActive: subcat.isActive !== undefined ? subcat.isActive : (subcat.status === 'active'),
+          createdBy: req.user.id
         }).save();
       });
 
@@ -130,7 +131,7 @@ const getCategoryById = async (req, res) => {
     if (error.kind === 'ObjectId') {
       return errorResponseHelper(res, 400, 'Invalid category ID');
     }
-    return errorResponseHelper(res, 500, 'Internal server error');
+    return errorResponseHelper(res, { message: 'Internal server error', code: '00500' });
   }
 };
 
@@ -215,7 +216,7 @@ const updateCategory = async (req, res) => {
     if (error.kind === 'ObjectId') {
       return errorResponseHelper(res, 400, 'Invalid category ID');
     }
-    return errorResponseHelper(res, 500, 'Internal server error');
+    return errorResponseHelper(res, { message: 'Internal server error', code: '00500' });
   }
 };
 
@@ -274,7 +275,7 @@ const deleteCategory = async (req, res) => {
     if (error.kind === 'ObjectId') {
       return errorResponseHelper(res, 400, 'Invalid category ID');
     }
-    return errorResponseHelper(res, 500, 'Internal server error');
+    return errorResponseHelper(res, { message: 'Internal server error', code: '00500' });
   }
 };
 
@@ -300,7 +301,7 @@ const getCategoryHierarchy = async (req, res) => {
     });
   } catch (error) {
     console.error('Get category hierarchy error:', error);
-    return errorResponseHelper(res, 500, 'Internal server error');
+    return errorResponseHelper(res, { message: 'Internal server error', code: '00500' });
   }
 };
 
@@ -326,7 +327,7 @@ const bulkUpdateStatus = async (req, res) => {
     });
   } catch (error) {
     console.error('Bulk update status error:', error);
-    return errorResponseHelper(res, 500, 'Internal server error');
+    return errorResponseHelper(res, { message: 'Internal server error', code: '00500' });
   }
 };
 
