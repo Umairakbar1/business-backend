@@ -111,6 +111,23 @@ const asyncWrapper = async (_callBack = async () => false) => {
   }
 };
 
+/**
+ * Generate a slug from a title
+ * @param {string} title - The title to convert to slug
+ * @returns {string} - The generated slug
+ */
+export const generateSlug = (title) => {
+  if (!title) return '';
+  
+  return title
+    .toLowerCase()
+    .trim()
+    .replace(/\s+/g, '_') // Replace spaces with underscores
+    .replace(/[^a-z0-9_]/g, '') // Remove special characters except underscores
+    .replace(/_+/g, '_') // Replace multiple underscores with single underscore
+    .replace(/^_|_$/g, ''); // Remove leading and trailing underscores
+};
+
 export {
   serverErrorHelper,
   errorResponseHelper,

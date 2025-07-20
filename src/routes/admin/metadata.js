@@ -1,5 +1,5 @@
 import express from 'express';
-import { authorization } from '../../middleware/authorization.js';
+import { authorizedAccessAdmin } from '../../middleware/authorization.js';
 import {
     createMetadata,
     getAllMetadata,
@@ -14,7 +14,7 @@ import {
 const router = express.Router();
 
 // Apply authorization middleware to all routes
-router.use(authorization);
+router.use(authorizedAccessAdmin);
 
 // Create metadata
 router.post('/', createMetadata);

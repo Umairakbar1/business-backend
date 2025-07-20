@@ -1,14 +1,19 @@
 import Category from '../../models/admin/category.js';
 import SubCategory from '../../models/admin/subCategory.js';
 import { categoryValidator } from '../../validators/admin.js';
-import { successResponseHelper, errorResponseHelper } from '../../helpers/utilityHelper.js';
+import { successResponseHelper, errorResponseHelper, generateSlug } from '../../helpers/utilityHelper.js';
 import { deleteFile, getFileUrl } from '../../middleware/fileUpload.js';
 
 const createCategory = async (req, res) => {
   try {
     const { error, value } = categoryValidator.validate(req.body);
     if (error) {
-      return errorResponseHelper(res, 400, error.details[0].message);
+      return errorResponseHelper(res, { message: error.details[0].message, code: '00400' });
+    }
+
+    // Generate slug from title if not provided
+    if (!value.slug) {
+      value.slug = generateSlug(value.title);
     }
 
     // Check if category with same name already exists
@@ -17,7 +22,13 @@ const createCategory = async (req, res) => {
     });
     
     if (existingCategory) {
-      return errorResponseHelper(res, 400, 'Category with this name already exists');
+      return errorResponseHelper(res, { message: 'Category with this name already exists', code: '00400' });
+    }
+
+    // Check if slug already exists
+    const existingSlug = await Category.findOne({ slug: value.slug });
+    if (existingSlug) {
+      return errorResponseHelper(res, { message: 'Category with this slug already exists', code: '00400' });
     }
 
     // Handle image upload
@@ -31,8 +42,12 @@ const createCategory = async (req, res) => {
     // Handle subcategories if provided
     if (req.body.subcategories && Array.isArray(req.body.subcategories)) {
       const subcategoryPromises = req.body.subcategories.map(subcat => {
+        // Generate slug for subcategory
+        const subCategorySlug = generateSlug(subcat.subCategoryName);
+        
         return new SubCategory({
           subCategoryName: subcat.subCategoryName,
+          subCategorySlug: subCategorySlug,
           description: subcat.description,
           categoryId: category._id,
           status: subcat.status || 'active'
@@ -42,10 +57,13 @@ const createCategory = async (req, res) => {
       await Promise.all(subcategoryPromises);
     }
 
-    return successResponseHelper(res, 201, 'Category created successfully', category);
+    return successResponseHelper(res, {
+      message: 'Category created successfully',
+      category
+    });
   } catch (error) {
     console.error('Create category error:', error);
-    return errorResponseHelper(res, 500, 'Internal server error');
+    return errorResponseHelper(res, { message: 'Internal server error', code: '00500' });
   }
 };
 
@@ -72,13 +90,14 @@ const getAllCategories = async (req, res) => {
       .sort(sort)
       .skip(skip)
       .limit(parseInt(limit))
-      .populate('parent', 'title');
+      .populate('parentCategory', 'title');
 
     const total = await Category.countDocuments(filter);
     const totalPages = Math.ceil(total / parseInt(limit));
 
-    return successResponseHelper(res, 200, 'Categories retrieved successfully', {
-      categories,
+    return successResponseHelper(res, {
+      message: 'Categories retrieved successfully',
+      data:categories,
       pagination: {
         currentPage: parseInt(page),
         totalPages,
@@ -88,7 +107,7 @@ const getAllCategories = async (req, res) => {
     });
   } catch (error) {
     console.error('Get all categories error:', error);
-    return errorResponseHelper(res, 500, 'Internal server error');
+    return errorResponseHelper(res, { message: 'Internal server error', code: '00500' });
   }
 };
 
@@ -96,13 +115,16 @@ const getCategoryById = async (req, res) => {
   try {
     const { id } = req.params;
     
-    const category = await Category.findById(id).populate('parent', 'title');
+    const category = await Category.findById(id).populate('parentCategory', 'title');
     
     if (!category) {
       return errorResponseHelper(res, 404, 'Category not found');
     }
 
-    return successResponseHelper(res, 200, 'Category retrieved successfully', category);
+    return successResponseHelper(res, {
+      message: 'Category retrieved successfully',
+      category
+    });
   } catch (error) {
     console.error('Get category by ID error:', error);
     if (error.kind === 'ObjectId') {
@@ -119,13 +141,21 @@ const updateCategory = async (req, res) => {
     const { error, value } = categoryValidator.validate(req.body);
     
     if (error) {
-      return errorResponseHelper(res, 400, error.details[0].message);
+      return errorResponseHelper(res, { message: error.details[0].message, code: '00400' });
     }
 
     // Check if category exists
     const existingCategory = await Category.findById(id);
     if (!existingCategory) {
-      return errorResponseHelper(res, 404, 'Category not found');
+      return errorResponseHelper(res, { message: 'Category not found', code: '00404' });
+    }
+
+    // Generate slug from title if not provided or if title is being updated
+    if (!value.slug && value.title) {
+      value.slug = generateSlug(value.title);
+    } else if (value.title && value.title !== existingCategory.title) {
+      // If title is being updated, regenerate slug
+      value.slug = generateSlug(value.title);
     }
 
     // Check if category with same name already exists (excluding current category)
@@ -138,8 +168,20 @@ const updateCategory = async (req, res) => {
       return errorResponseHelper(res, 400, 'Category with this name already exists');
     }
 
+    // Check if slug already exists (excluding current category)
+    if (value.slug) {
+      const duplicateSlug = await Category.findOne({
+        slug: value.slug,
+        _id: { $ne: id }
+      });
+      
+      if (duplicateSlug) {
+        return errorResponseHelper(res, 400, 'Category with this slug already exists');
+      }
+    }
+
     // Prevent circular reference if updating parent
-    if (value.parent && value.parent.toString() === id) {
+    if (value.parentCategory && value.parentCategory.toString() === id) {
       return errorResponseHelper(res, 400, 'Category cannot be its own parent');
     }
 
@@ -162,9 +204,12 @@ const updateCategory = async (req, res) => {
       id,
       { ...value, updatedAt: Date.now() },
       { new: true, runValidators: true }
-    ).populate('parent', 'title');
+    ).populate('parentCategory', 'title');
 
-    return successResponseHelper(res, 200, 'Category updated successfully', updatedCategory);
+    return successResponseHelper(res, {
+      message: 'Category updated successfully',
+      category: updatedCategory
+    });
   } catch (error) {
     console.error('Update category error:', error);
     if (error.kind === 'ObjectId') {
@@ -221,7 +266,9 @@ const deleteCategory = async (req, res) => {
 
     await Category.findByIdAndDelete(id);
 
-    return successResponseHelper(res, 200, 'Category deleted successfully');
+    return successResponseHelper(res, {
+      message: 'Category deleted successfully'
+    });
   } catch (error) {
     console.error('Delete category error:', error);
     if (error.kind === 'ObjectId') {
@@ -247,7 +294,10 @@ const getCategoryHierarchy = async (req, res) => {
 
     const hierarchy = buildHierarchy();
 
-    return successResponseHelper(res, 200, 'Category hierarchy retrieved successfully', hierarchy);
+    return successResponseHelper(res, {
+      message: 'Category hierarchy retrieved successfully',
+      hierarchy
+    });
   } catch (error) {
     console.error('Get category hierarchy error:', error);
     return errorResponseHelper(res, 500, 'Internal server error');
@@ -271,7 +321,9 @@ const bulkUpdateStatus = async (req, res) => {
       { status, updatedAt: Date.now() }
     );
 
-    return successResponseHelper(res, 200, `Status updated for ${result.modifiedCount} categories`);
+    return successResponseHelper(res, {
+      message: `Status updated for ${result.modifiedCount} categories`
+    });
   } catch (error) {
     console.error('Bulk update status error:', error);
     return errorResponseHelper(res, 500, 'Internal server error');

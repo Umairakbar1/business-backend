@@ -1,5 +1,5 @@
 import Metadata from '../../models/admin/metadata.js';
-import { successResponse, errorResponse } from '../../helpers/utilityHelper.js';
+import { successResponseHelper, errorResponseHelper } from '../../helpers/utilityHelper.js';
 
 // Create metadata
 export const createMetadata = async (req, res) => {
@@ -19,7 +19,7 @@ export const createMetadata = async (req, res) => {
         // Check if metadata already exists for this page
         const existingMetadata = await Metadata.findOne({ pageName });
         if (existingMetadata) {
-            return errorResponse(res, 'Metadata for this page already exists', 400);
+            return errorResponseHelper(res, 'Metadata for this page already exists', 400);
         }
 
         const metadata = new Metadata({
@@ -37,10 +37,10 @@ export const createMetadata = async (req, res) => {
 
         await metadata.save();
 
-        return successResponse(res, 'Metadata created successfully', metadata);
+        return successResponseHelper(res, 'Metadata created successfully', metadata);
     } catch (error) {
         console.error('Create metadata error:', error);
-        return errorResponse(res, 'Failed to create metadata', 500);
+        return errorResponseHelper(res, 'Failed to create metadata', 500);
     }
 };
 
@@ -73,7 +73,7 @@ export const getAllMetadata = async (req, res) => {
 
         const total = await Metadata.countDocuments(query);
 
-        return successResponse(res, 'Metadata retrieved successfully', {
+        return successResponseHelper(res, 'Metadata retrieved successfully', {
             metadata,
             pagination: {
                 currentPage: parseInt(page),
@@ -84,7 +84,7 @@ export const getAllMetadata = async (req, res) => {
         });
     } catch (error) {
         console.error('Get all metadata error:', error);
-        return errorResponse(res, 'Failed to retrieve metadata', 500);
+        return errorResponseHelper(res, 'Failed to retrieve metadata', 500);
     }
 };
 
@@ -98,13 +98,13 @@ export const getMetadataById = async (req, res) => {
             .populate('updatedBy', 'name email');
 
         if (!metadata) {
-            return errorResponse(res, 'Metadata not found', 404);
+            return errorResponseHelper(res, 'Metadata not found', 404);
         }
 
-        return successResponse(res, 'Metadata retrieved successfully', metadata);
+        return successResponseHelper(res, 'Metadata retrieved successfully', metadata);
     } catch (error) {
         console.error('Get metadata by ID error:', error);
-        return errorResponse(res, 'Failed to retrieve metadata', 500);
+        return errorResponseHelper(res, 'Failed to retrieve metadata', 500);
     }
 };
 
@@ -119,13 +119,13 @@ export const getMetadataByUrl = async (req, res) => {
         });
 
         if (!metadata) {
-            return errorResponse(res, 'Metadata not found for this URL', 404);
+            return errorResponseHelper(res, 'Metadata not found for this URL', 404);
         }
 
-        return successResponse(res, 'Metadata retrieved successfully', metadata);
+        return successResponseHelper(res, 'Metadata retrieved successfully', metadata);
     } catch (error) {
         console.error('Get metadata by URL error:', error);
-        return errorResponse(res, 'Failed to retrieve metadata', 500);
+        return errorResponseHelper(res, 'Failed to retrieve metadata', 500);
     }
 };
 
@@ -148,7 +148,7 @@ export const updateMetadata = async (req, res) => {
 
         const metadata = await Metadata.findById(id);
         if (!metadata) {
-            return errorResponse(res, 'Metadata not found', 404);
+            return errorResponseHelper(res, 'Metadata not found', 404);
         }
 
         // Check if pageName is being changed and if it already exists
@@ -158,7 +158,7 @@ export const updateMetadata = async (req, res) => {
                 _id: { $ne: id } 
             });
             if (existingMetadata) {
-                return errorResponse(res, 'Metadata for this page name already exists', 400);
+                return errorResponseHelper(res, 'Metadata for this page name already exists', 400);
             }
         }
 
@@ -188,10 +188,10 @@ export const updateMetadata = async (req, res) => {
         ).populate('createdBy', 'name email')
          .populate('updatedBy', 'name email');
 
-        return successResponse(res, 'Metadata updated successfully', updatedMetadata);
+        return successResponseHelper(res, 'Metadata updated successfully', updatedMetadata);
     } catch (error) {
         console.error('Update metadata error:', error);
-        return errorResponse(res, 'Failed to update metadata', 500);
+        return errorResponseHelper(res, 'Failed to update metadata', 500);
     }
 };
 
@@ -202,15 +202,15 @@ export const deleteMetadata = async (req, res) => {
 
         const metadata = await Metadata.findById(id);
         if (!metadata) {
-            return errorResponse(res, 'Metadata not found', 404);
+            return errorResponseHelper(res, 'Metadata not found', 404);
         }
 
         await Metadata.findByIdAndDelete(id);
 
-        return successResponse(res, 'Metadata deleted successfully');
+        return successResponseHelper(res, 'Metadata deleted successfully');
     } catch (error) {
         console.error('Delete metadata error:', error);
-        return errorResponse(res, 'Failed to delete metadata', 500);
+        return errorResponseHelper(res, 'Failed to delete metadata', 500);
     }
 };
 
@@ -220,11 +220,11 @@ export const bulkUpdateStatus = async (req, res) => {
         const { ids, status } = req.body;
 
         if (!ids || !Array.isArray(ids) || ids.length === 0) {
-            return errorResponse(res, 'Please provide valid IDs array', 400);
+            return errorResponseHelper(res, 'Please provide valid IDs array', 400);
         }
 
         if (!['active', 'inactive'].includes(status)) {
-            return errorResponse(res, 'Invalid status value', 400);
+            return errorResponseHelper(res, 'Invalid status value', 400);
         }
 
         const result = await Metadata.updateMany(
@@ -235,10 +235,10 @@ export const bulkUpdateStatus = async (req, res) => {
             }
         );
 
-        return successResponse(res, `Status updated for ${result.modifiedCount} metadata entries`);
+        return successResponseHelper(res, `Status updated for ${result.modifiedCount} metadata entries`);
     } catch (error) {
         console.error('Bulk update status error:', error);
-        return errorResponse(res, 'Failed to update metadata status', 500);
+        return errorResponseHelper(res, 'Failed to update metadata status', 500);
     }
 };
 
@@ -254,7 +254,7 @@ export const getMetadataStats = async (req, res) => {
             .limit(5)
             .select('pageName title status createdAt');
 
-        return successResponse(res, 'Metadata statistics retrieved successfully', {
+        return successResponseHelper(res, 'Metadata statistics retrieved successfully', {
             total: totalMetadata,
             active: activeMetadata,
             inactive: inactiveMetadata,
@@ -262,6 +262,6 @@ export const getMetadataStats = async (req, res) => {
         });
     } catch (error) {
         console.error('Get metadata stats error:', error);
-        return errorResponse(res, 'Failed to retrieve metadata statistics', 500);
+        return errorResponseHelper(res, 'Failed to retrieve metadata statistics', 500);
     }
 }; 
