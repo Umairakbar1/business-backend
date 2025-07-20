@@ -13,16 +13,15 @@ const categoryValidator = Joi.object({
     }),
   
   slug: Joi.string()
-    .pattern(/^[a-z0-9-]+$/)
+    .pattern(/^[a-z0-9_]+$/)
     .min(3)
     .max(50)
-    .required()
+    .optional()
     .trim()
     .messages({
-      'string.pattern.base': 'Slug must contain only lowercase letters, numbers, and hyphens',
+      'string.pattern.base': 'Slug must contain only lowercase letters, numbers, and underscores',
       'string.min': 'Slug must be at least 3 characters long',
-      'string.max': 'Slug cannot exceed 50 characters',
-      'any.required': 'Slug is required'
+      'string.max': 'Slug cannot exceed 50 characters'
     }),
   
   description: Joi.string()
@@ -86,11 +85,13 @@ const categoryValidator = Joi.object({
       subCategoryName: Joi.string()
         .min(2)
         .max(100)
-        .optional()
+        .required()
         .trim()
         .messages({
+          'string.empty': 'Sub-category name is required',
           'string.min': 'Sub-category name must be at least 2 characters long',
           'string.max': 'Sub-category name cannot exceed 100 characters',
+          'any.required': 'Sub-category name is required'
         }),
       description: Joi.string()
         .max(300)
@@ -104,13 +105,6 @@ const categoryValidator = Joi.object({
         .default('active')
         .messages({
           'any.only': 'Status must be one of: active, inactive, draft'
-        }),
-      categoryId: Joi.string()
-        .pattern(/^[0-9a-fA-F]{24}$/)
-        .required()
-        .messages({
-          'string.pattern.base': 'Category ID must be a valid MongoDB ObjectId',
-          'any.required': 'Category ID is required'
         })
     }))
     .optional()
