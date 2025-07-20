@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { authorizedAccessAdmin } from "../../middleware/authorization.js";
-import { upload } from "../../middleware/fileUpload.js";
+import { uploadSingleImage,uploadMultipleImages } from "../../middleware/fileUpload.js";
 import {
   getAllQueryTickets,
   getQueryTicketById,
@@ -26,10 +26,10 @@ router.get("/stats", authorizedAccessAdmin, getTicketStats);
 router.get("/:id", authorizedAccessAdmin, getQueryTicketById);
 
 // POST /admin/query-tickets - Create new query ticket
-router.post("/", authorizedAccessAdmin, upload.single('attachment'), createQueryTicket);
+router.post("/", authorizedAccessAdmin, uploadSingleImage, createQueryTicket);
 
 // PUT /admin/query-tickets/:id - Update query ticket
-router.put("/:id", authorizedAccessAdmin, upload.single('attachment'), updateQueryTicket);
+router.put("/:id", authorizedAccessAdmin, uploadSingleImage, updateQueryTicket);
 
 // DELETE /admin/query-tickets/:id - Delete query ticket
 router.delete("/:id", authorizedAccessAdmin, deleteQueryTicket);

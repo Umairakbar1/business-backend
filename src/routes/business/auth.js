@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { authorizedAccessBusiness } from "../../middleware/authorization.js";
-import { upload } from "../../middleware/fileUpload.js";
+import { uploadSingleImage as  upload } from "../../middleware/fileUpload.js";
 import {
   businessSignup,
   verifyOtpAndSetCredentials,
@@ -63,6 +63,6 @@ router.get("/profile", authorizedAccessBusiness, getProfile);
 router.put("/update-password", authorizedAccessBusiness, validateBusinessAuth(updatePasswordValidation), updatePassword);
 
 // PUT /business/auth/update-profile - Update profile
-router.put("/update-profile", authorizedAccessBusiness, upload.single('profilePhoto'), validateBusinessAuth(updateProfileValidation), updateProfile);
+router.put("/update-profile", authorizedAccessBusiness, upload, validateBusinessAuth(updateProfileValidation), updateProfile);
 
 export default router; 

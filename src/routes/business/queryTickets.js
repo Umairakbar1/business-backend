@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { authorizedAccessBusiness } from "../../middleware/authorization.js";
-import { upload } from "../../middleware/fileUpload.js";
+import { uploadSingleImage as  upload } from "../../middleware/fileUpload.js";
 import {
   getBusinessQueryTickets,
   getQueryTicketById,
@@ -26,10 +26,10 @@ router.get("/stats", authorizedAccessBusiness, getTicketStats);
 router.get("/:id", authorizedAccessBusiness, getQueryTicketById);
 
 // POST /business/query-tickets - Create new query ticket
-router.post("/", authorizedAccessBusiness, upload.single('attachment'), createQueryTicket);
+router.post("/", authorizedAccessBusiness, upload, createQueryTicket);
 
 // PUT /business/query-tickets/:id - Update query ticket
-router.put("/:id", authorizedAccessBusiness, upload.single('attachment'), updateQueryTicket);
+router.put("/:id", authorizedAccessBusiness, upload, updateQueryTicket);
 
 // DELETE /business/query-tickets/:id - Delete query ticket
 router.delete("/:id", authorizedAccessBusiness, deleteQueryTicket);

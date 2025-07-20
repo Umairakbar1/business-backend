@@ -1,5 +1,5 @@
 import Metadata from '../../models/admin/metadata.js';
-import { successResponse, errorResponse } from '../../helpers/utilityHelper.js';
+import {successResponseHelper as  successResponse, errorResponseHelper as errorResponse  } from '../../helpers/utilityHelper.js';
 
 // Create metadata
 export const createMetadata = async (req, res) => {
