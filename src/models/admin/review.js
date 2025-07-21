@@ -27,7 +27,34 @@ const ReviewSchema = new mongoose.Schema({
       type: String,
       trim: true
     },
-    media: [String],
+    media: [{
+      type: {
+        type: String,
+        enum: ['image', 'video'],
+        required: true
+      },
+      // For images
+      original: {
+        url: String,
+        public_id: String,
+        width: Number,
+        height: Number
+      },
+      thumbnail: {
+        url: String,
+        public_id: String,
+        width: Number,
+        height: Number
+      },
+      // For videos
+      video: {
+        url: String,
+        public_id: String,
+        duration: Number,
+        format: String,
+        bytes: Number
+      }
+    }],
     status: {
       type: String,
       enum: ['pending', 'approved', 'rejected'],

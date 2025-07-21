@@ -21,13 +21,14 @@ import {
 } from '../../controllers/business/business.controller.js';
 import { validateBusiness, validateBusinessStatus } from '../../validators/business/business.js';
 import { authenticate } from '../../middleware/authorization.js';
+import { uploadSingleImageToCloudinary, handleCloudinaryUploadError } from '../../middleware/cloudinaryUpload.js';
 
 const router = Router();
 
-router.post('/', authenticate, validateBusiness, createBusiness);
+router.post('/', authenticate, uploadSingleImageToCloudinary, handleCloudinaryUploadError, validateBusiness, createBusiness);
 router.get('/', authenticate, getMyBusinesses);
 router.get('/:id', authenticate, getBusinessById);
-router.put('/:id', authenticate, validateBusiness, updateBusiness);
+router.put('/:id', authenticate, uploadSingleImageToCloudinary, handleCloudinaryUploadError, validateBusiness, updateBusiness);
 router.delete('/:id', authenticate, deleteBusiness);
 router.patch('/:id/status', authenticate, validateBusinessStatus, updateBusinessStatus);
 router.get('/plans/available', authenticate, getAvailablePlans);

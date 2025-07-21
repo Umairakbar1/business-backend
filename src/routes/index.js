@@ -3,9 +3,9 @@ import adminAuthRoutes from "./admin/auth.js";
 import adminBusinessRoutes from "./admin/business.js";
 import adminUsersRoutes from "./admin/users.js";
 import adminBlogsRoutes from "./admin/blogs.js";
+import adminLogCategoryRoutes from "./admin/logCategory.js";
 import adminCategoryRoutes from "./admin/category.js";
 import adminSubCategoryRoutes from "./admin/subCategory.js";
-import adminLogCategoryRoutes from "./admin/logCategory.js";
 import adminLogSubCategoryRoutes from "./admin/logSubCategory.js";
 import adminReviewsRoutes from "./admin/reviews.js";
 import adminQueryTicketsRoutes from "./admin/queryTickets.js";
@@ -17,6 +17,7 @@ import userAuthRoutes from "./user/auth.js";
 import userBusinessRoutes from "./user/buisness.js";
 import userReviewRoutes from "./user/review.js";
 import userBlogsRoutes from "./user/blogs.js";
+import mediaRoutes from "./media.js";
 import { getMetadataByUrl } from "../controllers/admin/metadata.controller.js";
 
 const router = Router();
@@ -26,9 +27,9 @@ router.use("/admin/auth", adminAuthRoutes);
 router.use("/admin/business", adminBusinessRoutes);
 router.use("/admin/users", adminUsersRoutes);
 router.use("/admin/blogs", adminBlogsRoutes);
+router.use("/admin/log-category", adminLogCategoryRoutes);
 router.use("/admin/category", adminCategoryRoutes);
 router.use("/admin/subcategory", adminSubCategoryRoutes);
-router.use("/admin/log-category", adminLogCategoryRoutes);
 router.use("/admin/log-subcategory", adminLogSubCategoryRoutes);
 router.use("/admin/reviews", adminReviewsRoutes);
 router.use("/admin/query-tickets", adminQueryTicketsRoutes);
@@ -44,6 +45,9 @@ router.use("/user/auth", userAuthRoutes);
 router.use("/user/business", userBusinessRoutes);
 router.use("/user/review", userReviewRoutes);
 router.use("/user/blogs", userBlogsRoutes);
+
+// Media routes
+router.use("/media", mediaRoutes);
 
 // Public metadata route for user-side pages
 router.get("/metadata/:url", getMetadataByUrl);

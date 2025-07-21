@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { authorizedAccessBusiness } from "../../middleware/authorization.js";
-import { uploadSingleImage as  upload } from "../../middleware/fileUpload.js";
+import { uploadSingleDocumentToCloudinary, handleCloudinaryUploadError } from "../../middleware/cloudinaryUpload.js";
 import {
   getBusinessQueryTickets,
   getQueryTicketById,
@@ -25,11 +25,11 @@ router.get("/stats", authorizedAccessBusiness, getTicketStats);
 // GET /business/query-tickets/:id - Get single query ticket details
 router.get("/:id", authorizedAccessBusiness, getQueryTicketById);
 
-// POST /business/query-tickets - Create new query ticket
-router.post("/", authorizedAccessBusiness, upload, createQueryTicket);
+// POST /business/query-tickets - Create new query ticket with file upload
+router.post("/", authorizedAccessBusiness, uploadSingleDocumentToCloudinary, handleCloudinaryUploadError, createQueryTicket);
 
-// PUT /business/query-tickets/:id - Update query ticket
-router.put("/:id", authorizedAccessBusiness, upload, updateQueryTicket);
+// PUT /business/query-tickets/:id - Update query ticket with file upload
+router.put("/:id", authorizedAccessBusiness, uploadSingleDocumentToCloudinary, handleCloudinaryUploadError, updateQueryTicket);
 
 // DELETE /business/query-tickets/:id - Delete query ticket
 router.delete("/:id", authorizedAccessBusiness, deleteQueryTicket);

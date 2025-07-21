@@ -2,7 +2,7 @@ import mongoose from "mongoose";
 const { Schema, model } = mongoose;
 
 const LogCategorySchema = new mongoose.Schema({
-    name: {
+    title: {
         type: String,
         required: true,
         trim: true
@@ -17,7 +17,12 @@ const LogCategorySchema = new mongoose.Schema({
         lowercase: true
     },
     image: {
-        type: String
+        url: {
+            type: String
+        },
+        public_id: {
+            type: String
+        }
     },
     status: {
         type: String,
@@ -35,8 +40,8 @@ const LogCategorySchema = new mongoose.Schema({
 
 // Create slug from name before saving
 LogCategorySchema.pre('save', function(next) {
-    if (this.isModified('name')) {
-        this.slug = this.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
+    if (this.isModified('title')) {
+        this.slug = this.title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
     }
     next();
 });

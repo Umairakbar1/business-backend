@@ -119,7 +119,7 @@ const getCategoryById = async (req, res) => {
     const category = await Category.findById(id).populate('parentCategory', 'title');
     
     if (!category) {
-      return errorResponseHelper(res, 404, 'Category not found');
+      return errorResponseHelper(res, { message: 'Category not found', code: '00404' });
     }
 
     return successResponseHelper(res, {
@@ -129,7 +129,7 @@ const getCategoryById = async (req, res) => {
   } catch (error) {
     console.error('Get category by ID error:', error);
     if (error.kind === 'ObjectId') {
-      return errorResponseHelper(res, 400, 'Invalid category ID');
+      return errorResponseHelper(res, { message: 'Invalid category ID', code: '00400' });
     }
     return errorResponseHelper(res, { message: 'Internal server error', code: '00500' });
   }
@@ -166,7 +166,7 @@ const updateCategory = async (req, res) => {
     });
     
     if (duplicateCategory) {
-      return errorResponseHelper(res, 400, 'Category with this name already exists');
+      return errorResponseHelper(res, { message: 'Category with this name already exists', code: '00400' });
     }
 
     // Check if slug already exists (excluding current category)
@@ -177,13 +177,13 @@ const updateCategory = async (req, res) => {
       });
       
       if (duplicateSlug) {
-        return errorResponseHelper(res, 400, 'Category with this slug already exists');
+        return errorResponseHelper(res, { message: 'Category with this slug already exists', code: '00400' });
       }
     }
 
     // Prevent circular reference if updating parent
     if (value.parentCategory && value.parentCategory.toString() === id) {
-      return errorResponseHelper(res, 400, 'Category cannot be its own parent');
+      return errorResponseHelper(res, { message: 'Category cannot be its own parent', code: '00400' });
     }
 
     // Handle image upload and deletion of previous image
@@ -214,7 +214,7 @@ const updateCategory = async (req, res) => {
   } catch (error) {
     console.error('Update category error:', error);
     if (error.kind === 'ObjectId') {
-      return errorResponseHelper(res, 400, 'Invalid category ID');
+      return errorResponseHelper(res, { message: 'Invalid category ID', code: '00400' });
     }
     return errorResponseHelper(res, { message: 'Internal server error', code: '00500' });
   }
@@ -227,13 +227,13 @@ const deleteCategory = async (req, res) => {
     // Check if category exists
     const category = await Category.findById(id);
     if (!category) {
-      return errorResponseHelper(res, 404, 'Category not found');
+      return errorResponseHelper(res, { message: 'Category not found', code: '00404' });
     }
 
     // Check if category has children
     const hasChildren = await Category.findOne({ parent: id });
     if (hasChildren) {
-      return errorResponseHelper(res, 400, 'Cannot delete category with subcategories. Please move or delete subcategories first.');
+      return errorResponseHelper(res, { message: 'Cannot delete category with subcategories. Please move or delete subcategories first.', code: '00400' });
     }
 
     // Check if category has subcategories
@@ -273,7 +273,7 @@ const deleteCategory = async (req, res) => {
   } catch (error) {
     console.error('Delete category error:', error);
     if (error.kind === 'ObjectId') {
-      return errorResponseHelper(res, 400, 'Invalid category ID');
+      return errorResponseHelper(res, { message: 'Invalid category ID', code: '00400' });
     }
     return errorResponseHelper(res, { message: 'Internal server error', code: '00500' });
   }
@@ -310,11 +310,11 @@ const bulkUpdateStatus = async (req, res) => {
     const { categoryIds, status } = req.body;
 
     if (!categoryIds || !Array.isArray(categoryIds) || categoryIds.length === 0) {
-      return errorResponseHelper(res, 400, 'Category IDs array is required');
+      return errorResponseHelper(res, { message: 'Category IDs array is required', code: '00400' });
     }
 
     if (!['active', 'inactive'].includes(status)) {
-      return errorResponseHelper(res, 400, 'Status must be either "active" or "inactive"');
+      return errorResponseHelper(res, { message: 'Status must be either "active" or "inactive"', code: '00400' });
     }
 
     const result = await Category.updateMany(

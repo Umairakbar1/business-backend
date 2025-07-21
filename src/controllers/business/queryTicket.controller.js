@@ -1,6 +1,7 @@
 import QueryTicket from '../../models/admin/queryTicket.js';
 import Business from '../../models/business/business.js';
 import { errorResponseHelper, successResponseHelper } from '../../helpers/utilityHelper.js';
+import { uploadImage, uploadVideo } from '../../helpers/cloudinaryHelper.js';
 import mongoose from 'mongoose';
 
 // GET /business/query-tickets - Get all query tickets for business
@@ -109,11 +110,38 @@ export const createQueryTicket = async (req, res) => {
     // Handle file upload if present
     let attachment = null;
     if (req.file) {
-      attachment = {
-        url: req.file.location || req.file.path,
-        key: req.file.key,
-        originalName: req.file.originalname
-      };
+      try {
+        if (req.file.mimetype.startsWith('video/')) {
+          // Upload video to Cloudinary
+          const videoResult = await uploadVideo(req.file.buffer, 'business-app/tickets/videos');
+          attachment = {
+            url: videoResult.url,
+            public_id: videoResult.public_id,
+            originalName: req.file.originalname,
+            type: 'video',
+            duration: videoResult.duration,
+            format: videoResult.format,
+            bytes: videoResult.bytes
+          };
+        } else {
+          // Upload image/document to Cloudinary
+          const imageResult = await uploadImage(req.file.buffer, 'business-app/tickets/documents');
+          attachment = {
+            url: imageResult.url,
+            public_id: imageResult.public_id,
+            originalName: req.file.originalname,
+            type: 'document',
+            format: imageResult.format,
+            bytes: imageResult.bytes
+          };
+        }
+      } catch (uploadError) {
+        console.error('File upload error:', uploadError);
+        return errorResponseHelper(res, { 
+          message: 'Failed to upload attachment. Please try again.', 
+          code: '00500' 
+        });
+      }
     }
     
     const ticketData = {
@@ -166,6 +194,42 @@ export const updateQueryTicket = async (req, res) => {
       return errorResponseHelper(res, { message: 'Query ticket not found', code: '00404' });
     }
     
+    // Handle file upload if present
+    if (req.file) {
+      try {
+        if (req.file.mimetype.startsWith('video/')) {
+          // Upload video to Cloudinary
+          const videoResult = await uploadVideo(req.file.buffer, 'business-app/tickets/videos');
+          ticket.attachment = {
+            url: videoResult.url,
+            public_id: videoResult.public_id,
+            originalName: req.file.originalname,
+            type: 'video',
+            duration: videoResult.duration,
+            format: videoResult.format,
+            bytes: videoResult.bytes
+          };
+        } else {
+          // Upload image/document to Cloudinary
+          const imageResult = await uploadImage(req.file.buffer, 'business-app/tickets/documents');
+          ticket.attachment = {
+            url: imageResult.url,
+            public_id: imageResult.public_id,
+            originalName: req.file.originalname,
+            type: 'document',
+            format: imageResult.format,
+            bytes: imageResult.bytes
+          };
+        }
+      } catch (uploadError) {
+        console.error('File upload error:', uploadError);
+        return errorResponseHelper(res, { 
+          message: 'Failed to upload attachment. Please try again.', 
+          code: '00500' 
+        });
+      }
+    }
+    
     // Update fields
     if (title) ticket.title = title;
     if (businessName) ticket.businessName = businessName;
@@ -173,15 +237,6 @@ export const updateQueryTicket = async (req, res) => {
     if (childIssue !== undefined) ticket.childIssue = childIssue;
     if (linkedIssue !== undefined) ticket.linkedIssue = linkedIssue;
     if (websiteUrl !== undefined) ticket.websiteUrl = websiteUrl;
-    
-    // Handle file upload if present
-    if (req.file) {
-      ticket.attachment = {
-        url: req.file.location || req.file.path,
-        key: req.file.key,
-        originalName: req.file.originalname
-      };
-    }
     
     ticket.updatedAt = new Date();
     await ticket.save();

@@ -15,6 +15,7 @@ const createAdmin = async (req, res) => {
     const [data, error] = await asyncWrapper(() => newUser.save());
     if (error) return serverErrorHelper(req, res, 500, error);
     return successResponseHelper(res, {
+        message: 'Admin created successfully',
         admin: data,
     });
 
@@ -27,12 +28,13 @@ const loginAdmin = async (req, res) => {
         Admin.findOne({ email }).select("+password")
     );
     if (error) return serverErrorHelper(req, res, 500, error);
-    if (!admin) return errorResponseHelper(res, GLOBAL_MESSAGES.emailNotFound);
+    if (!admin) return errorResponseHelper(res, { message: GLOBAL_MESSAGES.emailNotFound, code: '00404' });
     // const match = await compare(password, admin.password);
-    if (password != admin.password) return errorResponseHelper(res, GLOBAL_MESSAGES.invalidCredentials);
+    if (password != admin.password) return errorResponseHelper(res, { message: GLOBAL_MESSAGES.invalidCredentials, code: '00400' });
     const accessToken = signAccessTokenAdmin(admin?._id);
     delete admin._doc.password; //remove password form returned object
     return successResponseHelper(res, {
+        message: 'Login successful',
         admin: admin._doc,
         token: accessToken,
     });
@@ -49,8 +51,11 @@ const updateAdminProfile = async (req, res) => {
         )
     );
     if (error) return serverErrorHelper(req, res, 500, error);
-    if (!admin) return errorResponseHelper(res, "Admin not found");
-    return successResponseHelper(res, { admin });
+    if (!admin) return errorResponseHelper(res, { message: 'Admin not found', code: '00404' });
+    return successResponseHelper(res, { 
+        message: 'Admin profile updated successfully',
+        admin 
+    });
 };
 
 const updateAdminPassword = async (req, res) => {
@@ -60,9 +65,9 @@ const updateAdminPassword = async (req, res) => {
         Admin.findById(adminId).select("+password")
     );
     if (error) return serverErrorHelper(req, res, 500, error);
-    if (!admin) return errorResponseHelper(res, "Admin not found");
+    if (!admin) return errorResponseHelper(res, { message: 'Admin not found', code: '00404' });
     if (admin.password !== currentPassword) {
-        return errorResponseHelper(res, "Current password is incorrect");
+        return errorResponseHelper(res, { message: 'Current password is incorrect', code: '00400' });
     }
     admin.password = newPassword;
     const [updatedAdmin, saveError] = await asyncWrapper(() => admin.save());

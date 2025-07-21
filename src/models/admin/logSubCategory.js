@@ -2,7 +2,7 @@ import mongoose from "mongoose";
 const { Schema, model } = mongoose;
 
 const LogSubCategorySchema = new mongoose.Schema({
-    name: {
+    title: {
         type: String,
         required: true,
         trim: true
@@ -16,9 +16,6 @@ const LogSubCategorySchema = new mongoose.Schema({
         unique: true,
         lowercase: true
     },
-    image: {
-        type: String
-    },
     categoryId: {
         type: mongoose.Schema.Types.ObjectId,
         ref: 'LogCategory',
@@ -29,23 +26,14 @@ const LogSubCategorySchema = new mongoose.Schema({
         enum: ['active', 'inactive'],
         default: 'active'
     },
-    createdBy: {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: 'Admin',
-        required: true
-    },
-    updatedBy: {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: 'Admin'
-    }
 }, {
     timestamps: true
 });
 
 // Create slug from name before saving
 LogSubCategorySchema.pre('save', function(next) {
-    if (this.isModified('name')) {
-        this.slug = this.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
+    if (this.isModified('title')) {
+        this.slug = this.title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
     }
     next();
 });

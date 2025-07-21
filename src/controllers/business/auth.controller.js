@@ -7,6 +7,7 @@ import {
 } from '../../helpers/utilityHelper.js';
 import { signAccessTokenBusiness } from '../../helpers/jwtHelper.js';
 import { sendEmail } from '../../helpers/sendGridHelper.js';
+import { uploadImageWithThumbnail } from '../../helpers/cloudinaryHelper.js';
 
 // Business Signup - Step 1: Basic Information
 export const businessSignup = async (req, res) => {
@@ -540,8 +541,7 @@ export const updateProfile = async (req, res) => {
       city,
       state,
       zipCode,
-      country,
-      profilePhoto
+      country
     } = req.body;
 
     // Find business
@@ -551,6 +551,28 @@ export const updateProfile = async (req, res) => {
         message: 'Business account not found',
         code: '00404'
       });
+    }
+
+    // Handle profile photo upload
+    let profilePhotoData = null;
+    if (req.file) {
+      try {
+        const uploadResult = await uploadImageWithThumbnail(req.file.buffer, 'business-app/profiles');
+        profilePhotoData = {
+          url: uploadResult.original.url,
+          public_id: uploadResult.original.public_id,
+          thumbnail: {
+            url: uploadResult.thumbnail.url,
+            public_id: uploadResult.thumbnail.public_id
+          }
+        };
+      } catch (uploadError) {
+        console.error('Profile photo upload error:', uploadError);
+        return errorResponseHelper(res, { 
+          message: 'Failed to upload profile photo. Please try again.', 
+          code: '00500' 
+        });
+      }
     }
 
     // Update fields
@@ -563,7 +585,7 @@ export const updateProfile = async (req, res) => {
     if (state) business.state = state;
     if (zipCode) business.zipCode = zipCode;
     if (country) business.country = country;
-    if (profilePhoto) business.profilePhoto = profilePhoto;
+    if (profilePhotoData) business.profilePhoto = profilePhotoData;
 
     await business.save();
 

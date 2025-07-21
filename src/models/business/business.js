@@ -77,6 +77,16 @@ const BusinessSchema = new Schema({
     default: "https://via.placeholder.com/150"
   },
   
+  // Logo
+  logo: {
+    url: String,
+    public_id: String,
+    thumbnail: {
+      url: String,
+      public_id: String
+    }
+  },
+  
   // Status and Approval
   owner: {
     type: mongoose.Schema.Types.ObjectId,

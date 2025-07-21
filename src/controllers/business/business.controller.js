@@ -2,12 +2,36 @@ import Business from '../../models/business/business.js';
 import mongoose from 'mongoose';
 import stripeHelper from '../../helpers/stripeHelper.js';
 import BusinessSubscription from '../../models/admin/businessSubsciption.js';
+import { uploadImageWithThumbnail } from '../../helpers/cloudinaryHelper.js';
 import axios from 'axios';
 import Joi from 'joi';
 
 export const createBusiness = async (req, res) => {
   try {
     const { plan, ...data } = req.body;
+    
+    // Handle logo upload
+    let logoData = null;
+    if (req.file) {
+      try {
+        const uploadResult = await uploadImageWithThumbnail(req.file.buffer, 'business-app/logos');
+        logoData = {
+          url: uploadResult.original.url,
+          public_id: uploadResult.original.public_id,
+          thumbnail: {
+            url: uploadResult.thumbnail.url,
+            public_id: uploadResult.thumbnail.public_id
+          }
+        };
+      } catch (uploadError) {
+        console.error('Logo upload error:', uploadError);
+        return res.status(500).json({ 
+          success: false, 
+          message: 'Failed to upload logo. Please try again.' 
+        });
+      }
+    }
+    
     // Assign features based on plan
     let features = [];
     if (plan === 'bronze') features = ['query_ticketing'];
@@ -16,8 +40,10 @@ export const createBusiness = async (req, res) => {
     // Generate embed token for gold
     let embedToken = undefined;
     if (plan === 'gold') embedToken = Math.random().toString(36).substring(2, 15);
+    
     const business = await Business.create({
       ...data,
+      logo: logoData,
       owner: req.user._id,
       plan,
       features,
@@ -54,6 +80,28 @@ export const updateBusiness = async (req, res) => {
   try {
     const { id } = req.params;
     const updateData = req.body;
+    
+    // Handle logo upload
+    if (req.file) {
+      try {
+        const uploadResult = await uploadImageWithThumbnail(req.file.buffer, 'business-app/logos');
+        updateData.logo = {
+          url: uploadResult.original.url,
+          public_id: uploadResult.original.public_id,
+          thumbnail: {
+            url: uploadResult.thumbnail.url,
+            public_id: uploadResult.thumbnail.public_id
+          }
+        };
+      } catch (uploadError) {
+        console.error('Logo upload error:', uploadError);
+        return res.status(500).json({ 
+          success: false, 
+          message: 'Failed to upload logo. Please try again.' 
+        });
+      }
+    }
+    
     const business = await Business.findOneAndUpdate(
       { _id: id, owner: req.user._id },
       updateData,

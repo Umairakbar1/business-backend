@@ -22,8 +22,18 @@ const QueryTicketSchema = new Schema({
   websiteUrl: { type: String },
   attachment: {
     url: String,
-    key: String,
-    originalName: String
+    public_id: String,
+    originalName: String,
+    type: {
+      type: String,
+      enum: ['document', 'video'],
+      required: true
+    },
+    // For documents
+    format: String,
+    bytes: Number,
+    // For videos
+    duration: Number
   },
   
   // Creator information

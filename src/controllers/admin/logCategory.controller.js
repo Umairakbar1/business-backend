@@ -1,28 +1,72 @@
 import LogCategory from '../../models/admin/logCategory.js';
 import LogSubCategory from '../../models/admin/logSubCategory.js';
 import { successResponseHelper, errorResponseHelper } from '../../helpers/utilityHelper.js';
+import { uploadImageWithThumbnail, deleteFile } from '../../helpers/cloudinaryHelper.js';
 
 const createLogCategory = async (req, res) => {
   try {
-    const { name, description, image, status = 'active', parent } = req.body;
+    const { title, description, status = 'active', parent } = req.body;
 
-    if (!name) {
-      return errorResponseHelper(res, 400, 'Category name is required');
+    console.log(title,"@title")
+    console.log(req.body, "@req.body")
+    console.log(req.file, "@req.file")
+    
+    if (!title) {
+      return errorResponseHelper(res, {message:'Category is required', code:'00400'});
     }
 
     // Check if category with same name already exists
     const existingCategory = await LogCategory.findOne({ 
-      name: { $regex: new RegExp(`^${name}$`, 'i') } 
+      title: { $regex: new RegExp(`^${title}$`, 'i') } 
     });
     
     if (existingCategory) {
-      return errorResponseHelper(res, 400, 'Category with this name already exists');
+      return errorResponseHelper(res, {message:'Category with this name already exists', code:'00400'});
+    }
+
+    // Handle image upload to Cloudinary
+    let imageData = null;
+    if (req.file) {
+      try {
+        console.log('Starting image upload for log category:', {
+          fileName: req.file.originalname,
+          fileSize: req.file.size,
+          mimeType: req.file.mimetype
+        });
+        
+        const uploadResult = await uploadImageWithThumbnail(req.file.buffer, 'business-app/log-categories');
+        imageData = {
+          url: uploadResult.original.url,
+          public_id: uploadResult.original.public_id
+        };
+        
+        console.log('Image upload successful:', imageData.public_id);
+      } catch (uploadError) {
+        console.error('Cloudinary upload error details:', {
+          message: uploadError.message,
+          stack: uploadError.stack,
+          fileName: req.file?.originalname,
+          fileSize: req.file?.size
+        });
+        
+        // Provide more specific error message based on the error
+        let errorMessage = 'Image upload failed';
+        if (uploadError.message.includes('configuration')) {
+          errorMessage = 'Image upload service is not properly configured';
+        } else if (uploadError.message.includes('Invalid file buffer')) {
+          errorMessage = 'Invalid image file provided';
+        } else if (uploadError.message.includes('network') || uploadError.message.includes('timeout')) {
+          errorMessage = 'Image upload failed due to network issues';
+        }
+        
+        return errorResponseHelper(res, {message: errorMessage, code:'00500'});
+      }
     }
 
     const category = new LogCategory({
-      name,
+      title,
       description,
-      image,
+      image: imageData,
       status,
       parent
     });
@@ -32,7 +76,7 @@ const createLogCategory = async (req, res) => {
     if (req.body.subcategories && Array.isArray(req.body.subcategories)) {
       const subcategoryPromises = req.body.subcategories.map(subcat => {
         return new LogSubCategory({
-          name: subcat.name,
+          title: subcat.title,
           description: subcat.description,
           categoryId: category._id,
           status: subcat.status || 'active',
@@ -43,10 +87,10 @@ const createLogCategory = async (req, res) => {
       await Promise.all(subcategoryPromises);
     }
 
-    return successResponseHelper(res, 201, 'Log category created successfully', category);
+    return successResponseHelper(res, {message:'Log category created successfully', data:category});
   } catch (error) {
     console.error('Create log category error:', error);
-    return errorResponseHelper(res, 500, 'Internal server error');
+    return errorResponseHelper(res, {message:'Internal server error', code:'00500'});
   }
 };
 
@@ -57,7 +101,7 @@ const getAllLogCategories = async (req, res) => {
     // Build filter object
     const filter = {};
     if (search) {
-      filter.name = { $regex: search, $options: 'i' };
+      filter.title = { $regex: search, $options: 'i' };
     }
     if (status) {
       filter.status = status;
@@ -73,13 +117,14 @@ const getAllLogCategories = async (req, res) => {
       .sort(sort)
       .skip(skip)
       .limit(parseInt(limit))
-      .populate('parent', 'name');
+      .populate('parent', 'title');
 
     const total = await LogCategory.countDocuments(filter);
     const totalPages = Math.ceil(total / parseInt(limit));
 
-    return successResponseHelper(res, 200, 'Log categories retrieved successfully', {
-      categories,
+    return successResponseHelper(res,{
+      message:'Log categories retrieved successfully',
+      data:categories,
       pagination: {
         currentPage: parseInt(page),
         totalPages,
@@ -89,7 +134,7 @@ const getAllLogCategories = async (req, res) => {
     });
   } catch (error) {
     console.error('Get all log categories error:', error);
-    return errorResponseHelper(res, 500, 'Internal server error');
+    return errorResponseHelper(res, {message:'Internal server error', code:'00500'});
   }
 };
 
@@ -97,70 +142,121 @@ const getLogCategoryById = async (req, res) => {
   try {
     const { id } = req.params;
     
-    const category = await LogCategory.findById(id).populate('parent', 'name');
+    const category = await LogCategory.findById(id).populate('parent', 'title');
     
     if (!category) {
-      return errorResponseHelper(res, 404, 'Log category not found');
+      return errorResponseHelper(res, {message:'Log category not found', code:'00404'});
     }
 
-    return successResponseHelper(res, 200, 'Log category retrieved successfully', category);
+    return successResponseHelper(res, {message:'Log category retrieved successfully', data:category});
   } catch (error) {
     console.error('Get log category by ID error:', error);
     if (error.kind === 'ObjectId') {
-      return errorResponseHelper(res, 400, 'Invalid log category ID');
+      return errorResponseHelper(res, {message:'Invalid log category ID', code:'00400'});
     }
-    return errorResponseHelper(res, 500, 'Internal server error');
+    return errorResponseHelper(res, {message:'Internal server error', code:'00500'});
   }
 };
 
 const updateLogCategory = async (req, res) => {
   try {
     const { id } = req.params;
-    const { name, description, image, status, parent } = req.body;
+    const { title, description, status, parent } = req.body;
     
     // Check if category exists
     const existingCategory = await LogCategory.findById(id);
     if (!existingCategory) {
-      return errorResponseHelper(res, 404, 'Log category not found');
+      return errorResponseHelper(res, {message:'Log category not found', code:'00404'});
     }
 
     // Check if category with same name already exists (excluding current category)
-    if (name && name !== existingCategory.name) {
+    if (title && title !== existingCategory.title) {
       const duplicateCategory = await LogCategory.findOne({
-        name: { $regex: new RegExp(`^${name}$`, 'i') },
+        title: { $regex: new RegExp(`^${title}$`, 'i') },
         _id: { $ne: id }
       });
       
       if (duplicateCategory) {
-        return errorResponseHelper(res, 400, 'Log category with this name already exists');
+        return errorResponseHelper(res, {message:'Log category with this name already exists', code:'00400'});
       }
     }
 
     // Prevent circular reference if updating parent
     if (parent && parent.toString() === id) {
-      return errorResponseHelper(res, 400, 'Category cannot be its own parent');
+      return errorResponseHelper(res, {message:'Category cannot be its own parent', code:'00400'});
+    }
+
+    // Handle image upload to Cloudinary
+    let imageData = existingCategory.image; // Keep existing image if no new upload
+    if (req.file) {
+      try {
+        console.log('Starting image upload for log category update:', {
+          fileName: req.file.originalname,
+          fileSize: req.file.size,
+          mimeType: req.file.mimetype
+        });
+        
+        // Delete old image from Cloudinary if it exists
+        if (existingCategory.image && existingCategory.image.public_id) {
+          try {
+            await deleteFile(existingCategory.image.public_id, 'image');
+            console.log('Old image deleted successfully:', existingCategory.image.public_id);
+          } catch (deleteError) {
+            console.error('Error deleting old image:', deleteError);
+            // Continue with upload even if deletion fails
+          }
+        }
+
+        // Upload new image to Cloudinary
+        const uploadResult = await uploadImageWithThumbnail(req.file.buffer, 'business-app/log-categories');
+        imageData = {
+          url: uploadResult.original.url,
+          public_id: uploadResult.original.public_id
+        };
+        
+        console.log('Image upload successful for update:', imageData.public_id);
+      } catch (uploadError) {
+        console.error('Cloudinary upload error details (update):', {
+          message: uploadError.message,
+          stack: uploadError.stack,
+          fileName: req.file?.originalname,
+          fileSize: req.file?.size
+        });
+        
+        // Provide more specific error message based on the error
+        let errorMessage = 'Image upload failed';
+        if (uploadError.message.includes('configuration')) {
+          errorMessage = 'Image upload service is not properly configured';
+        } else if (uploadError.message.includes('Invalid file buffer')) {
+          errorMessage = 'Invalid image file provided';
+        } else if (uploadError.message.includes('network') || uploadError.message.includes('timeout')) {
+          errorMessage = 'Image upload failed due to network issues';
+        }
+        
+        return errorResponseHelper(res, {message: errorMessage, code:'00500'});
+      }
     }
 
     const updatedCategory = await LogCategory.findByIdAndUpdate(
       id,
       { 
-        ...(name && { name }),
+        ...(title && { title }),
         ...(description !== undefined && { description }),
-        ...(image !== undefined && { image }),
+        ...(imageData && { image: imageData }),
         ...(status && { status }),
         ...(parent !== undefined && { parent }),
         updatedAt: Date.now() 
       },
       { new: true, runValidators: true }
-    ).populate('parent', 'name');
+    ).populate('parent', 'title');
 
-    return successResponseHelper(res, 200, 'Log category updated successfully', updatedCategory);
+    return successResponseHelper(res, {message:'Log category updated successfully', data:updatedCategory});
   } catch (error) {
     console.error('Update log category error:', error);
     if (error.kind === 'ObjectId') {
-      return errorResponseHelper(res, 400, 'Invalid log category ID');
+      return errorResponseHelper(res, {message:'Invalid log category ID', code:'00400'});
     }
-    return errorResponseHelper(res, 500, 'Internal server error');
+    return errorResponseHelper(res, {message:'Internal server error', code:'00500'});
   }
 };
 
@@ -171,13 +267,13 @@ const deleteLogCategory = async (req, res) => {
     // Check if category exists
     const category = await LogCategory.findById(id);
     if (!category) {
-      return errorResponseHelper(res, 404, 'Log category not found');
+      return errorResponseHelper(res, {message:'Log category not found', code:'00404'});
     }
 
     // Check if category has children
     const hasChildren = await LogCategory.findOne({ parent: id });
     if (hasChildren) {
-      return errorResponseHelper(res, 400, 'Cannot delete category with subcategories. Please move or delete subcategories first.');
+      return errorResponseHelper(res, {message:'Cannot delete category with subcategories. Please move or delete subcategories first.', code:'00400'});
     }
 
     // Check if category has subcategories
@@ -188,15 +284,25 @@ const deleteLogCategory = async (req, res) => {
       await LogSubCategory.deleteMany({ categoryId: id });
     }
 
+    // Delete image from Cloudinary if it exists
+    if (category.image && category.image.public_id) {
+      try {
+        await deleteFile(category.image.public_id, 'image');
+      } catch (deleteError) {
+        console.error('Error deleting image from Cloudinary:', deleteError);
+        // Continue with deletion even if image deletion fails
+      }
+    }
+
     await LogCategory.findByIdAndDelete(id);
 
-    return successResponseHelper(res, 200, 'Log category deleted successfully');
+    return successResponseHelper(res, {message:'Log category deleted successfully'});
   } catch (error) {
     console.error('Delete log category error:', error);
     if (error.kind === 'ObjectId') {
-      return errorResponseHelper(res, 400, 'Invalid log category ID');
+      return errorResponseHelper(res, {message:'Invalid log category ID', code:'00400'});
     }
-    return errorResponseHelper(res, 500, 'Internal server error');
+    return errorResponseHelper(res, {message:'Internal server error', code:'00500'});
   }
 };
 
@@ -211,10 +317,10 @@ const getLogCategoryHierarchy = async (req, res) => {
     };
 
     const hierarchy = await buildHierarchy();
-    return successResponseHelper(res, 200, 'Log category hierarchy retrieved successfully', hierarchy);
+    return successResponseHelper(res, {message:'Log category hierarchy retrieved successfully', data:hierarchy});
   } catch (error) {
     console.error('Get log category hierarchy error:', error);
-    return errorResponseHelper(res, 500, 'Internal server error');
+    return errorResponseHelper(res, {message:'Internal server error', code:'00500'});
   }
 };
 
@@ -223,11 +329,11 @@ const bulkUpdateLogCategoryStatus = async (req, res) => {
     const { categoryIds, status } = req.body;
 
     if (!categoryIds || !Array.isArray(categoryIds) || categoryIds.length === 0) {
-      return errorResponseHelper(res, 400, 'Category IDs array is required');
+      return errorResponseHelper(res, {message:'Category IDs array is required', code:'00400'});
     }
 
     if (!status || !['active', 'inactive'].includes(status)) {
-      return errorResponseHelper(res, 400, 'Valid status is required (active/inactive)');
+      return errorResponseHelper(res, {message:'Valid status is required (active/inactive)', code:'00400'});
     }
 
     const result = await LogCategory.updateMany(
@@ -235,10 +341,10 @@ const bulkUpdateLogCategoryStatus = async (req, res) => {
       { status, updatedAt: Date.now() }
     );
 
-    return successResponseHelper(res, 200, `Updated ${result.modifiedCount} log categories successfully`);
+    return successResponseHelper(res, {message:`Updated ${result.modifiedCount} log categories successfully`});
   } catch (error) {
     console.error('Bulk update log category status error:', error);
-    return errorResponseHelper(res, 500, 'Internal server error');
+    return errorResponseHelper(res, {message:'Internal server error', code:'00500'});
   }
 };
 

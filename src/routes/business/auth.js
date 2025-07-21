@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { authorizedAccessBusiness } from "../../middleware/authorization.js";
-import { uploadSingleImage as  upload } from "../../middleware/fileUpload.js";
+import { uploadSingleImageToCloudinary, handleCloudinaryUploadError } from "../../middleware/cloudinaryUpload.js";
 import {
   businessSignup,
   verifyOtpAndSetCredentials,
@@ -62,7 +62,7 @@ router.get("/profile", authorizedAccessBusiness, getProfile);
 // PUT /business/auth/update-password - Update password
 router.put("/update-password", authorizedAccessBusiness, validateBusinessAuth(updatePasswordValidation), updatePassword);
 
-// PUT /business/auth/update-profile - Update profile
-router.put("/update-profile", authorizedAccessBusiness, upload, validateBusinessAuth(updateProfileValidation), updateProfile);
+// PUT /business/auth/update-profile - Update profile with image upload
+router.put("/update-profile", authorizedAccessBusiness, uploadSingleImageToCloudinary, handleCloudinaryUploadError, validateBusinessAuth(updateProfileValidation), updateProfile);
 
 export default router; 

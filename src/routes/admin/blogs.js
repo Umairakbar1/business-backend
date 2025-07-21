@@ -7,7 +7,8 @@ import {
   deleteBlog,
   publishBlog,
   unpublishBlog,
-  getBlogStats
+  getBlogStats,
+  bulkUpdateBlogStatus
 } from "../../controllers/admin/blog.controller.js";
 import { authorizedAccessAdmin } from "../../middleware/authorization.js";
 import { blogValidator, blogUpdateValidator } from "../../validators/admin.js";
@@ -42,6 +43,8 @@ router.post("/:id/publish", authorizedAccessAdmin, publishBlog);
 router.post("/:id/unpublish", authorizedAccessAdmin, unpublishBlog);
 // Blog stats
 router.get("/stats/summary", authorizedAccessAdmin, getBlogStats);
+// Bulk update blog status
+router.patch("/bulk-status", authorizedAccessAdmin, bulkUpdateBlogStatus);
 
 export default router;
 

@@ -69,71 +69,74 @@ const uploadSingleVideo = async (req, res) => {
   }
 };
 
-
 const uploadImagesVideos = async (req, res) => {
-  if (req.files && req.files?.length > 0) {
-    const requestFiles = req.files;
-    const videos = [];
-    const images = [];
+  if (!req.files || req.files.length === 0) {
+    return errorResponseHelper(res, { message: 'No files uploaded' });
+  }
 
-    try {
-      for (const file of requestFiles) {
-        if (file.mimetype.startsWith("video/")) {
-          const [videoResult, videoError] = await asyncWrapper(() =>
-            uploadVideo(file.buffer, 'business-app/videos')
-          );
-          
-          if (videoError) {
-            console.error('Video upload error:', videoError);
-            continue;
-          }
-          
-          videos.push({
-            video: {
-              public_id: videoResult.public_id,
-              url: videoResult.url,
-              duration: videoResult.duration,
-              format: videoResult.format,
-              bytes: videoResult.bytes
-            },
-            mediaType: "video",
-          });
-        } else if (file.mimetype.startsWith("image/")) {
-          const [imageResult, imageError] = await asyncWrapper(() =>
-            uploadImageWithThumbnail(file.buffer, 'business-app/images')
-          );
-          
-          if (imageError) {
-            console.error('Image upload error:', imageError);
-            continue;
-          }
-          
-          images.push({
-            original: {
-              public_id: imageResult.original.public_id,
-              url: imageResult.original.url,
-              width: imageResult.original.width,
-              height: imageResult.original.height
-            },
-            thumbnail: {
-              public_id: imageResult.thumbnail.public_id,
-              url: imageResult.thumbnail.url,
-              width: imageResult.thumbnail.width,
-              height: imageResult.thumbnail.height
-            },
-            mediaType: "image",
-          });
+  const requestFiles = req.files;
+  const videos = [];
+  const images = [];
+
+  try {
+    for (const file of requestFiles) {
+      if (file.mimetype.startsWith("video/")) {
+        const [videoResult, videoError] = await asyncWrapper(() =>
+          uploadVideo(file.buffer, 'business-app/videos')
+        );
+        
+        if (videoError) {
+          console.error('Video upload error:', videoError);
+          continue;
         }
+        
+        videos.push({
+          video: {
+            public_id: videoResult.public_id,
+            url: videoResult.url,
+            duration: videoResult.duration,
+            format: videoResult.format,
+            bytes: videoResult.bytes
+          },
+          mediaType: "video",
+        });
+      } else if (file.mimetype.startsWith("image/")) {
+        const [imageResult, imageError] = await asyncWrapper(() =>
+          uploadImageWithThumbnail(file.buffer, 'business-app/images')
+        );
+        
+        if (imageError) {
+          console.error('Image upload error:', imageError);
+          continue;
+        }
+        
+        images.push({
+          original: {
+            public_id: imageResult.original.public_id,
+            url: imageResult.original.url,
+            width: imageResult.original.width,
+            height: imageResult.original.height
+          },
+          thumbnail: {
+            public_id: imageResult.thumbnail.public_id,
+            url: imageResult.thumbnail.url,
+            width: imageResult.thumbnail.width,
+            height: imageResult.thumbnail.height
+          },
+          mediaType: "image",
+        });
       }
-      
-      const allMedia = [...images, ...videos];
-      return successResponseHelper(res, allMedia);
-    } catch (error) {
-      return errorResponseHelper(res, { message: error.message });
     }
-  } else {
-    return errorResponseHelper(res, GLOBAL_MESSAGES.invalidRequest);
+    
+    const allMedia = [...images, ...videos];
+    return successResponseHelper(res, allMedia);
+  } catch (error) {
+    return errorResponseHelper(res, { message: error.message });
   }
 };
 
-export { uploadSingleImage, uploadSingleVideo, uploadImagesVideos };
+export {
+  uploadSingleImage,
+  uploadSingleVideo,
+  uploadImagesVideos
+};

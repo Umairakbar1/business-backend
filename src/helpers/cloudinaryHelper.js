@@ -9,6 +9,13 @@ cloudinary.config({
   api_secret: GLOBAL_ENV.cloudinaryApiSecret,
 });
 
+// Validate Cloudinary configuration
+const validateCloudinaryConfig = () => {
+  if (!GLOBAL_ENV.cloudinaryCloudName || !GLOBAL_ENV.cloudinaryApiKey || !GLOBAL_ENV.cloudinaryApiSecret) {
+    throw new Error('Cloudinary configuration is incomplete. Please check your environment variables.');
+  }
+};
+
 /**
  * Upload image to Cloudinary
  * @param {Buffer} fileBuffer - The file buffer to upload
@@ -18,19 +25,37 @@ cloudinary.config({
  */
 const uploadImage = async (fileBuffer, folder = 'business-app', options = {}) => {
   try {
+    // Validate configuration first
+    validateCloudinaryConfig();
+    
+    // Validate file buffer
+    if (!fileBuffer || !Buffer.isBuffer(fileBuffer)) {
+      throw new Error('Invalid file buffer provided');
+    }
+
     const uploadOptions = {
       folder,
       resource_type: 'image',
       ...options
     };
 
+    console.log('Starting Cloudinary upload with options:', { folder, ...options });
+
     return new Promise((resolve, reject) => {
+      // Add timeout to prevent hanging
+      const timeout = setTimeout(() => {
+        reject(new Error('Upload timeout - request took too long'));
+      }, 30000); // 30 second timeout
+
       const uploadStream = cloudinary.uploader.upload_stream(
         uploadOptions,
         (error, result) => {
+          clearTimeout(timeout);
           if (error) {
-            reject(error);
+            console.error('Cloudinary upload error:', error);
+            reject(new Error(`Cloudinary upload failed: ${error.message}`));
           } else {
+            console.log('Cloudinary upload successful:', result.public_id);
             resolve({
               public_id: result.public_id,
               url: result.secure_url,
@@ -46,6 +71,7 @@ const uploadImage = async (fileBuffer, folder = 'business-app', options = {}) =>
       uploadStream.end(fileBuffer);
     });
   } catch (error) {
+    console.error('Image upload error:', error);
     throw new Error(`Image upload failed: ${error.message}`);
   }
 };
