@@ -1,5 +1,5 @@
 import express from 'express';
-import { authorizedAccessAdmin as  authorization, authorizedAccessAdmin } from '../../middleware/authorization.js';
+import { authorizedAccessAdmin } from '../../middleware/authorization.js';
 import {
     createMetadata,
     getAllMetadata,

@@ -43,6 +43,18 @@ const QueryTicketSchema = new Schema({
   // Business reference (if created by business)
   businessId: { type: Schema.Types.ObjectId, ref: 'Business' },
   
+  // Assignment information
+  assignedTo: { 
+    type: Schema.Types.ObjectId, 
+    ref: 'Admin',
+    default: null 
+  },
+  assignedAt: { type: Date },
+  assignedBy: { 
+    type: Schema.Types.ObjectId, 
+    ref: 'Admin' 
+  },
+  
   // Status management
   status: { 
     type: String, 
@@ -64,6 +76,7 @@ const QueryTicketSchema = new Schema({
 QueryTicketSchema.index({ createdBy: 1, createdByType: 1 });
 QueryTicketSchema.index({ businessId: 1 });
 QueryTicketSchema.index({ status: 1 });
+QueryTicketSchema.index({ assignedTo: 1 });
 QueryTicketSchema.index({ createdAt: -1 });
 
 const QueryTicket = model('QueryTicket', QueryTicketSchema);

@@ -1,11 +1,59 @@
 # User Blog API Documentation
 
 ## Overview
-The User Blog API provides public access to blog content without requiring authentication tokens. All endpoints are accessible at `/api/user/blogs`.
+The User Blog API provides public access to blog content without requiring authentication tokens, and allows authenticated users to create blogs. All endpoints are accessible at `/api/user/blogs`.
 
 ## Endpoints
 
-### 1. Get All Blogs
+### 1. Create Blog (Authenticated Users)
+**POST** `/api/user/blogs`
+
+Creates a new blog post for authenticated users (outsiders).
+
+**Authentication:** Required (User token)
+
+**Request Body:**
+```json
+{
+  "title": "Blog Title",
+  "description": "Blog description",
+  "content": "Blog content...",
+  "category": "category_id",
+  "subCategory": "subcategory_id",
+  "status": "draft",
+  "enableComments": true,
+  "tags": ["tag1", "tag2"],
+  "metaTitle": "SEO Title",
+  "metaDescription": "SEO Description",
+  "metaKeywords": ["keyword1", "keyword2"],
+  "authorName": "Author Name",
+  "authorEmail": "author@example.com"
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Blog post created successfully",
+  "data": {
+    "_id": "blog_id",
+    "title": "Blog Title",
+    "description": "Blog description",
+    "content": "Blog content...",
+    "author": "user_id",
+    "authorModel": "User",
+    "authorName": "Author Name",
+    "authorEmail": "author@example.com",
+    "category": "category_id",
+    "subCategory": "subcategory_id",
+    "status": "draft",
+    "createdAt": "2024-01-01T00:00:00.000Z"
+  }
+}
+```
+
+### 2. Get All Blogs
 **GET** `/api/user/blogs`
 
 Retrieves all published blogs with filtering and pagination options.
@@ -36,7 +84,10 @@ GET /api/user/blogs?category=technology&subCategory=web-development
         "_id": "blog_id",
         "title": "Blog Title",
         "description": "Blog description",
-        "author": "Author Name",
+        "author": "author_id",
+        "authorModel": "Admin",
+        "authorName": "Author Name",
+        "authorEmail": "author@example.com",
         "category": "Technology",
         "subCategory": "Web Development",
         "image": "image_url",
@@ -55,7 +106,7 @@ GET /api/user/blogs?category=technology&subCategory=web-development
 }
 ```
 
-### 2. Get Single Blog
+### 3. Get Single Blog
 **GET** `/api/user/blogs/:id`
 
 Retrieves a single published blog by its ID.
@@ -76,7 +127,10 @@ GET /api/user/blogs/64f1a2b3c4d5e6f7g8h9i0j1
     "_id": "blog_id",
     "title": "Blog Title",
     "description": "Blog description",
-    "author": "Author Name",
+    "author": "author_id",
+    "authorModel": "Admin",
+    "authorName": "Author Name",
+    "authorEmail": "author@example.com",
     "category": "Technology",
     "subCategory": "Web Development",
     "image": "image_url",
@@ -87,7 +141,7 @@ GET /api/user/blogs/64f1a2b3c4d5e6f7g8h9i0j1
 }
 ```
 
-### 3. Get All Categories
+### 4. Get All Categories
 **GET** `/api/user/blogs/categories/all`
 
 Retrieves all unique categories from published blogs.
@@ -110,7 +164,7 @@ GET /api/user/blogs/categories/all
 }
 ```
 
-### 4. Get Subcategories by Category
+### 5. Get Subcategories by Category
 **GET** `/api/user/blogs/categories/:category/subcategories`
 
 Retrieves all subcategories for a specific category from published blogs.

@@ -10,6 +10,7 @@ import adminLogSubCategoryRoutes from "./admin/logSubCategory.js";
 import adminReviewsRoutes from "./admin/reviews.js";
 import adminQueryTicketsRoutes from "./admin/queryTickets.js";
 import adminMetadataRoutes from "./admin/metadata.js";
+import adminMediaRoutes from "./admin/media.js";
 import businessAuthRoutes from "./business/auth.js";
 import businessReviewsRoutes from "./business/reviews.js";
 import businessQueryTicketsRoutes from "./business/queryTickets.js";
@@ -34,6 +35,7 @@ router.use("/admin/log-subcategory", adminLogSubCategoryRoutes);
 router.use("/admin/reviews", adminReviewsRoutes);
 router.use("/admin/query-tickets", adminQueryTicketsRoutes);
 router.use("/admin/metadata", adminMetadataRoutes);
+router.use("/admin/media", adminMediaRoutes);
 
 // Business routes
 router.use("/business/auth", businessAuthRoutes);

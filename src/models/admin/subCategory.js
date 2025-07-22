@@ -16,6 +16,14 @@ const SubCategorySchema = new mongoose.Schema({
         type: String,
         trim: true
     },
+    image: {
+        url: {
+            type: String
+        },
+        public_id: {
+            type: String
+        }
+    },
     categoryId: {
         type: mongoose.Schema.Types.ObjectId,
         ref: 'Category',

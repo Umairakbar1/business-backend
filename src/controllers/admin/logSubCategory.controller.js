@@ -1,10 +1,11 @@
 import LogSubCategory from '../../models/admin/logSubCategory.js';
 import LogCategory from '../../models/admin/logCategory.js';
 import { successResponseHelper, errorResponseHelper } from '../../helpers/utilityHelper.js';
+import { uploadImageWithThumbnail, deleteFile } from '../../helpers/cloudinaryHelper.js';
 
 const createLogSubCategory = async (req, res) => {
   try {
-    const { title, description, image, categoryId, status = 'active' } = req.body;
+    const { title, description, categoryId, status = 'active' } = req.body;
 
     if (!title) {
       return errorResponseHelper(res, {message:'Subcategory name is required', code:'00400'});
@@ -30,10 +31,49 @@ const createLogSubCategory = async (req, res) => {
       return errorResponseHelper(res, {message:'Subcategory with this name already exists in this category', code:'00400'});
     }
 
+    // Handle image upload to Cloudinary
+    let imageData = null;
+    if (req.file) {
+      try {
+        console.log('Starting image upload for log subcategory:', {
+          fileName: req.file.originalname,
+          fileSize: req.file.size,
+          mimeType: req.file.mimetype
+        });
+        
+        const uploadResult = await uploadImageWithThumbnail(req.file.buffer, 'business-app/log-subcategories');
+        imageData = {
+          url: uploadResult.original.url,
+          public_id: uploadResult.original.public_id
+        };
+        
+        console.log('Log subcategory image upload successful:', imageData.public_id);
+      } catch (uploadError) {
+        console.error('Cloudinary upload error details:', {
+          message: uploadError.message,
+          stack: uploadError.stack,
+          fileName: req.file?.originalname,
+          fileSize: req.file?.size
+        });
+        
+        // Provide more specific error message based on the error
+        let errorMessage = 'Image upload failed';
+        if (uploadError.message.includes('configuration')) {
+          errorMessage = 'Image upload service is not properly configured';
+        } else if (uploadError.message.includes('Invalid file buffer')) {
+          errorMessage = 'Invalid image file provided';
+        } else if (uploadError.message.includes('network') || uploadError.message.includes('timeout')) {
+          errorMessage = 'Image upload failed due to network issues';
+        }
+        
+        return errorResponseHelper(res, {message: errorMessage, code:'00500'});
+      }
+    }
+
     const subCategory = new LogSubCategory({
       title,
       description,
-      image,
+      image: imageData,
       categoryId,
       status,
       createdBy: req.user.id
@@ -135,14 +175,14 @@ const getLogSubCategoryById = async (req, res) => {
 const updateLogSubCategory = async (req, res) => {
   try {
     const { id } = req.params;
-    const { title, description, image, categoryId, status } = req.body;
+    const { title, description, categoryId, status } = req.body;
 
     const subCategory = await LogSubCategory.findById(id);
     if (!subCategory) {
       return errorResponseHelper(res, {message:'Log subcategory not found', code:'00404'});
     }
 
-    // If categoryId is being updated, check if new category exists
+    // Check if category exists if categoryId is being updated
     if (categoryId && categoryId !== subCategory.categoryId.toString()) {
       const category = await LogCategory.findById(categoryId);
       if (!category) {
@@ -150,7 +190,7 @@ const updateLogSubCategory = async (req, res) => {
       }
     }
 
-    // Check for duplicate name in the same category
+    // Check if subcategory with same name exists in the same category
     if (title && title !== subCategory.title) {
       const existingSubCategory = await LogSubCategory.findOne({
         title: { $regex: new RegExp(`^${title}$`, 'i') },
@@ -163,12 +203,61 @@ const updateLogSubCategory = async (req, res) => {
       }
     }
 
+    // Handle image upload and deletion of previous image
+    if (req.file) {
+      try {
+        console.log('Starting image upload for log subcategory update:', {
+          fileName: req.file.originalname,
+          fileSize: req.file.size,
+          mimeType: req.file.mimetype
+        });
+        
+        // Delete old image from Cloudinary if it exists
+        if (subCategory.image && subCategory.image.public_id) {
+          try {
+            await deleteFile(subCategory.image.public_id, 'image');
+            console.log('Old log subcategory image deleted successfully:', subCategory.image.public_id);
+          } catch (deleteError) {
+            console.error('Error deleting old log subcategory image:', deleteError);
+            // Continue with upload even if deletion fails
+          }
+        }
+
+        // Upload new image to Cloudinary
+        const uploadResult = await uploadImageWithThumbnail(req.file.buffer, 'business-app/log-subcategories');
+        subCategory.image = {
+          url: uploadResult.original.url,
+          public_id: uploadResult.original.public_id
+        };
+        
+        console.log('Log subcategory image upload successful for update:', subCategory.image.public_id);
+      } catch (uploadError) {
+        console.error('Cloudinary upload error details for log subcategory update:', {
+          message: uploadError.message,
+          stack: uploadError.stack,
+          fileName: req.file?.originalname,
+          fileSize: req.file?.size
+        });
+        
+        // Provide more specific error message based on the error
+        let errorMessage = 'Image upload failed';
+        if (uploadError.message.includes('configuration')) {
+          errorMessage = 'Image upload service is not properly configured';
+        } else if (uploadError.message.includes('Invalid file buffer')) {
+          errorMessage = 'Invalid image file provided';
+        } else if (uploadError.message.includes('network') || uploadError.message.includes('timeout')) {
+          errorMessage = 'Image upload failed due to network issues';
+        }
+        
+        return errorResponseHelper(res, {message: errorMessage, code:'00500'});
+      }
+    }
+
     // Update fields
     if (title) subCategory.title = title;
     if (description !== undefined) subCategory.description = description;
-    if (image !== undefined) subCategory.image = image;
     if (categoryId) subCategory.categoryId = categoryId;
-    if (status !== undefined) subCategory.status = status;
+    if (status) subCategory.status = status;
     
     subCategory.updatedBy = req.user.id;
     subCategory.updatedAt = new Date();
@@ -192,6 +281,17 @@ const deleteLogSubCategory = async (req, res) => {
     const subCategory = await LogSubCategory.findById(id);
     if (!subCategory) {
       return errorResponseHelper(res, {message:'Log subcategory not found', code:'00404'});
+    }
+
+    // Delete subcategory image from Cloudinary if it exists
+    if (subCategory.image && subCategory.image.public_id) {
+      try {
+        await deleteFile(subCategory.image.public_id, 'image');
+        console.log('Log subcategory image deleted successfully:', subCategory.image.public_id);
+      } catch (deleteError) {
+        console.error('Error deleting log subcategory image:', deleteError);
+        // Continue with deletion even if image deletion fails
+      }
     }
 
     await LogSubCategory.findByIdAndDelete(id);

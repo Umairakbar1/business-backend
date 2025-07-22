@@ -17,7 +17,12 @@ const CategorySchema = new mongoose.Schema({
         trim: true
     },
     image: {
-        type: String
+        url: {
+            type: String
+        },
+        public_id: {
+            type: String
+        }
     },
     status: {
         type: String,

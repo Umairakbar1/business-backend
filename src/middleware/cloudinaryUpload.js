@@ -96,6 +96,9 @@ export const cloudinaryDocumentUpload = multer({
 // Single image upload middleware for Cloudinary
 export const uploadSingleImageToCloudinary = cloudinaryImageUpload.single('image');
 
+// Single image upload middleware for blog cover images
+export const uploadBlogCoverImageToCloudinary = cloudinaryImageUpload.single('coverImage');
+
 // Single media upload middleware for Cloudinary (images and videos)
 export const uploadSingleMediaToCloudinary = cloudinaryMediaUpload.single('media');
 

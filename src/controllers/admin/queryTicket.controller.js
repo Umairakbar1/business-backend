@@ -8,7 +8,7 @@ import mongoose from 'mongoose';
 export const getAllQueryTickets = async (req, res) => {
   try {
     const adminId = req.user?._id;
-    const { page = 1, limit = 10, status, createdByType, sortBy = 'createdAt', sortOrder = 'desc' } = req.query;
+    const { page = 1, limit = 10, status, createdByType, assignedTo, sortBy = 'createdAt', sortOrder = 'desc' } = req.query;
     
     if (!adminId) {
       return errorResponseHelper(res, { message: 'Admin not authenticated', code: '00401' });
@@ -18,6 +18,7 @@ export const getAllQueryTickets = async (req, res) => {
     const filter = {};
     if (status) filter.status = status;
     if (createdByType) filter.createdByType = createdByType;
+    if (assignedTo) filter.assignedTo = assignedTo;
     
     // Build sort object
     const sort = {};
@@ -29,6 +30,8 @@ export const getAllQueryTickets = async (req, res) => {
     const tickets = await QueryTicket.find(filter)
       .populate('businessId', 'businessName contactPerson email')
       .populate('createdBy', 'firstName lastName email')
+      .populate('assignedTo', 'firstName lastName email')
+      .populate('assignedBy', 'firstName lastName email')
       .sort(sort)
       .skip(skip)
       .limit(parseInt(limit));
@@ -68,7 +71,9 @@ export const getQueryTicketById = async (req, res) => {
     
     const ticket = await QueryTicket.findById(id)
       .populate('businessId', 'businessName contactPerson email')
-      .populate('createdBy', 'firstName lastName email');
+      .populate('createdBy', 'firstName lastName email')
+      .populate('assignedTo', 'firstName lastName email')
+      .populate('assignedBy', 'firstName lastName email');
     
     if (!ticket) {
       return errorResponseHelper(res, { message: 'Query ticket not found', code: '00404' });
@@ -438,6 +443,57 @@ export const getTicketStats = async (req, res) => {
       }
     ]);
     
+    // Get assignment stats
+    const assignmentStats = await QueryTicket.aggregate([
+      {
+        $group: {
+          _id: {
+            assigned: { $cond: [{ $eq: ['$assignedTo', null] }, 'unassigned', 'assigned'] }
+          },
+          count: { $sum: 1 }
+        }
+      }
+    ]);
+    
+    // Get top assigned admins
+    const topAssignedAdmins = await QueryTicket.aggregate([
+      {
+        $match: { assignedTo: { $ne: null } }
+      },
+      {
+        $group: {
+          _id: '$assignedTo',
+          count: { $sum: 1 }
+        }
+      },
+      {
+        $sort: { count: -1 }
+      },
+      {
+        $limit: 5
+      },
+      {
+        $lookup: {
+          from: 'admins',
+          localField: '_id',
+          foreignField: '_id',
+          as: 'admin'
+        }
+      },
+      {
+        $unwind: '$admin'
+      },
+      {
+        $project: {
+          _id: 1,
+          count: 1,
+          firstName: '$admin.firstName',
+          lastName: '$admin.lastName',
+          email: '$admin.email'
+        }
+      }
+    ]);
+    
     // Convert to object format
     const statsObj = {
       total,
@@ -448,7 +504,12 @@ export const getTicketStats = async (req, res) => {
       byCreator: {
         admin: 0,
         business: 0
-      }
+      },
+      byAssignment: {
+        assigned: 0,
+        unassigned: 0
+      },
+      topAssignedAdmins
     };
     
     stats.forEach(stat => {
@@ -459,11 +520,143 @@ export const getTicketStats = async (req, res) => {
       statsObj.byCreator[stat._id] = stat.count;
     });
     
+    assignmentStats.forEach(stat => {
+      statsObj.byAssignment[stat._id.assigned] = stat.count;
+    });
+    
     return successResponseHelper(res, {
       message: 'Ticket statistics fetched successfully',
       data: statsObj
     });
   } catch (error) {
     return errorResponseHelper(res, { message: error.message, code: '00500' });
+  }
+}; 
+
+// PATCH /admin/query-tickets/:id/assign - Assign ticket to admin
+export const assignTicket = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { assignedTo } = req.body;
+    const adminId = req.user?._id;
+    
+    if (!adminId) {
+      return errorResponseHelper(res, { message: 'Admin not authenticated', code: '00401' });
+    }
+    
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return errorResponseHelper(res, { message: 'Invalid ticket ID', code: '00400' });
+    }
+    
+    if (!assignedTo) {
+      return errorResponseHelper(res, { message: 'Assigned admin ID is required', code: '00400' });
+    }
+    
+    if (!mongoose.Types.ObjectId.isValid(assignedTo)) {
+      return errorResponseHelper(res, { message: 'Invalid assigned admin ID', code: '00400' });
+    }
+    
+    // Check if ticket exists
+    const ticket = await QueryTicket.findById(id);
+    if (!ticket) {
+      return errorResponseHelper(res, { message: 'Query ticket not found', code: '00404' });
+    }
+    
+    // Check if assigned admin exists
+    const assignedAdmin = await Admin.findById(assignedTo);
+    if (!assignedAdmin) {
+      return errorResponseHelper(res, { message: 'Assigned admin not found', code: '00404' });
+    }
+    
+    // Check if ticket is already assigned to the same admin
+    if (ticket.assignedTo && ticket.assignedTo.toString() === assignedTo) {
+      return errorResponseHelper(res, { message: 'Ticket is already assigned to this admin', code: '00400' });
+    }
+    
+    // Update ticket assignment
+    ticket.assignedTo = assignedTo;
+    ticket.assignedAt = new Date();
+    ticket.assignedBy = adminId;
+    ticket.updatedAt = new Date();
+    
+    // If ticket is pending, change status to in_progress when assigned
+    if (ticket.status === 'pending') {
+      ticket.status = 'in_progress';
+    }
+    
+    await ticket.save();
+    
+    // Populate assigned admin details for response
+    await ticket.populate('assignedTo', 'firstName lastName email');
+    await ticket.populate('assignedBy', 'firstName lastName email');
+    
+    return successResponseHelper(res, {
+      message: 'Ticket assigned successfully',
+      data: {
+        ticket,
+        assignedTo: {
+          _id: assignedAdmin._id,
+          firstName: assignedAdmin.firstName,
+          lastName: assignedAdmin.lastName,
+          email: assignedAdmin.email
+        },
+        assignedBy: {
+          _id: req.user._id,
+          firstName: req.user.firstName,
+          lastName: req.user.lastName,
+          email: req.user.email
+        }
+      }
+    });
+  } catch (error) {
+    console.error('Assign ticket error:', error);
+    return errorResponseHelper(res, { message: 'Internal server error', code: '00500' });
+  }
+};
+
+// PATCH /admin/query-tickets/bulk-status - Bulk update ticket status
+export const bulkUpdateStatus = async (req, res) => {
+  try {
+    const { ticketIds, status } = req.body;
+    const adminId = req.user?._id;
+    
+    if (!adminId) {
+      return errorResponseHelper(res, { message: 'Admin not authenticated', code: '00401' });
+    }
+    
+    if (!ticketIds || !Array.isArray(ticketIds) || ticketIds.length === 0) {
+      return errorResponseHelper(res, { message: 'Ticket IDs array is required', code: '00400' });
+    }
+    
+    if (!status || !['pending', 'in_progress', 'completed', 'not_completed'].includes(status)) {
+      return errorResponseHelper(res, { message: 'Valid status is required', code: '00400' });
+    }
+    
+    // Validate all ticket IDs
+    for (const ticketId of ticketIds) {
+      if (!mongoose.Types.ObjectId.isValid(ticketId)) {
+        return errorResponseHelper(res, { message: `Invalid ticket ID: ${ticketId}`, code: '00400' });
+      }
+    }
+    
+    // Update tickets
+    const result = await QueryTicket.updateMany(
+      { _id: { $in: ticketIds } },
+      { 
+        status,
+        updatedAt: new Date()
+      }
+    );
+    
+    return successResponseHelper(res, {
+      message: `${result.modifiedCount} tickets updated successfully`,
+      data: {
+        updatedCount: result.modifiedCount,
+        totalCount: ticketIds.length
+      }
+    });
+  } catch (error) {
+    console.error('Bulk update status error:', error);
+    return errorResponseHelper(res, { message: 'Internal server error', code: '00500' });
   }
 }; 

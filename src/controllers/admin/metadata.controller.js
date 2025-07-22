@@ -31,8 +31,7 @@ export const createMetadata = async (req, res) => {
             ogTitle,
             ogDescription,
             ogImage,
-            canonicalUrl,
-            createdBy: req.admin._id
+            canonicalUrl
         });
 
         await metadata.save();
@@ -73,15 +72,15 @@ export const getAllMetadata = async (req, res) => {
 
         const total = await Metadata.countDocuments(query);
 
-        return successResponseHelper(res, {message:'Metadata retrieved successfully', data: {
-            metadata,
+        return successResponseHelper(res, {message:'Metadata retrieved successfully', 
+            data:metadata,
             pagination: {
                 currentPage: parseInt(page),
                 totalPages: Math.ceil(total / limit),
                 totalItems: total,
                 itemsPerPage: parseInt(limit)
             }
-        }});
+        });
     } catch (error) {
         console.error('Get all metadata error:', error);
         return errorResponseHelper(res, {message:'Failed to retrieve metadata', code:'00500'});
@@ -172,8 +171,7 @@ export const updateMetadata = async (req, res) => {
             ogDescription,
             ogImage,
             canonicalUrl,
-            status,
-            updatedBy: req.admin._id
+            status
         };
 
         // Remove undefined fields
@@ -230,8 +228,7 @@ export const bulkUpdateStatus = async (req, res) => {
         const result = await Metadata.updateMany(
             { _id: { $in: ids } },
             { 
-                status,
-                updatedBy: req.admin._id
+                status
             }
         );
 

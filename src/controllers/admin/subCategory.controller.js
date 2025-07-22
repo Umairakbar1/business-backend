@@ -2,6 +2,7 @@ import SubCategory from '../../models/admin/subCategory.js';
 import Category from '../../models/admin/category.js';
 import { subCategoryValidator, subCategoryUpdateValidator } from '../../validators/admin.js';
 import { successResponseHelper, errorResponseHelper, generateSlug } from '../../helpers/utilityHelper.js';
+import { uploadImageWithThumbnail, deleteFile } from '../../helpers/cloudinaryHelper.js';
 
 const createSubCategory = async (req, res) => {
   try {
@@ -39,12 +40,51 @@ const createSubCategory = async (req, res) => {
       return errorResponseHelper(res, { message: 'Subcategory with this slug already exists', code: '00400' });
     }
 
+    // Handle image upload to Cloudinary
+    if (req.file) {
+      try {
+        console.log('Starting image upload for subcategory:', {
+          fileName: req.file.originalname,
+          fileSize: req.file.size,
+          mimeType: req.file.mimetype
+        });
+        
+        const uploadResult = await uploadImageWithThumbnail(req.file.buffer, 'business-app/subcategories');
+        value.image = {
+          url: uploadResult.original.url,
+          public_id: uploadResult.original.public_id
+        };
+        
+        console.log('Subcategory image upload successful:', value.image.public_id);
+      } catch (uploadError) {
+        console.error('Cloudinary upload error details:', {
+          message: uploadError.message,
+          stack: uploadError.stack,
+          fileName: req.file?.originalname,
+          fileSize: req.file?.size
+        });
+        
+        // Provide more specific error message based on the error
+        let errorMessage = 'Image upload failed';
+        if (uploadError.message.includes('configuration')) {
+          errorMessage = 'Image upload service is not properly configured';
+        } else if (uploadError.message.includes('Invalid file buffer')) {
+          errorMessage = 'Invalid image file provided';
+        } else if (uploadError.message.includes('network') || uploadError.message.includes('timeout')) {
+          errorMessage = 'Image upload failed due to network issues';
+        }
+        
+        return errorResponseHelper(res, {message: errorMessage, code:'00500'});
+      }
+    }
+
     const subCategory = new SubCategory({
       title,
       slug: value.slug,
       description,
       categoryId,
       isActive,
+      image: value.image,
       createdBy: req.user.id
     });
 
@@ -208,12 +248,63 @@ const updateSubCategory = async (req, res) => {
       }
     }
 
+    // Handle image upload and deletion of previous image
+    if (req.file) {
+      try {
+        console.log('Starting image upload for subcategory update:', {
+          fileName: req.file.originalname,
+          fileSize: req.file.size,
+          mimeType: req.file.mimetype
+        });
+        
+        // Delete old image from Cloudinary if it exists
+        if (subCategory.image && subCategory.image.public_id) {
+          try {
+            await deleteFile(subCategory.image.public_id, 'image');
+            console.log('Old subcategory image deleted successfully:', subCategory.image.public_id);
+          } catch (deleteError) {
+            console.error('Error deleting old subcategory image:', deleteError);
+            // Continue with upload even if deletion fails
+          }
+        }
+
+        // Upload new image to Cloudinary
+        const uploadResult = await uploadImageWithThumbnail(req.file.buffer, 'business-app/subcategories');
+        value.image = {
+          url: uploadResult.original.url,
+          public_id: uploadResult.original.public_id
+        };
+        
+        console.log('Subcategory image upload successful for update:', value.image.public_id);
+      } catch (uploadError) {
+        console.error('Cloudinary upload error details for subcategory update:', {
+          message: uploadError.message,
+          stack: uploadError.stack,
+          fileName: req.file?.originalname,
+          fileSize: req.file?.size
+        });
+        
+        // Provide more specific error message based on the error
+        let errorMessage = 'Image upload failed';
+        if (uploadError.message.includes('configuration')) {
+          errorMessage = 'Image upload service is not properly configured';
+        } else if (uploadError.message.includes('Invalid file buffer')) {
+          errorMessage = 'Invalid image file provided';
+        } else if (uploadError.message.includes('network') || uploadError.message.includes('timeout')) {
+          errorMessage = 'Image upload failed due to network issues';
+        }
+        
+        return errorResponseHelper(res, {message: errorMessage, code:'00500'});
+      }
+    }
+
     // Update fields
     if (title) subCategory.title = title;
     if (value.slug) subCategory.slug = value.slug;
     if (description !== undefined) subCategory.description = description;
     if (categoryId) subCategory.categoryId = categoryId;
     if (isActive !== undefined) subCategory.isActive = isActive;
+    if (value.image) subCategory.image = value.image;
     
     subCategory.updatedBy = req.user.id;
     subCategory.updatedAt = new Date();
@@ -241,6 +332,17 @@ const deleteSubCategory = async (req, res) => {
     const subCategory = await SubCategory.findById(id);
     if (!subCategory) {
       return errorResponseHelper(res, { message: 'Subcategory not found', code: '00404' });
+    }
+
+    // Delete subcategory image from Cloudinary if it exists
+    if (subCategory.image && subCategory.image.public_id) {
+      try {
+        await deleteFile(subCategory.image.public_id, 'image');
+        console.log('Subcategory image deleted successfully:', subCategory.image.public_id);
+      } catch (deleteError) {
+        console.error('Error deleting subcategory image:', deleteError);
+        // Continue with deletion even if image deletion fails
+      }
     }
 
     // const productsUsingSubCategory = await Product.countDocuments({ subCategoryId: id });

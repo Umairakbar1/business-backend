@@ -2,6 +2,90 @@ import Blog from '../../models/admin/blog.js';
 import LogCategory from '../../models/admin/logCategory.js';
 import LogSubCategory from '../../models/admin/logSubCategory.js';
 import { errorResponseHelper, successResponseHelper } from '../../helpers/utilityHelper.js';
+import { uploadImageWithThumbnail, deleteFile } from '../../helpers/cloudinaryHelper.js';
+
+// Create a new blog post (for users/outsiders)
+const createBlog = async (req, res) => {
+    try {
+        const { title, description, content, category, subCategory, status = 'draft', enableComments = true, tags, metaTitle, metaDescription, metaKeywords, authorName, authorEmail } = req.body;
+
+        if (!title || !description || !content || !category) {
+            return errorResponseHelper(res, { message: "Title, description, content, and category are required", code: '00400' });
+        }
+
+        // Use provided author name/email or fall back to user data
+        const finalAuthorName = authorName || `${req.user.firstName} ${req.user.lastName}`.trim();
+        const finalAuthorEmail = authorEmail || req.user.email;
+
+        if (!finalAuthorName || !finalAuthorEmail) {
+            return errorResponseHelper(res, { message: "Author name and email are required", code: '00400' });
+        }
+
+        const blogData = {
+            title,
+            description,
+            content,
+            category,
+            subCategory,
+            status,
+            enableComments,
+            tags: tags ? (Array.isArray(tags) ? tags : [tags]) : [],
+            metaTitle,
+            metaDescription,
+            metaKeywords: metaKeywords ? (Array.isArray(metaKeywords) ? metaKeywords : [metaKeywords]) : [],
+            author: req.user.id,
+            authorModel: 'User', // Always set to User for user routes
+            authorName: finalAuthorName,
+            authorEmail: finalAuthorEmail,
+            publishedAt: status === 'published' ? new Date() : null
+        };
+
+        // Handle image upload to Cloudinary
+        if (req.file) {
+            try {
+                console.log('Starting image upload for user blog:', {
+                    fileName: req.file.originalname,
+                    fileSize: req.file.size,
+                    mimeType: req.file.mimetype
+                });
+                
+                const uploadResult = await uploadImageWithThumbnail(req.file.buffer, 'business-app/blogs');
+                blogData.coverImage = {
+                    url: uploadResult.original.url,
+                    public_id: uploadResult.original.public_id
+                };
+                
+                console.log('User blog image upload successful:', blogData.coverImage.public_id);
+            } catch (uploadError) {
+                console.error('Cloudinary upload error details for user blog:', {
+                    message: uploadError.message,
+                    stack: uploadError.stack,
+                    fileName: req.file?.originalname,
+                    fileSize: req.file?.size
+                });
+                
+                // Provide more specific error message based on the error
+                let errorMessage = 'Image upload failed';
+                if (uploadError.message.includes('configuration')) {
+                    errorMessage = 'Image upload service is not properly configured';
+                } else if (uploadError.message.includes('Invalid file buffer')) {
+                    errorMessage = 'Invalid image file provided';
+                } else if (uploadError.message.includes('network') || uploadError.message.includes('timeout')) {
+                    errorMessage = 'Image upload failed due to network issues';
+                }
+                
+                return errorResponseHelper(res, {message: errorMessage, code:'00500'});
+            }
+        }
+
+        const blog = await Blog.create(blogData);
+
+        return successResponseHelper(res, { message: "Blog post created successfully", data: blog });
+    } catch (error) {
+        console.error('Create user blog error:', error);
+        return errorResponseHelper(res, { message: 'Internal server error', code: '00500' });
+    }
+};
 
 // Get all blogs with filtering by category and search by title
 const getAllBlogs = async (req, res) => {
@@ -37,6 +121,13 @@ const getAllBlogs = async (req, res) => {
         const blogs = await Blog.find(query)
             .populate('category', 'name description')
             .populate('subCategory', 'name description')
+            .populate({
+                path: 'author',
+                select: 'firstName lastName email',
+                model: function(doc) {
+                    return doc.authorModel;
+                }
+            })
             .sort({ createdAt: -1 })
             .skip(skip)
             .limit(parseInt(limit))
@@ -77,7 +168,15 @@ const getBlogById = async (req, res) => {
         const blog = await Blog.findOne({ 
             _id: id, 
             status: 'published' 
-        }).select('-__v');
+        })
+        .populate({
+            path: 'author',
+            select: 'firstName lastName email',
+            model: function(doc) {
+                return doc.authorModel;
+            }
+        })
+        .select('-__v');
 
         if (!blog) {
             return errorResponseHelper(res, {
@@ -152,6 +251,7 @@ const getSubCategoriesByCategory = async (req, res) => {
 };
 
 export {
+    createBlog,
     getAllBlogs,
     getBlogById,
     getAllCategories,

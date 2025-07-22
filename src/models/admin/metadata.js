@@ -54,8 +54,7 @@ const MetadataSchema = new mongoose.Schema({
     },
     createdBy: {
         type: mongoose.Schema.Types.ObjectId,
-        ref: 'Admin',
-        required: true
+        ref: 'Admin'
     },
     updatedBy: {
         type: mongoose.Schema.Types.ObjectId,

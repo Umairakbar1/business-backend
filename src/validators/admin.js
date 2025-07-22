@@ -183,19 +183,6 @@ const subCategoryUpdateValidator = subCategoryValidator.fork(
 
 // Blog validators
 const blogValidator = Joi.object({
-  key: Joi.string()
-    .pattern(/^[a-z0-9-]+$/)
-    .min(3)
-    .max(50)
-    .required()
-    .trim()
-    .messages({
-      'string.pattern.base': 'Key must contain only lowercase letters, numbers, and hyphens',
-      'string.min': 'Key must be at least 3 characters long',
-      'string.max': 'Key cannot exceed 50 characters',
-      'any.required': 'Key is required'
-    }),
-  
   title: Joi.string()
     .min(5)
     .max(200)
@@ -208,6 +195,18 @@ const blogValidator = Joi.object({
       'any.required': 'Blog title is required'
     }),
   
+  description: Joi.string()
+    .min(10)
+    .max(500)
+    .required()
+    .trim()
+    .messages({
+      'string.empty': 'Blog description is required',
+      'string.min': 'Blog description must be at least 10 characters long',
+      'string.max': 'Blog description cannot exceed 500 characters',
+      'any.required': 'Blog description is required'
+    }),
+  
   content: Joi.string()
     .min(50)
     .required()
@@ -218,44 +217,58 @@ const blogValidator = Joi.object({
       'any.required': 'Blog content is required'
     }),
   
-  excerpt: Joi.string()
-    .max(300)
-    .optional()
-    .trim()
-    .messages({
-      'string.max': 'Blog excerpt cannot exceed 300 characters'
-    }),
-  
-  slug: Joi.string()
-    .pattern(/^[a-z0-9-]+$/)
-    .min(3)
-    .max(100)
+  category: Joi.string()
+    .pattern(/^[0-9a-fA-F]{24}$/)
     .required()
-    .trim()
     .messages({
-      'string.pattern.base': 'Slug must contain only lowercase letters, numbers, and hyphens',
-      'string.min': 'Slug must be at least 3 characters long',
-      'string.max': 'Slug cannot exceed 100 characters',
-      'any.required': 'Slug is required'
+      'string.empty': 'Category is required',
+      'string.pattern.base': 'Category must be a valid MongoDB ObjectId',
+      'any.required': 'Category is required'
     }),
   
-  author: Joi.string()
+  subCategory: Joi.string()
+    .pattern(/^[0-9a-fA-F]{24}$/)
+    .optional()
+    .messages({
+      'string.pattern.base': 'Subcategory must be a valid MongoDB ObjectId'
+    }),
+  
+  authorName: Joi.string()
     .min(2)
     .max(100)
-    .required()
+    .optional()
     .trim()
     .messages({
-      'string.empty': 'Author name is required',
       'string.min': 'Author name must be at least 2 characters long',
-      'string.max': 'Author name cannot exceed 100 characters',
-      'any.required': 'Author name is required'
+      'string.max': 'Author name cannot exceed 100 characters'
     }),
   
-  featuredImage: Joi.string()
-    .uri()
+  authorEmail: Joi.string()
+    .email()
+    .optional()
+    .trim()
+    .messages({
+      'string.email': 'Author email must be a valid email address'
+    }),
+  
+  authorModel: Joi.string()
+    .valid('Admin', 'User')
     .optional()
     .messages({
-      'string.uri': 'Featured image must be a valid URL'
+      'any.only': 'Author model must be either Admin or User'
+    }),
+  
+  status: Joi.string()
+    .valid('draft', 'published', 'archived', 'unpublish')
+    .default('draft')
+    .messages({
+      'any.only': 'Status must be one of: draft, published, archived, unpublish'
+    }),
+  
+  enableComments: Joi.boolean()
+    .default(true)
+    .messages({
+      'boolean.base': 'Enable comments must be a boolean value'
     }),
   
   tags: Joi.array()
@@ -263,18 +276,6 @@ const blogValidator = Joi.object({
     .optional()
     .messages({
       'array.base': 'Tags must be an array'
-    }),
-  
-  isPublished: Joi.boolean()
-    .default(false)
-    .messages({
-      'boolean.base': 'isPublished must be a boolean value'
-    }),
-  
-  publishDate: Joi.date()
-    .optional()
-    .messages({
-      'date.base': 'Publish date must be a valid date'
     }),
   
   metaTitle: Joi.string()
@@ -291,6 +292,44 @@ const blogValidator = Joi.object({
     .trim()
     .messages({
       'string.max': 'Meta description cannot exceed 160 characters'
+    }),
+
+  coverImage: Joi.string()
+    .uri()
+    .optional()
+    .messages({
+      'string.uri': 'Cover image must be a valid URL'
+    }),
+
+    author: Joi.string()
+    .pattern(/^[0-9a-fA-F]{24}$/) // ObjectId
+    .required()
+    .messages({
+      'string.empty': 'Author is required',
+      'string.pattern.base': 'Author must be a valid MongoDB ObjectId',
+      'any.required': 'Author is required'
+    }), 
+    authorName: Joi.string()
+    .min(2)
+    .max(100)
+    .optional()
+    .trim()
+    .messages({
+      'string.min': 'Author name must be at least 2 characters long',
+      'string.max': 'Author name cannot exceed 100 characters'
+    }),
+    authorEmail: Joi.string()
+    .email()
+    .optional()
+    .trim()
+    .messages({
+      'string.email': 'Author email must be a valid email address'
+    }),
+      metaKeywords: Joi.array()
+    .items(Joi.string().trim())
+    .optional()
+    .messages({
+      'array.base': 'Meta keywords must be an array'
     })
 });
 
@@ -396,7 +435,7 @@ const queryTicketValidator = Joi.object({
 
 // Update validators for blog and query tickets
 const blogUpdateValidator = blogValidator.fork(
-  ['title', 'content', 'excerpt', 'slug', 'author', 'featuredImage', 'tags', 'isPublished', 'publishDate', 'metaTitle', 'metaDescription'],
+  ['title', 'description', 'content', 'category', 'subCategory', 'authorName', 'authorEmail', 'authorModel', 'status', 'enableComments', 'tags', 'metaTitle', 'metaDescription', 'metaKeywords', 'coverImage', 'author'   ],
   (schema) => schema.optional()
 );
 

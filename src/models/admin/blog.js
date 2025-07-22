@@ -11,9 +11,31 @@ const BlogSchema = new mongoose.Schema({
         type: String,
         required: true
     },
-    author: {
+    content: {
         type: String,
         required: true
+    },
+    author: {
+        type: mongoose.Schema.Types.ObjectId,
+        refPath: 'authorModel',
+        required: true
+    },
+    authorModel: {
+        type: String,
+        required: true,
+        enum: ['Admin', 'User'],
+        default: 'Admin'
+    },
+    authorName: {
+        type: String,
+        required: true,
+        trim: true
+    },
+    authorEmail: {
+        type: String,
+        required: true,
+        trim: true,
+        lowercase: true
     },
     category: {
         type: mongoose.Schema.Types.ObjectId,
@@ -24,12 +46,55 @@ const BlogSchema = new mongoose.Schema({
         type: mongoose.Schema.Types.ObjectId,
         ref: 'LogSubCategory'
     },
-    image: String,
+    coverImage: {
+        url: {
+            type: String
+        },
+        public_id: {
+            type: String
+        }
+    },
+    image: String, // Legacy field for backward compatibility
     video: String,
     status: {
         type: String,
-        enum: ['draft', 'published', 'archived'],
-        default: 'draft'
+        enum: ['draft', 'published', 'archived', 'unpublish'],
+        default: 'published'
+    },
+    enableComments: {   
+        type: Boolean,
+        default: true
+    },
+    tags: [{
+        type: String,
+        trim: true
+    }],
+    metaTitle: {
+        type: String,
+        trim: true
+    },
+    metaDescription: {
+        type: String,
+        trim: true
+    },
+    metaKeywords: [{
+        type: String,
+        trim: true
+    }],
+    publishedAt: {
+        type: Date
+    },
+    views: {
+        type: Number,
+        default: 0
+    },
+    likes: {
+        type: Number,
+        default: 0
+    },
+    shares: {
+        type: Number,
+        default: 0
     }
 }, {
     timestamps: true

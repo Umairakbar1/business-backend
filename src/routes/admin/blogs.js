@@ -5,14 +5,13 @@ import {
   getBlogById,
   updateBlog,
   deleteBlog,
-  publishBlog,
-  unpublishBlog,
+  toggleBlogStatus,
   getBlogStats,
   bulkUpdateBlogStatus
 } from "../../controllers/admin/blog.controller.js";
 import { authorizedAccessAdmin } from "../../middleware/authorization.js";
 import { blogValidator, blogUpdateValidator } from "../../validators/admin.js";
-import { uploadSingleImage, handleUploadError } from "../../middleware/fileUpload.js";
+import { uploadBlogCoverImageToCloudinary, handleCloudinaryUploadError } from "../../middleware/cloudinaryUpload.js";
 
 const router = Router();
 
@@ -28,19 +27,17 @@ function validate(schema) {
 }
 
 // Create a new blog post
-router.post("/", authorizedAccessAdmin, uploadSingleImage, handleUploadError, validate(blogValidator), createBlog);
+router.post("/", authorizedAccessAdmin, uploadBlogCoverImageToCloudinary, handleCloudinaryUploadError, validate(blogValidator), createBlog);
 // Get all blogs
 router.get("/", authorizedAccessAdmin, getAllBlogs);
 // Get blog by ID
 router.get("/:id", authorizedAccessAdmin, getBlogById);
 // Update blog
-router.put("/:id", authorizedAccessAdmin, uploadSingleImage, handleUploadError, validate(blogUpdateValidator), updateBlog);
+router.put("/:id", authorizedAccessAdmin, uploadBlogCoverImageToCloudinary, handleCloudinaryUploadError, validate(blogUpdateValidator), updateBlog);
 // Delete blog
 router.delete("/:id", authorizedAccessAdmin, deleteBlog);
-// Publish blog
-router.post("/:id/publish", authorizedAccessAdmin, publishBlog);
-// Unpublish blog
-router.post("/:id/unpublish", authorizedAccessAdmin, unpublishBlog);
+// Toggle blog publish status
+router.post("/:id/toggle-status", authorizedAccessAdmin, toggleBlogStatus);
 // Blog stats
 router.get("/stats/summary", authorizedAccessAdmin, getBlogStats);
 // Bulk update blog status

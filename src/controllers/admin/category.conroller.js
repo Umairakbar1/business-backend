@@ -2,7 +2,7 @@ import Category from '../../models/admin/category.js';
 import SubCategory from '../../models/admin/subCategory.js';
 import { categoryValidator } from '../../validators/admin.js';
 import { successResponseHelper, errorResponseHelper, generateSlug } from '../../helpers/utilityHelper.js';
-import { deleteFile, getFileUrl } from '../../middleware/fileUpload.js';
+import { uploadImageWithThumbnail, deleteFile } from '../../helpers/cloudinaryHelper.js';
 
 const createCategory = async (req, res) => {
   try {
@@ -31,9 +31,42 @@ const createCategory = async (req, res) => {
       return errorResponseHelper(res, { message: 'Category with this slug already exists', code: '00400' });
     }
 
-    // Handle image upload
+    // Handle image upload to Cloudinary
     if (req.file) {
-      value.image = getFileUrl(req.file.filename);
+      try {
+        console.log('Starting image upload for category:', {
+          fileName: req.file.originalname,
+          fileSize: req.file.size,
+          mimeType: req.file.mimetype
+        });
+        
+        const uploadResult = await uploadImageWithThumbnail(req.file.buffer, 'business-app/categories');
+        value.image = {
+          url: uploadResult.original.url,
+          public_id: uploadResult.original.public_id
+        };
+        
+        console.log('Category image upload successful:', value.image.public_id);
+      } catch (uploadError) {
+        console.error('Cloudinary upload error details:', {
+          message: uploadError.message,
+          stack: uploadError.stack,
+          fileName: req.file?.originalname,
+          fileSize: req.file?.size
+        });
+        
+        // Provide more specific error message based on the error
+        let errorMessage = 'Image upload failed';
+        if (uploadError.message.includes('configuration')) {
+          errorMessage = 'Image upload service is not properly configured';
+        } else if (uploadError.message.includes('Invalid file buffer')) {
+          errorMessage = 'Invalid image file provided';
+        } else if (uploadError.message.includes('network') || uploadError.message.includes('timeout')) {
+          errorMessage = 'Image upload failed due to network issues';
+        }
+        
+        return errorResponseHelper(res, {message: errorMessage, code:'00500'});
+      }
     }
 
     const category = new Category(value);
@@ -145,22 +178,18 @@ const updateCategory = async (req, res) => {
       return errorResponseHelper(res, { message: error.details[0].message, code: '00400' });
     }
 
-    // Check if category exists
     const existingCategory = await Category.findById(id);
     if (!existingCategory) {
       return errorResponseHelper(res, { message: 'Category not found', code: '00404' });
     }
 
-    // Generate slug from title if not provided or if title is being updated
-    if (!value.slug && value.title) {
-      value.slug = generateSlug(value.title);
-    } else if (value.title && value.title !== existingCategory.title) {
-      // If title is being updated, regenerate slug
+    // Generate slug from title if not provided
+    if (!value.slug) {
       value.slug = generateSlug(value.title);
     }
 
     // Check if category with same name already exists (excluding current category)
-    const duplicateCategory = await Category.findOne({
+    const duplicateCategory = await Category.findOne({ 
       title: { $regex: new RegExp(`^${value.title}$`, 'i') },
       _id: { $ne: id }
     });
@@ -170,35 +199,62 @@ const updateCategory = async (req, res) => {
     }
 
     // Check if slug already exists (excluding current category)
-    if (value.slug) {
-      const duplicateSlug = await Category.findOne({
-        slug: value.slug,
-        _id: { $ne: id }
-      });
-      
-      if (duplicateSlug) {
-        return errorResponseHelper(res, { message: 'Category with this slug already exists', code: '00400' });
-      }
-    }
-
-    // Prevent circular reference if updating parent
-    if (value.parentCategory && value.parentCategory.toString() === id) {
-      return errorResponseHelper(res, { message: 'Category cannot be its own parent', code: '00400' });
+    const duplicateSlug = await Category.findOne({ 
+      slug: value.slug,
+      _id: { $ne: id }
+    });
+    if (duplicateSlug) {
+      return errorResponseHelper(res, { message: 'Category with this slug already exists', code: '00400' });
     }
 
     // Handle image upload and deletion of previous image
     if (req.file) {
-      // Delete previous image if it exists
-      if (existingCategory.image) {
-        const fs = await import('fs');
-        const path = await import('path');
-        const imagePath = path.join(process.cwd(), 'uploads', existingCategory.image.split('/').pop());
-        if (fs.existsSync(imagePath)) {
-          fs.unlinkSync(imagePath);
+      try {
+        console.log('Starting image upload for category update:', {
+          fileName: req.file.originalname,
+          fileSize: req.file.size,
+          mimeType: req.file.mimetype
+        });
+        
+        // Delete old image from Cloudinary if it exists
+        if (existingCategory.image && existingCategory.image.public_id) {
+          try {
+            await deleteFile(existingCategory.image.public_id, 'image');
+            console.log('Old category image deleted successfully:', existingCategory.image.public_id);
+          } catch (deleteError) {
+            console.error('Error deleting old category image:', deleteError);
+            // Continue with upload even if deletion fails
+          }
         }
+
+        // Upload new image to Cloudinary
+        const uploadResult = await uploadImageWithThumbnail(req.file.buffer, 'business-app/categories');
+        value.image = {
+          url: uploadResult.original.url,
+          public_id: uploadResult.original.public_id
+        };
+        
+        console.log('Category image upload successful for update:', value.image.public_id);
+      } catch (uploadError) {
+        console.error('Cloudinary upload error details for category update:', {
+          message: uploadError.message,
+          stack: uploadError.stack,
+          fileName: req.file?.originalname,
+          fileSize: req.file?.size
+        });
+        
+        // Provide more specific error message based on the error
+        let errorMessage = 'Image upload failed';
+        if (uploadError.message.includes('configuration')) {
+          errorMessage = 'Image upload service is not properly configured';
+        } else if (uploadError.message.includes('Invalid file buffer')) {
+          errorMessage = 'Invalid image file provided';
+        } else if (uploadError.message.includes('network') || uploadError.message.includes('timeout')) {
+          errorMessage = 'Image upload failed due to network issues';
+        }
+        
+        return errorResponseHelper(res, {message: errorMessage, code:'00500'});
       }
-      // Set new image
-      value.image = getFileUrl(req.file.filename);
     }
 
     const updatedCategory = await Category.findByIdAndUpdate(
@@ -251,12 +307,12 @@ const deleteCategory = async (req, res) => {
     }
 
     // Delete category image if it exists
-    if (category.image) {
-      const fs = await import('fs');
-      const path = await import('path');
-      const imagePath = path.join(process.cwd(), 'uploads', category.image.split('/').pop());
-      if (fs.existsSync(imagePath)) {
-        fs.unlinkSync(imagePath);
+    if (category.image && category.image.public_id) {
+      try {
+        await deleteFile(category.image.public_id, 'image');
+        console.log('Category image deleted successfully:', category.image.public_id);
+      } catch (deleteError) {
+        console.error('Error deleting category image:', deleteError);
       }
     }
 
