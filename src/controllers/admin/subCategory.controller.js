@@ -3,9 +3,11 @@ import Category from '../../models/admin/category.js';
 import { subCategoryValidator, subCategoryUpdateValidator } from '../../validators/admin.js';
 import { successResponseHelper, errorResponseHelper, generateSlug } from '../../helpers/utilityHelper.js';
 import { uploadImageWithThumbnail, deleteFile } from '../../helpers/cloudinaryHelper.js';
+// import { uploadSingleImageToCloudinary, handleCloudinaryUploadError } from '../../middleware/cloudinaryUpload.js';
 
 const createSubCategory = async (req, res) => {
   try {
+    console.log(req.body, "req.body");
     const { error, value } = subCategoryValidator.validate(req.body);
     if (error) {
       return errorResponseHelper(res, { message: error.details[0].message, code: '00400' });
@@ -84,7 +86,7 @@ const createSubCategory = async (req, res) => {
       description,
       categoryId,
       isActive,
-      image: value.image,
+      // image: value.image,
       createdBy: req.user.id
     });
 

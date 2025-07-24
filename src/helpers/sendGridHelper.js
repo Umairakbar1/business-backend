@@ -9,7 +9,7 @@ const sendEmail = (email, description, otp) => {
         const msg = {
             to: email,
             from: GLOBAL_ENV.sendGridEmailSendFrom,
-            subject: 'Email Verification For SoberIn40',
+            subject: 'Email Verification For Business',
             text: `Your OTP is: ${otp}`,
             // html: '<strong>and easy to do anywhere, even with Node.js</strong>',
         }

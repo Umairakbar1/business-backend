@@ -93,7 +93,7 @@ const createCategory = async (req, res) => {
 
     return successResponseHelper(res, {
       message: 'Category created successfully',
-      category
+      data: category
     });
   } catch (error) {
     console.error('Create category error:', error);
@@ -157,7 +157,7 @@ const getCategoryById = async (req, res) => {
 
     return successResponseHelper(res, {
       message: 'Category retrieved successfully',
-      category
+      data: category
     });
   } catch (error) {
     console.error('Get category by ID error:', error);
@@ -265,7 +265,7 @@ const updateCategory = async (req, res) => {
 
     return successResponseHelper(res, {
       message: 'Category updated successfully',
-      category: updatedCategory
+      data: updatedCategory
     });
   } catch (error) {
     console.error('Update category error:', error);

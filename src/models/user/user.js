@@ -79,12 +79,13 @@ UserSchema.methods.comparePassword = async function(candidatePassword) {
 
 // Method to generate OTP
 UserSchema.methods.generateOTP = function() {
-    const otp = Math.floor(100000 + Math.random() * 900000).toString();
-    this.otp = {
-        code: otp,
-        expiresAt: new Date(Date.now() + 10 * 60 * 1000) // 10 minutes
-    };
-    return otp;
+  // For testing purposes, use dummy OTP
+  const otp = "775511";
+  this.otp = {
+    code: otp,
+    expiresAt: new Date(Date.now() + 10 * 60 * 1000) // 10 minutes
+  };
+  return otp;
 };
 
 // Method to verify OTP

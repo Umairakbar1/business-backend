@@ -1,72 +1,81 @@
 import Business from '../../models/business/business.js';
+import BusinessOwner from '../../models/business/businessOwner.js';
 import { 
   errorResponseHelper, 
   successResponseHelper, 
   serverErrorHelper,
-  asyncWrapper 
 } from '../../helpers/utilityHelper.js';
-import { signAccessTokenBusiness } from '../../helpers/jwtHelper.js';
+import { 
+  signAccessTokenBusiness, 
+  signAccountCreationToken,
+  signOtpVerificationToken
+} from "../../helpers/jwtHelper.js";
 import { sendEmail } from '../../helpers/sendGridHelper.js';
 import { uploadImageWithThumbnail } from '../../helpers/cloudinaryHelper.js';
 
-// Business Signup - Step 1: Basic Information
-export const businessSignup = async (req, res) => {
+// Business Owner Signup - Step 1: Basic Information and OTP Generation
+export const businessOwnerSignup = async (req, res) => {
   try {
-    const { ownerFirstName, ownerLastName, email, phoneNumber } = req.body;
+    const { firstName, lastName, email, phoneNumber } = req.body;
 
     // Validate required fields
-    if (!ownerFirstName || !ownerLastName || !email || !phoneNumber) {
+    if (!firstName || !lastName || !email) {
       return errorResponseHelper(res, { 
-        message: 'First name, last name, email, and phone number are required',
+        message: 'First name, last name, and email are required',
         code: '00400'
       });
     }
 
-    // Check if business already exists
-    const existingBusiness = await Business.findOne({ 
-      $or: [{ email }, { phoneNumber }] 
+    // Validate email format
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      return errorResponseHelper(res, { 
+        message: 'Please enter a valid email address',
+        code: '00400'
+      });
+    }
+
+    // Check if business owner already exists
+    const existingBusinessOwner = await BusinessOwner.findOne({ 
+      $or: [
+        { email }, 
+        ...(phoneNumber ? [{ phoneNumber }] : [])
+      ]
     });
 
-    if (existingBusiness) {
+    if (existingBusinessOwner) {
       return errorResponseHelper(res, { 
-        message: 'Business account already exists with this email or phone number',
+        message: 'Business owner account already exists with this email or phone number',
         code: '00409'
       });
     }
 
-    // Create new business account
-    const newBusiness = new Business({
-      ownerFirstName,
-      ownerLastName,
-      email,
-      phoneNumber,
-      status: 'pending' // Default status - needs admin approval
-    });
-
-    // Generate and send OTP
-    const otp = newBusiness.generateOTP();
-    await newBusiness.save();
+    // Generate OTP
+    const tempOtp = "775511"; // For testing - in production, generate random 6-digit OTP
+    
+    // Generate OTP verification token (expires in 5 minutes)
+    const otpVerificationToken = signOtpVerificationToken(email, tempOtp);
 
     // Send OTP via email
     try {
-      await sendEmail(email, "Business Account Verification", `Your verification code is: ${otp}`);
+      // Commented out for testing - using dummy OTP
+      // await sendEmail(email, "Business Owner Account Verification", `Your verification code is: ${tempOtp}`);
+      console.log(`[TESTING] OTP for ${email}: ${tempOtp}`);
+      
       return successResponseHelper(res, {
-        message: 'Business account created successfully. Please check your email for verification code.',
+        message: 'OTP sent to your email. Please verify to complete registration.',
         data: {
-          email: newBusiness.email,
-          ownerFirstName: newBusiness.ownerFirstName,
-          ownerLastName: newBusiness.ownerLastName
+          email,
+          firstName,
+          lastName,
+          phoneNumber: phoneNumber || null,
+          otpVerificationToken
         }
       });
     } catch (emailError) {
-      // If email fails, still save the business but inform user
-      return successResponseHelper(res, {
-        message: 'Business account created but email verification failed. Please contact support.',
-        data: {
-          email: newBusiness.email,
-          ownerFirstName: newBusiness.ownerFirstName,
-          ownerLastName: newBusiness.ownerLastName
-        }
+      return errorResponseHelper(res, { 
+        message: 'Failed to send OTP. Please try again.',
+        code: '00500'
       });
     }
   } catch (error) {
@@ -74,67 +83,271 @@ export const businessSignup = async (req, res) => {
   }
 };
 
-// Verify OTP and Set Password/Username - Step 2
-export const verifyOtpAndSetCredentials = async (req, res) => {
+// Resend OTP
+export const resendOtp = async (req, res) => {
   try {
-    const { email, otp, username, password } = req.body;
+    const { firstName, lastName, email, phoneNumber } = req.body;
 
     // Validate required fields
-    if (!email || !otp || !username || !password) {
+    if (!firstName || !lastName || !email) {
       return errorResponseHelper(res, { 
-        message: 'Email, OTP, username, and password are required',
+        message: 'First name, last name, and email are required',
         code: '00400'
       });
     }
 
-    // Find business by email
-    const business = await Business.findOne({ email });
-    if (!business) {
+    // Check if business owner already exists
+    const existingBusinessOwner = await BusinessOwner.findOne({ email });
+    if (existingBusinessOwner) {
       return errorResponseHelper(res, { 
-        message: 'Business account not found',
-        code: '00404'
+        message: 'Business owner account already exists with this email',
+        code: '00409'
       });
     }
 
-    // Verify OTP
-    if (!business.verifyOTP(otp)) {
+    // Generate new OTP
+    const tempOtp = "775511"; // For testing
+    
+    // Generate new OTP verification token
+    const otpVerificationToken = signOtpVerificationToken(email, tempOtp);
+
+    // Send new OTP via email
+    try {
+      console.log(`[TESTING] New OTP for ${email}: ${tempOtp}`);
+      
+      return successResponseHelper(res, {
+        message: 'New OTP sent to your email.',
+        data: {
+          email,
+          firstName,
+          lastName,
+          phoneNumber: phoneNumber || null,
+          otpVerificationToken
+        }
+      });
+    } catch (emailError) {
       return errorResponseHelper(res, { 
-        message: 'Invalid or expired OTP',
+        message: 'Failed to send OTP. Please try again.',
+        code: '00500'
+      });
+    }
+  } catch (error) {
+    return serverErrorHelper(req, res, 500, error);
+  }
+};
+
+// Verify OTP - Step 2 (Only verify OTP, no account creation)
+export const verifyOtpAndCreateBusinessOwner = async (req, res) => {
+  try {
+    const { email, otp, otpVerificationToken, firstName, lastName, phoneNumber } = req.body;
+
+    console.log("OTP Verification Request:", {
+      email,
+      otp,
+      hasToken: !!otpVerificationToken,
+      firstName,
+      lastName,
+      phoneNumber
+    });
+
+    // Validate required fields
+    if (!email || !otp || !otpVerificationToken || !firstName || !lastName) {
+      console.log("Missing required fields:", { email, otp, hasToken: !!otpVerificationToken, firstName, lastName });
+      return errorResponseHelper(res, { 
+        message: 'Email, OTP, verification token, first name, and last name are required',
+        code: '00400'
+      });
+    }
+
+    // Validate OTP format
+    if (!/^\d{6}$/.test(otp)) {
+      console.log("Invalid OTP format:", otp);
+      return errorResponseHelper(res, { 
+        message: 'OTP must be exactly 6 digits',
+        code: '00400'
+      });
+    }
+
+    // Verify OTP (using dummy OTP for testing)
+    if (otp !== "775511") {
+      console.log("Invalid OTP provided:", otp);
+      return errorResponseHelper(res, { 
+        message: 'Invalid OTP. Please check your email and try again.',
+        code: '00400'
+      });
+    }
+
+    console.log("OTP verification passed, checking existing business owner...");
+
+    // Test database connection
+    try {
+      await BusinessOwner.findOne({ email: 'test@test.com' });
+      console.log("Database connection test successful");
+    } catch (dbError) {
+      console.error("Database connection error:", dbError);
+      return serverErrorHelper(req, res, 500, new Error("Database connection failed"));
+    }
+
+    // Check if business owner already exists
+    const existingBusinessOwner = await BusinessOwner.findOne({ email });
+    if (existingBusinessOwner) {
+      console.log("Business owner already exists:", existingBusinessOwner.email);
+      return errorResponseHelper(res, { 
+        message: 'Business owner account already exists with this email',
+        code: '00409'
+      });
+    }
+
+    console.log("Email verified successfully, generating token for account creation...");
+
+    // Generate a token for account creation (contains user data)
+    const accountCreationToken = signAccountCreationToken({ 
+      email, 
+      firstName, 
+      lastName, 
+      phoneNumber,
+      isPendingCreation: true 
+    });
+
+    return successResponseHelper(res, {
+      message: 'Email verified successfully. Please set your username and password to create your account.',
+      data: {
+        email,
+        firstName,
+        lastName,
+        phoneNumber,
+        accountCreationToken
+      }
+    });
+  } catch (error) {
+    console.error("Error in verifyOtpAndCreateBusinessOwner:", error);
+    console.error("Error stack:", error.stack);
+    return serverErrorHelper(req, res, 500, error);
+  }
+};
+
+// Set Business Owner Credentials and Create Account - Step 3
+export const setBusinessOwnerCredentials = async (req, res) => {
+  try {
+    const { username, password } = req.body;
+    const tokenData = req.user; // This contains the data from the token
+
+    console.log("Set Credentials Request:", {
+      username,
+      hasPassword: !!password,
+      tokenData: tokenData ? { email: tokenData.email, isPendingCreation: tokenData.isPendingCreation } : null
+    });
+
+    // Validate required fields
+    if (!username || !password) {
+      return errorResponseHelper(res, { 
+        message: 'Username and password are required',
+        code: '00400'
+      });
+    }
+
+    // Validate username format
+    if (!/^[a-zA-Z0-9_]{3,30}$/.test(username)) {
+      return errorResponseHelper(res, { 
+        message: 'Username must be 3-30 characters and contain only letters, numbers, and underscores',
+        code: '00400'
+      });
+    }
+
+    // Validate password strength
+    if (!/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{8,}$/.test(password)) {
+      return errorResponseHelper(res, { 
+        message: 'Password must contain at least 8 characters with uppercase, lowercase, number, and special character',
         code: '00400'
       });
     }
 
     // Check if username is already taken
-    const existingUsername = await Business.findOne({ username });
-    if (existingUsername && existingUsername._id.toString() !== business._id.toString()) {
+    const existingUsername = await BusinessOwner.findOne({ username });
+    if (existingUsername) {
       return errorResponseHelper(res, { 
-        message: 'Username is already taken',
+        message: 'Username is already taken. Please choose a different username.',
         code: '00409'
       });
     }
 
-    // Update business with credentials and mark email as verified
-    business.username = username;
-    business.password = password;
-    business.isEmailVerified = true;
-    business.otp = undefined; // Clear OTP
-    await business.save();
+    // Check if this is a pending creation (from OTP verification)
+    if (tokenData && tokenData.isPendingCreation) {
+      console.log("Creating new business owner account from OTP verification...");
+      
+      // Create the business owner account
+      const newBusinessOwner = new BusinessOwner({
+        firstName: tokenData.firstName,
+        lastName: tokenData.lastName,
+        email: tokenData.email,
+        phoneNumber: tokenData.phoneNumber || null,
+        username,
+        password,
+        status: 'pending', // Account is pending admin approval
+        isEmailVerified: true
+      });
 
-    return successResponseHelper(res, {
-      message: 'Account verified successfully. Your account is pending admin approval.',
-      data: {
-        email: business.email,
-        username: business.username,
-        status: business.status
+      await newBusinessOwner.save();
+      console.log("Business owner account created successfully:", newBusinessOwner._id);
+
+      // Generate access token for the new account
+      const accessToken = signAccessTokenBusiness(newBusinessOwner._id);
+
+      return successResponseHelper(res, {
+        message: 'Account created successfully! Your account is pending admin approval.',
+        data: {
+          businessOwnerId: newBusinessOwner._id,
+          email: newBusinessOwner.email,
+          firstName: newBusinessOwner.firstName,
+          lastName: newBusinessOwner.lastName,
+          username: newBusinessOwner.username,
+          status: newBusinessOwner.status,
+          accessToken
+        }
+      });
+    } else {
+      // This is an existing account updating credentials
+      const businessOwnerId = tokenData._id;
+      const businessOwner = await BusinessOwner.findById(businessOwnerId);
+      if (!businessOwner) {
+        return errorResponseHelper(res, { 
+          message: 'Business owner not found',
+          code: '00404'
+        });
       }
-    });
+
+      // Update credentials
+      businessOwner.username = username;
+      businessOwner.password = password;
+      businessOwner.status = 'pending'; // Update status to pending for admin approval
+      
+      await businessOwner.save();
+      console.log("Business owner credentials updated successfully");
+
+      // Generate new access token
+      const accessToken = signAccessTokenBusiness(businessOwner._id);
+
+      return successResponseHelper(res, {
+        message: 'Credentials updated successfully! Your account is pending admin approval.',
+        data: {
+          businessOwnerId: businessOwner._id,
+          email: businessOwner.email,
+          firstName: businessOwner.firstName,
+          lastName: businessOwner.lastName,
+          username: businessOwner.username,
+          status: businessOwner.status,
+          accessToken
+        }
+      });
+    }
   } catch (error) {
+    console.error("Error in setBusinessOwnerCredentials:", error);
     return serverErrorHelper(req, res, 500, error);
   }
 };
 
-// Business Login
-export const businessLogin = async (req, res) => {
+// Business Owner Login
+export const businessOwnerLogin = async (req, res) => {
   try {
     const { email, password } = req.body;
 
@@ -146,9 +359,18 @@ export const businessLogin = async (req, res) => {
       });
     }
 
-    // Find business by email
-    const business = await Business.findOne({ email }).select('+password');
-    if (!business) {
+    // Validate email format
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      return errorResponseHelper(res, { 
+        message: 'Please enter a valid email address',
+        code: '00400'
+      });
+    }
+
+    // Find business owner by email
+    const businessOwner = await BusinessOwner.findOne({ email }).select('+password');
+    if (!businessOwner) {
       return errorResponseHelper(res, { 
         message: 'Invalid email or password',
         code: '00401'
@@ -156,23 +378,50 @@ export const businessLogin = async (req, res) => {
     }
 
     // Check if email is verified
-    if (!business.isEmailVerified) {
+    if (!businessOwner.isEmailVerified) {
       return errorResponseHelper(res, { 
         message: 'Please verify your email first',
         code: '00401'
       });
     }
 
-    // Check if account is approved
-    if (business.status !== 'approved') {
+    // Handle different account statuses
+    if (businessOwner.status === 'draft') {
       return errorResponseHelper(res, { 
-        message: `Account is ${business.status}. Please wait for admin approval.`,
+        message: 'Please complete your account setup by setting username and password',
+        code: '00400',
+        data: {
+          requiresSetup: true,
+          email: businessOwner.email,
+          firstName: businessOwner.firstName,
+          lastName: businessOwner.lastName
+        }
+      });
+    }
+
+    if (businessOwner.status === 'suspended') {
+      return errorResponseHelper(res, { 
+        message: 'Your account has been suspended. Please contact support.',
+        code: '00401'
+      });
+    }
+
+    if (businessOwner.status === 'rejected') {
+      return errorResponseHelper(res, { 
+        message: 'Your account has been rejected. Please contact support.',
+        code: '00401'
+      });
+    }
+
+    if (businessOwner.status !== 'approved' &&businessOwner.status !== 'pending' && businessOwner.status !== 'active') {
+      return errorResponseHelper(res, { 
+        message: `Account is ${businessOwner.status}. Please wait for admin approval.`,
         code: '00401'
       });
     }
 
     // Verify password
-    const isPasswordValid = await business.comparePassword(password);
+    const isPasswordValid = await businessOwner.comparePassword(password);
     if (!isPasswordValid) {
       return errorResponseHelper(res, { 
         message: 'Invalid email or password',
@@ -181,24 +430,22 @@ export const businessLogin = async (req, res) => {
     }
 
     // Generate JWT token
-    const token = signAccessTokenBusiness(business._id);
+    const token = signAccessTokenBusiness(businessOwner._id);
 
     return successResponseHelper(res, {
       message: 'Login successful',
       data: {
         token,
-        business: {
-          _id: business._id,
-          ownerFirstName: business.ownerFirstName,
-          ownerLastName: business.ownerLastName,
-          email: business.email,
-          phoneNumber: business.phoneNumber,
-          username: business.username,
-          businessName: business.businessName,
-          status: business.status,
-          profilePhoto: business.profilePhoto,
-          isEmailVerified: business.isEmailVerified,
-          isPhoneVerified: business.isPhoneVerified
+        businessOwner: {
+          _id: businessOwner._id,
+          firstName: businessOwner.firstName,
+          lastName: businessOwner.lastName,
+          email: businessOwner.email,
+          phoneNumber: businessOwner.phoneNumber,
+          username: businessOwner.username,
+          status: businessOwner.status,
+          isEmailVerified: businessOwner.isEmailVerified,
+          isPhoneVerified: businessOwner.isPhoneVerified
         }
       }
     });
@@ -207,407 +454,102 @@ export const businessLogin = async (req, res) => {
   }
 };
 
-// Google Authentication for Business
-export const businessGoogleAuth = async (req, res) => {
+// Register Business (for authenticated business owners)
+export const registerBusiness = async (req, res) => {
   try {
-    const { googleId, ownerFirstName, ownerLastName, email, profilePhoto } = req.body;
-
-    // Validate required fields
-    if (!googleId || !ownerFirstName || !ownerLastName || !email) {
-      return errorResponseHelper(res, { 
-        message: 'Google ID, first name, last name, and email are required',
-        code: '00400'
-      });
-    }
-
-    // Check if business exists with this Google ID
-    let business = await Business.findOne({ googleId });
-    if (business) {
-      // Business exists, check status and generate token
-      if (business.status !== 'approved') {
-        return errorResponseHelper(res, { 
-          message: `Account is ${business.status}. Please wait for admin approval.`,
-          code: '00401'
-        });
-      }
-
-      const token = signAccessTokenBusiness(business._id);
-      return successResponseHelper(res, {
-        message: 'Login successful',
-        data: {
-          token,
-          business: {
-            _id: business._id,
-            ownerFirstName: business.ownerFirstName,
-            ownerLastName: business.ownerLastName,
-            email: business.email,
-            phoneNumber: business.phoneNumber,
-            username: business.username,
-            businessName: business.businessName,
-            status: business.status,
-            profilePhoto: business.profilePhoto,
-            isEmailVerified: business.isEmailVerified,
-            isPhoneVerified: business.isPhoneVerified
-          }
-        }
-      });
-    }
-
-    // Check if business exists with this email
-    business = await Business.findOne({ email });
-    if (business) {
-      // Business exists with email but no Google ID, link the accounts
-      business.googleId = googleId;
-      if (!business.profilePhoto) business.profilePhoto = profilePhoto;
-      await business.save();
-
-      if (business.status !== 'approved') {
-        return errorResponseHelper(res, { 
-          message: `Account is ${business.status}. Please wait for admin approval.`,
-          code: '00401'
-        });
-      }
-
-      const token = signAccessTokenBusiness(business._id);
-      return successResponseHelper(res, {
-        message: 'Account linked successfully',
-        data: {
-          token,
-          business: {
-            _id: business._id,
-            ownerFirstName: business.ownerFirstName,
-            ownerLastName: business.ownerLastName,
-            email: business.email,
-            phoneNumber: business.phoneNumber,
-            username: business.username,
-            businessName: business.businessName,
-            status: business.status,
-            profilePhoto: business.profilePhoto,
-            isEmailVerified: business.isEmailVerified,
-            isPhoneVerified: business.isPhoneVerified
-          }
-        }
-      });
-    }
-
-    // Create new business account with Google data
-    const newBusiness = new Business({
-      googleId,
-      ownerFirstName,
-      ownerLastName,
-      email,
-      profilePhoto,
-      isEmailVerified: true, // Google accounts are pre-verified
-      status: 'pending' // Needs admin approval
-    });
-
-    await newBusiness.save();
-
-    return successResponseHelper(res, {
-      message: 'Business account created successfully. Please wait for admin approval.',
-      data: {
-        email: newBusiness.email,
-        ownerFirstName: newBusiness.ownerFirstName,
-        ownerLastName: newBusiness.ownerLastName,
-        status: newBusiness.status
-      }
-    });
-  } catch (error) {
-    return serverErrorHelper(req, res, 500, error);
-  }
-};
-
-// Send OTP for Email Verification
-export const sendOtpForEmail = async (req, res) => {
-  try {
-    const { email } = req.body;
-
-    if (!email) {
-      return errorResponseHelper(res, { 
-        message: 'Email is required',
-        code: '00400'
-      });
-    }
-
-    // Find business by email
-    const business = await Business.findOne({ email });
-    if (!business) {
-      return errorResponseHelper(res, { 
-        message: 'Business account not found',
-        code: '00404'
-      });
-    }
-
-    // Generate OTP
-    const otp = business.generateOTP();
-    await business.save();
-
-    // Send OTP via email
-    try {
-      await sendEmail(email, "Business Account Verification", `Your verification code is: ${otp}`);
-      return successResponseHelper(res, { 
-        message: 'OTP sent to your email' 
-      });
-    } catch (emailError) {
-      return errorResponseHelper(res, { 
-        message: 'Failed to send OTP. Please try again.',
-        code: '00500'
-      });
-    }
-  } catch (error) {
-    return serverErrorHelper(req, res, 500, error);
-  }
-};
-
-// Verify OTP
-export const verifyOtp = async (req, res) => {
-  try {
-    const { email, otp } = req.body;
-
-    if (!email || !otp) {
-      return errorResponseHelper(res, { 
-        message: 'Email and OTP are required',
-        code: '00400'
-      });
-    }
-
-    // Find business by email
-    const business = await Business.findOne({ email });
-    if (!business) {
-      return errorResponseHelper(res, { 
-        message: 'Business account not found',
-        code: '00404'
-      });
-    }
-
-    // Verify OTP
-    if (!business.verifyOTP(otp)) {
-      return errorResponseHelper(res, { 
-        message: 'Invalid or expired OTP',
-        code: '00400'
-      });
-    }
-
-    // Mark email as verified
-    business.isEmailVerified = true;
-    business.otp = undefined; // Clear OTP
-    await business.save();
-
-    return successResponseHelper(res, { 
-      message: 'Email verified successfully' 
-    });
-  } catch (error) {
-    return serverErrorHelper(req, res, 500, error);
-  }
-};
-
-// Forgot Password - Send OTP
-export const forgotPassword = async (req, res) => {
-  try {
-    const { email } = req.body;
-
-    if (!email) {
-      return errorResponseHelper(res, { 
-        message: 'Email is required',
-        code: '00400'
-      });
-    }
-
-    // Find business by email
-    const business = await Business.findOne({ email });
-    if (!business) {
-      return errorResponseHelper(res, { 
-        message: 'Business account not found',
-        code: '00404'
-      });
-    }
-
-    // Generate OTP
-    const otp = business.generateOTP();
-    await business.save();
-
-    // Send OTP via email
-    try {
-      await sendEmail(email, "Password Reset Verification", `Your password reset code is: ${otp}`);
-      return successResponseHelper(res, { 
-        message: 'Password reset OTP sent to your email' 
-      });
-    } catch (emailError) {
-      return errorResponseHelper(res, { 
-        message: 'Failed to send OTP. Please try again.',
-        code: '00500'
-      });
-    }
-  } catch (error) {
-    return serverErrorHelper(req, res, 500, error);
-  }
-};
-
-// Reset Password with OTP
-export const resetPassword = async (req, res) => {
-  try {
-    const { email, otp, newPassword } = req.body;
-
-    if (!email || !otp || !newPassword) {
-      return errorResponseHelper(res, { 
-        message: 'Email, OTP, and new password are required',
-        code: '00400'
-      });
-    }
-
-    // Find business by email
-    const business = await Business.findOne({ email });
-    if (!business) {
-      return errorResponseHelper(res, { 
-        message: 'Business account not found',
-        code: '00404'
-      });
-    }
-
-    // Verify OTP
-    if (!business.verifyOTP(otp)) {
-      return errorResponseHelper(res, { 
-        message: 'Invalid or expired OTP',
-        code: '00400'
-      });
-    }
-
-    // Update password
-    business.password = newPassword;
-    business.otp = undefined; // Clear OTP
-    await business.save();
-
-    return successResponseHelper(res, { 
-      message: 'Password reset successfully' 
-    });
-  } catch (error) {
-    return serverErrorHelper(req, res, 500, error);
-  }
-};
-
-// Update Password (Protected Route)
-export const updatePassword = async (req, res) => {
-  try {
-    const { currentPassword, newPassword } = req.body;
-    const businessId = req.business._id;
-
-    if (!currentPassword || !newPassword) {
-      return errorResponseHelper(res, { 
-        message: 'Current password and new password are required',
-        code: '00400'
-      });
-    }
-
-    // Find business
-    const business = await Business.findById(businessId).select('+password');
-    if (!business) {
-      return errorResponseHelper(res, { 
-        message: 'Business account not found',
-        code: '00404'
-      });
-    }
-
-    // Verify current password
-    const isCurrentPasswordValid = await business.comparePassword(currentPassword);
-    if (!isCurrentPasswordValid) {
-      return errorResponseHelper(res, { 
-        message: 'Current password is incorrect',
-        code: '00400'
-      });
-    }
-
-    // Update password
-    business.password = newPassword;
-    await business.save();
-
-    return successResponseHelper(res, { 
-      message: 'Password updated successfully' 
-    });
-  } catch (error) {
-    return serverErrorHelper(req, res, 500, error);
-  }
-};
-
-// Update Profile (Protected Route)
-export const updateProfile = async (req, res) => {
-  try {
-    const businessId = req.business._id;
+    const businessOwnerId = req.businessOwner._id;
     const {
-      ownerFirstName,
-      ownerLastName,
-      phoneNumber,
       businessName,
+      category,
+      subcategories,
+      phoneNumber,
+      email,
+      facebook,
+      linkedIn,
+      website,
+      twitter,
+      metaTitle,
+      metaDescription,
+      focusKeywords,
+      about,
+      serviceOffer,
       address,
       city,
       state,
       zipCode,
-      country
+      country,
+      images,
+      plan
     } = req.body;
 
-    // Find business
-    const business = await Business.findById(businessId);
-    if (!business) {
+    // Validate required fields
+    if (!businessName || !category || !phoneNumber || !email) {
       return errorResponseHelper(res, { 
-        message: 'Business account not found',
-        code: '00404'
+        message: 'Business name, category, phone number, and email are required',
+        code: '00400'
       });
     }
 
-    // Handle profile photo upload
-    let profilePhotoData = null;
-    if (req.file) {
-      try {
-        const uploadResult = await uploadImageWithThumbnail(req.file.buffer, 'business-app/profiles');
-        profilePhotoData = {
-          url: uploadResult.original.url,
-          public_id: uploadResult.original.public_id,
-          thumbnail: {
-            url: uploadResult.thumbnail.url,
-            public_id: uploadResult.thumbnail.public_id
-          }
-        };
-      } catch (uploadError) {
-        console.error('Profile photo upload error:', uploadError);
-        return errorResponseHelper(res, { 
-          message: 'Failed to upload profile photo. Please try again.', 
-          code: '00500' 
-        });
-      }
+    // Validate email format
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      return errorResponseHelper(res, { 
+        message: 'Please enter a valid email address',
+        code: '00400'
+      });
     }
 
-    // Update fields
-    if (ownerFirstName) business.ownerFirstName = ownerFirstName;
-    if (ownerLastName) business.ownerLastName = ownerLastName;
-    if (phoneNumber) business.phoneNumber = phoneNumber;
-    if (businessName) business.businessName = businessName;
-    if (address) business.address = address;
-    if (city) business.city = city;
-    if (state) business.state = state;
-    if (zipCode) business.zipCode = zipCode;
-    if (country) business.country = country;
-    if (profilePhotoData) business.profilePhoto = profilePhotoData;
+    // Check if business already exists with this email or phone
+    const existingBusiness = await Business.findOne({ 
+      $or: [{ email }, { phoneNumber }] 
+    });
 
-    await business.save();
+    if (existingBusiness) {
+      return errorResponseHelper(res, { 
+        message: 'Business already exists with this email or phone number',
+        code: '00409'
+      });
+    }
+
+    // Create new business
+    const newBusiness = new Business({
+      businessOwner: businessOwnerId,
+      businessName,
+      category,
+      subcategories: subcategories || [],
+      phoneNumber,
+      email,
+      facebook,
+      linkedIn,
+      website,
+      twitter,
+      metaTitle,
+      metaDescription,
+      focusKeywords: focusKeywords || [],
+      about,
+      serviceOffer,
+      address,
+      city,
+      state,
+      zipCode,
+      country,
+      images: images || [],
+      plan: plan || 'bronze',
+      status: 'pending'
+    });
+
+    await newBusiness.save();
+
+    // Update business owner's businesses array
+    await BusinessOwner.findByIdAndUpdate(
+      businessOwnerId,
+      { $push: { businesses: newBusiness._id } }
+    );
 
     return successResponseHelper(res, {
-      message: 'Profile updated successfully',
+      message: 'Business registered successfully. Pending admin approval.',
       data: {
-        _id: business._id,
-        ownerFirstName: business.ownerFirstName,
-        ownerLastName: business.ownerLastName,
-        email: business.email,
-        phoneNumber: business.phoneNumber,
-        username: business.username,
-        businessName: business.businessName,
-        address: business.address,
-        city: business.city,
-        state: business.state,
-        zipCode: business.zipCode,
-        country: business.country,
-        profilePhoto: business.profilePhoto,
-        status: business.status,
-        isEmailVerified: business.isEmailVerified,
-        isPhoneVerified: business.isPhoneVerified
+        business: newBusiness.getBusinessInfo()
       }
     });
   } catch (error) {
@@ -615,38 +557,33 @@ export const updateProfile = async (req, res) => {
   }
 };
 
-// Get Business Profile (Protected Route)
-export const getProfile = async (req, res) => {
+// Get Business Owner's Businesses
+export const getBusinessOwnerBusinesses = async (req, res) => {
   try {
-    const businessId = req.business._id;
+    const businessOwnerId = req.businessOwner._id;
 
-    const business = await Business.findById(businessId);
-    if (!business) {
+    const businessOwner = await BusinessOwner.findById(businessOwnerId)
+      .populate('businesses')
+      .select('-password');
+
+    if (!businessOwner) {
       return errorResponseHelper(res, { 
-        message: 'Business account not found',
+        message: 'Business owner not found',
         code: '00404'
       });
     }
 
     return successResponseHelper(res, {
-      message: 'Profile fetched successfully',
+      message: 'Businesses retrieved successfully',
       data: {
-        _id: business._id,
-        ownerFirstName: business.ownerFirstName,
-        ownerLastName: business.ownerLastName,
-        email: business.email,
-        phoneNumber: business.phoneNumber,
-        username: business.username,
-        businessName: business.businessName,
-        address: business.address,
-        city: business.city,
-        state: business.state,
-        zipCode: business.zipCode,
-        country: business.country,
-        profilePhoto: business.profilePhoto,
-        status: business.status,
-        isEmailVerified: business.isEmailVerified,
-        isPhoneVerified: business.isPhoneVerified
+        businessOwner: {
+          _id: businessOwner._id,
+          firstName: businessOwner.firstName,
+          lastName: businessOwner.lastName,
+          email: businessOwner.email,
+          status: businessOwner.status
+        },
+        businesses: businessOwner.businesses
       }
     });
   } catch (error) {

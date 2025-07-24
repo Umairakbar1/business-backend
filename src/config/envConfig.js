@@ -23,15 +23,21 @@ const {
   CLOUDINARY_API_SECRET
 } = process.env;
 
-const dbUri = DB_URI;
-const jwtSecretKeyUser = JWT_SECRET_KEY;
-const jwtSecretKeyAdmin = JWT_SECRET_KEY_ADMIN;
-const jwtSecretKeyBusiness = JWT_SECRET_KEY_BUSINESS || JWT_SECRET_KEY_ADMIN;
-const jwtExpiresInUser = JWT_EXPIRES_IN;
-const jwtExpiresInAdmin = JWT_EXPIRES_IN_ADMIN;
-const jwtExpiresInBusiness = JWT_EXPIRES_IN_BUSINESS || JWT_EXPIRES_IN_ADMIN;
-const port = PORT;
-const serverIP = SERVER_IP;
+// Debug: Log environment variables (remove in production)
+console.log('Environment Variables Check:');
+console.log('JWT_SECRET_KEY:', JWT_SECRET_KEY ? 'SET' : 'NOT SET');
+console.log('JWT_SECRET_KEY_ADMIN:', JWT_SECRET_KEY_ADMIN ? 'SET' : 'NOT SET');
+console.log('JWT_SECRET_KEY_BUSINESS:', JWT_SECRET_KEY_BUSINESS ? 'SET' : 'NOT SET');
+
+const dbUri = DB_URI || 'mongodb://localhost:27017/business_platform';
+const jwtSecretKeyUser = JWT_SECRET_KEY || 'fallback_jwt_secret_key_for_users_min_32_chars_long_for_security';
+const jwtSecretKeyAdmin = JWT_SECRET_KEY_ADMIN || 'fallback_jwt_secret_key_for_admins_min_32_chars_long_for_security';
+const jwtSecretKeyBusiness = JWT_SECRET_KEY_BUSINESS || JWT_SECRET_KEY_ADMIN || 'fallback_jwt_secret_key_for_business_min_32_chars_long_for_security';
+const jwtExpiresInUser = JWT_EXPIRES_IN || '24h';
+const jwtExpiresInAdmin = JWT_EXPIRES_IN_ADMIN || '24h';
+const jwtExpiresInBusiness = JWT_EXPIRES_IN_BUSINESS || JWT_EXPIRES_IN_ADMIN || '24h';
+const port = PORT || 3000;
+const serverIP = SERVER_IP || 'localhost';
 
 // SendGrid Configuration
 const sendGridApiKey = SENDGRID_API_KEY;

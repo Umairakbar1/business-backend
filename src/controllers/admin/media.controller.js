@@ -417,7 +417,7 @@ const bulkUploadMedia = async (req, res) => {
         return successResponseHelper(res, {
             message: `Successfully uploaded ${uploadedMedia.length} files${errors.length > 0 ? `, ${errors.length} failed` : ''}`,
             data: {
-                uploaded: uploadedMedia,
+                data: uploadedMedia,
                 errors: errors
             }
         });

@@ -3,81 +3,19 @@ import bcrypt from "bcryptjs";
 const { Schema, model } = mongoose;
 
 const BusinessSchema = new Schema({
-  // Business Owner Information
-  ownerFirstName: { 
-    type: String, 
-    required: true,
-    trim: true
-  },
-  ownerLastName: { 
-    type: String, 
-    required: true,
-    trim: true
-  },
-  email: { 
-    type: String, 
-    required: true, 
-    unique: true,
-    lowercase: true,
-    trim: true
-  },
-  phoneNumber: {
-    type: String,
-    required: true,
-    unique: true
-  },
-  
-  // Authentication
-  username: {
-    type: String,
-    unique: true,
-    sparse: true
-  },
-  password: { 
-    type: String, 
-    required: function() { return !this.googleId; } // Password not required if using Google auth
-  },
-  googleId: {
-    type: String,
-    unique: true,
-    sparse: true
-  },
-  
-  // Verification Status
-  isEmailVerified: {
-    type: Boolean,
-    default: false
-  },
-  isPhoneVerified: {
-    type: Boolean,
-    default: false
-  },
-  otp: {
-    code: String,
-    expiresAt: Date
+  // Business Owner Reference
+  businessOwner: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'BusinessOwner',
+    required: true
   },
   
   // Business Information
-  businessName: String,
-  businessCategory: String,
-  businessSubCategory: String,
-  industry: String,
-  website: String,
-  
-  // Address Information
-  address: String,
-  city: String,
-  state: String,
-  zipCode: String,
-  country: String,
-  
-  // Profile
-  profilePhoto: { 
+  businessName: { 
     type: String, 
-    default: "https://via.placeholder.com/150"
+    required: true,
+    trim: true
   },
-  
-  // Logo
   logo: {
     url: String,
     public_id: String,
@@ -86,13 +24,71 @@ const BusinessSchema = new Schema({
       public_id: String
     }
   },
-  
-  // Status and Approval
-  owner: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'User',
+  category: {
+    type: String,
     required: true
   },
+  subcategories: [{
+    type: String
+  }],
+  
+  // Contact Information
+  phoneNumber: {
+    type: String,
+    required: true,
+    unique: true
+  },
+  email: { 
+    type: String, 
+    required: true, 
+    unique: true,
+    lowercase: true,
+    trim: true
+  },
+  
+  // Social Media Links
+  facebook: String,
+  linkedIn: String,
+  website: String,
+  twitter: String,
+  
+  // SEO Information
+  metaTitle: String,
+  metaDescription: String,
+  focusKeywords: [String],
+  
+  // Business Details
+  about: String,
+  serviceOffer: String,
+  
+  // Address Information
+  address: String,
+  city: String,
+  state: String,
+  zipCode: String,
+  country: String,
+  
+  // Business Images
+  images: [{
+    url: String,
+    public_id: String,
+    caption: String
+  }],
+  
+  // Status and Approval
+  status: {
+    type: String,
+    enum: ['active', 'inactive', 'pending', 'approved', 'rejected', 'suspended', 'draft'],
+    default: 'pending'
+  },
+  approvedBy: {
+    type: Schema.Types.ObjectId,
+    ref: 'Admin'
+  },
+  approvedAt: Date,
+  rejectionReason: String,
+  
+  // Business Plan and Features
   plan: {
     type: String,
     enum: ['bronze', 'silver', 'gold'],
@@ -105,17 +101,6 @@ const BusinessSchema = new Schema({
   embedToken: {
     type: String
   },
-  status: {
-    type: String,
-    enum: ['active', 'inactive', 'pending', 'approved', 'rejected', 'suspended'],
-    default: 'pending'
-  },
-  approvedBy: {
-    type: Schema.Types.ObjectId,
-    ref: 'Admin'
-  },
-  approvedAt: Date,
-  rejectionReason: String,
   
   // Review Management Access
   reviewManagementAccess: {
@@ -128,9 +113,7 @@ const BusinessSchema = new Schema({
   },
   reviewManagementGrantedAt: Date,
   
-  // Timestamps
-  createdAt: { type: Date, default: Date.now },
-  updatedAt: { type: Date, default: Date.now },
+  // Boost Features
   boostActive: {
     type: Boolean,
     default: false
@@ -146,59 +129,30 @@ const BusinessSchema = new Schema({
   },
   boostQueue: [
     {
-      owner: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+      owner: { type: mongoose.Schema.Types.ObjectId, ref: 'BusinessOwner' },
       start: Date,
       end: Date
     }
-  ]
+  ],
+  
+  // Timestamps
+  createdAt: { type: Date, default: Date.now },
+  updatedAt: { type: Date, default: Date.now }
 }, {
   timestamps: true
 });
 
-// Hash password before saving
-BusinessSchema.pre('save', async function(next) {
-  if (!this.isModified('password')) return next();
-  
-  try {
-    const salt = await bcrypt.genSalt(10);
-    this.password = await bcrypt.hash(this.password, salt);
-    next();
-  } catch (error) {
-    next(error);
-  }
-});
-
-// Method to compare password
-BusinessSchema.methods.comparePassword = async function(candidatePassword) {
-  return bcrypt.compare(candidatePassword, this.password);
-};
-
-// Method to generate OTP
-BusinessSchema.methods.generateOTP = function() {
-  const otp = Math.floor(100000 + Math.random() * 900000).toString();
-  this.otp = {
-    code: otp,
-    expiresAt: new Date(Date.now() + 10 * 60 * 1000) // 10 minutes
+// Method to get business info
+BusinessSchema.methods.getBusinessInfo = function() {
+  return {
+    _id: this._id,
+    businessName: this.businessName,
+    category: this.category,
+    email: this.email,
+    phoneNumber: this.phoneNumber,
+    status: this.status,
+    plan: this.plan
   };
-  return otp;
-};
-
-// Method to verify OTP
-BusinessSchema.methods.verifyOTP = function(code) {
-  if (!this.otp || !this.otp.code || !this.otp.expiresAt) {
-    return false;
-  }
-  
-  if (new Date() > this.otp.expiresAt) {
-    return false;
-  }
-  
-  return this.otp.code === code;
-};
-
-// Method to get full name
-BusinessSchema.methods.getFullName = function() {
-  return `${this.ownerFirstName} ${this.ownerLastName}`;
 };
 
 const Business = model('Business', BusinessSchema);

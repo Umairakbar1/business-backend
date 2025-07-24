@@ -1,5 +1,6 @@
 import Admin from "../models/admin/admin.js";
 import User from "../models/user/user.js";
+import BusinessOwner from "../models/business/businessOwner.js";
 import mongoose from "mongoose";
 import jwt from "jsonwebtoken";
 import {
@@ -81,9 +82,77 @@ const authorizedAccessBusiness = async (req, res, next) => {
   }
 };
 
+const verifyBusinessOwnerToken = async (req, res, next) => {
+  let token = req.header("Authorization");
+  if (!token) return errorResponseHelper(res, {message:GLOBAL_MESSAGES.jwtRequired,code:"00401"});
+
+  if (token.includes("Bearer"))
+    token = req.header("Authorization").replace("Bearer ", "");
+
+  try {
+    req.businessOwner = verify(token, GLOBAL_ENV.jwtSecretKeyBusiness || GLOBAL_ENV.jwtSecretKeyAdmin, { expiresIn: GLOBAL_ENV.jwtExpiresInBusiness || GLOBAL_ENV.jwtExpiresInAdmin });
+    if (!mongoose.Types.ObjectId.isValid(req.businessOwner._id))
+      return errorResponseHelper(res, {message:GLOBAL_MESSAGES.invalidData,code:"00401"});
+
+    const businessOwnerExists = await BusinessOwner.findById(req.businessOwner._id);
+
+    if (!businessOwnerExists)
+      return errorResponseHelper(res, {message:GLOBAL_MESSAGES.dataNotFound,code:"00401"});
+
+    next();
+  } catch (error) {
+    return serverErrorHelper(req, res, 500, error);
+  }
+};
+
+// New middleware for account creation tokens (contains user data, not business owner ID)
+const verifyAccountCreationToken = async (req, res, next) => {
+  let token = req.header("Authorization");
+  if (!token) return errorResponseHelper(res, {message:GLOBAL_MESSAGES.jwtRequired,code:"00401"});
+
+  if (token.includes("Bearer"))
+    token = req.header("Authorization").replace("Bearer ", "");
+
+  console.log("🔍 Verifying account creation token...");
+  console.log("Token:", token.substring(0, 50) + "...");
+
+  try {
+    req.user = verify(token, GLOBAL_ENV.jwtSecretKeyBusiness || GLOBAL_ENV.jwtSecretKeyAdmin, { expiresIn: GLOBAL_ENV.jwtExpiresInBusiness || GLOBAL_ENV.jwtExpiresInAdmin });
+    
+    console.log("🔍 Token decoded successfully");
+    console.log("Token payload:", req.user);
+    
+    // Check if this is an account creation token (contains user data)
+    if (req.user.isPendingCreation && req.user.email) {
+      console.log("✅ Account creation token verified:", req.user.email);
+      next();
+    } else {
+      console.log("❌ Not an account creation token, checking if existing business owner...");
+      // This might be an existing business owner token
+      if (!mongoose.Types.ObjectId.isValid(req.user._id)) {
+        console.log("❌ Invalid ObjectId in token:", req.user._id);
+        return errorResponseHelper(res, {message:GLOBAL_MESSAGES.invalidData,code:"00401"});
+      }
+
+      const businessOwnerExists = await BusinessOwner.findById(req.user._id);
+      if (!businessOwnerExists) {
+        console.log("❌ Business owner not found in database");
+        return errorResponseHelper(res, {message:GLOBAL_MESSAGES.dataNotFound,code:"00401"});
+      }
+
+      console.log("✅ Existing business owner token verified");
+      next();
+    }
+  } catch (error) {
+    console.error("❌ Token verification error:", error);
+    return serverErrorHelper(req, res, 500, error);
+  }
+};
 
 export {
   authorizedAccessUser,
   authorizedAccessAdmin,
-  authorizedAccessBusiness
+  authorizedAccessBusiness,
+  verifyBusinessOwnerToken,
+  verifyAccountCreationToken
 };

@@ -102,7 +102,9 @@ const sendOtp = async (req, res) => {
 
   // Send OTP via email
   try {
-    await sendEmail(email, "Email Verification", otp);
+    // Commented out for testing - using dummy OTP
+    // await sendEmail(email, "Email Verification", otp);
+    console.log(`[TESTING] User OTP for ${email}: ${otp}`);
     return successResponseHelper(res, { message: "OTP sent to your email" });
   } catch (error) {
     return serverErrorHelper(req, res, 500, error);

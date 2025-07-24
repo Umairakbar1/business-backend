@@ -5,8 +5,8 @@ const BASE_URL = 'http://localhost:3000/api/business/auth';
 
 // Test data
 const testBusiness = {
-  ownerFirstName: 'John',
-  ownerLastName: 'Doe',
+  firstName: 'John',
+  lastName: 'Doe',
   email: 'john.doe@testbusiness.com',
   phoneNumber: '+1234567890'
 };
@@ -19,8 +19,8 @@ const testCredentials = {
 
 const testGoogleAuth = {
   googleId: 'google_test_user_123',
-  ownerFirstName: 'Jane',
-  ownerLastName: 'Smith',
+  firstName: 'Jane',
+  lastName: 'Smith',
   email: 'jane.smith@gmail.com',
   profilePhoto: 'https://lh3.googleusercontent.com/test-photo.jpg'
 };
