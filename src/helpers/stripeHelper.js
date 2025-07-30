@@ -1,6 +1,5 @@
 import Stripe from "stripe";
 import { GLOBAL_ENV } from "../config/globalConfig.js";
-import { purchaseCourseWebhookCall } from "../controllers/user/course.controller.js";
 
 const {
   stripeSecretKey,
@@ -123,30 +122,25 @@ const retrieveStripePaymentIntent = async (intentId) => {
 const handleStripeWebhook = async (req, res) => {
   const sig = req.headers['stripe-signature'];
   let event = req.body;
-    console.log(JSON.stringify(event), 'event-------')
+  console.log(JSON.stringify(event), 'event-------')
+  
   // Handle the event
   switch (event.type) {
     case 'payment_intent.succeeded':
       const { metadata } = event.data.object;
       console.log(`charge success 001  ${event.type}`, metadata);
       try {
-      await purchaseCourseWebhookCall(metadata, res)
-      return res
-      .status(200)
-      .send({ message: `Webhook Scceeded` });
+        // Generic webhook handling - you can customize this based on your needs
+        console.log('Payment succeeded:', metadata);
+        return res.status(200).send({ message: `Webhook Succeeded` });
       } catch (error) {
-        return res
-  .status(400)
-  .send({ message: `Webhook Error: ${error?.message}` }); 
+        return res.status(400).send({ message: `Webhook Error: ${error?.message}` }); 
       }
-      // Then define and call a function to handle the event payment_intent.succeeded
-
       break;
     // ... handle other event types
     default:
       console.log(`Unhandled event type ${event.type}`);
       res.send();
-
   }
 
   // Return a 200 response to acknowledge receipt of the event

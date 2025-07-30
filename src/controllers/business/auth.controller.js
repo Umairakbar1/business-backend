@@ -12,6 +12,7 @@ import {
 } from "../../helpers/jwtHelper.js";
 import { sendEmail } from '../../helpers/sendGridHelper.js';
 import { uploadImageWithThumbnail } from '../../helpers/cloudinaryHelper.js';
+import { cleanupUploadedFiles } from '../../middleware/cloudinaryUpload.js';
 
 // Business Owner Signup - Step 1: Basic Information and OTP Generation
 export const businessOwnerSignup = async (req, res) => {
@@ -461,7 +462,6 @@ export const registerBusiness = async (req, res) => {
     const {
       businessName,
       category,
-      subcategories,
       phoneNumber,
       email,
       facebook,
@@ -470,7 +470,6 @@ export const registerBusiness = async (req, res) => {
       twitter,
       metaTitle,
       metaDescription,
-      focusKeywords,
       about,
       serviceOffer,
       address,
@@ -478,9 +477,20 @@ export const registerBusiness = async (req, res) => {
       state,
       zipCode,
       country,
-      images,
       plan
     } = req.body;
+
+    // Handle arrays from form data
+    const subcategories = req.body.subcategories ? 
+      (Array.isArray(req.body.subcategories) ? req.body.subcategories : [req.body.subcategories]) : [];
+    
+    const focusKeywords = req.body.focusKeywords ? 
+      (Array.isArray(req.body.focusKeywords) ? req.body.focusKeywords : [req.body.focusKeywords]) : [];
+
+    // Get uploaded files from middleware
+    const uploadedFiles = req.uploadedFiles || {};
+    const logo = uploadedFiles.logo || null;
+    const images = uploadedFiles.images || [];
 
     // Validate required fields
     if (!businessName || !category || !phoneNumber || !email) {
@@ -514,6 +524,7 @@ export const registerBusiness = async (req, res) => {
     // Create new business
     const newBusiness = new Business({
       businessOwner: businessOwnerId,
+      logo,
       businessName,
       category,
       subcategories: subcategories || [],
@@ -533,12 +544,20 @@ export const registerBusiness = async (req, res) => {
       state,
       zipCode,
       country,
-      images: images || [],
+      images,
       plan: plan || 'bronze',
       status: 'pending'
     });
 
-    await newBusiness.save();
+    try {
+      await newBusiness.save();
+    } catch (saveError) {
+      // If business creation fails, cleanup uploaded files
+      if (uploadedFiles.logo || uploadedFiles.images.length > 0) {
+        await cleanupUploadedFiles(uploadedFiles);
+      }
+      throw saveError;
+    }
 
     // Update business owner's businesses array
     await BusinessOwner.findByIdAndUpdate(
@@ -561,29 +580,173 @@ export const registerBusiness = async (req, res) => {
 export const getBusinessOwnerBusinesses = async (req, res) => {
   try {
     const businessOwnerId = req.businessOwner._id;
+    
+    const businesses = await Business.find({ businessOwner: businessOwnerId })
+      .select('businessName category email phoneNumber status plan logo createdAt')
+      .sort({ createdAt: -1 });
+    
+    return successResponseHelper(res, {
+      message: 'Businesses retrieved successfully',
+      data: businesses
+    });
+  } catch (error) {
+    return serverErrorHelper(req, res, 500, error);
+  }
+};
 
-    const businessOwner = await BusinessOwner.findById(businessOwnerId)
-      .populate('businesses')
-      .select('-password');
-
-    if (!businessOwner) {
+// Update Business Logo
+export const updateBusinessLogo = async (req, res) => {
+  try {
+    const { businessId } = req.params;
+    const businessOwnerId = req.businessOwner._id;
+    const uploadedFiles = req.uploadedFiles || {};
+    
+    // Check if business exists and belongs to the business owner
+    const business = await Business.findOne({ 
+      _id: businessId, 
+      businessOwner: businessOwnerId 
+    });
+    
+    if (!business) {
       return errorResponseHelper(res, { 
-        message: 'Business owner not found',
+        message: 'Business not found or access denied',
         code: '00404'
       });
     }
-
+    
+    // Check if logo was uploaded
+    if (!uploadedFiles.logo) {
+      return errorResponseHelper(res, { 
+        message: 'No logo file uploaded',
+        code: '00400'
+      });
+    }
+    
+    // Delete old logo from Cloudinary if exists
+    if (business.logo && business.logo.public_id) {
+      try {
+        const { deleteFile } = await import('../../helpers/cloudinaryHelper.js');
+        await deleteFile(business.logo.public_id);
+        if (business.logo.thumbnail && business.logo.thumbnail.public_id) {
+          await deleteFile(business.logo.thumbnail.public_id);
+        }
+      } catch (deleteError) {
+        console.error('Failed to delete old logo:', deleteError);
+      }
+    }
+    
+    // Update business with new logo
+    business.logo = uploadedFiles.logo;
+    await business.save();
+    
     return successResponseHelper(res, {
-      message: 'Businesses retrieved successfully',
+      message: 'Business logo updated successfully',
       data: {
-        businessOwner: {
-          _id: businessOwner._id,
-          firstName: businessOwner.firstName,
-          lastName: businessOwner.lastName,
-          email: businessOwner.email,
-          status: businessOwner.status
-        },
-        businesses: businessOwner.businesses
+        logo: business.logo
+      }
+    });
+  } catch (error) {
+    return serverErrorHelper(req, res, 500, error);
+  }
+};
+
+// Update Business Images
+export const updateBusinessImages = async (req, res) => {
+  try {
+    const { businessId } = req.params;
+    const businessOwnerId = req.businessOwner._id;
+    const uploadedFiles = req.uploadedFiles || {};
+    
+    // Check if business exists and belongs to the business owner
+    const business = await Business.findOne({ 
+      _id: businessId, 
+      businessOwner: businessOwnerId 
+    });
+    
+    if (!business) {
+      return errorResponseHelper(res, { 
+        message: 'Business not found or access denied',
+        code: '00404'
+      });
+    }
+    
+    // Check if images were uploaded
+    if (!uploadedFiles.images || uploadedFiles.images.length === 0) {
+      return errorResponseHelper(res, { 
+        message: 'No images uploaded',
+        code: '00400'
+      });
+    }
+    
+    // Add new images to existing ones
+    const updatedImages = [...(business.images || []), ...uploadedFiles.images];
+    
+    // Update business with new images
+    business.images = updatedImages;
+    await business.save();
+    
+    return successResponseHelper(res, {
+      message: 'Business images updated successfully',
+      data: {
+        images: business.images,
+        totalImages: business.images.length
+      }
+    });
+  } catch (error) {
+    return serverErrorHelper(req, res, 500, error);
+  }
+};
+
+// Delete Business Image
+export const deleteBusinessImage = async (req, res) => {
+  try {
+    const { businessId, imageId } = req.params;
+    const businessOwnerId = req.businessOwner._id;
+    
+    // Check if business exists and belongs to the business owner
+    const business = await Business.findOne({ 
+      _id: businessId, 
+      businessOwner: businessOwnerId 
+    });
+    
+    if (!business) {
+      return errorResponseHelper(res, { 
+        message: 'Business not found or access denied',
+        code: '00404'
+      });
+    }
+    
+    // Find the image to delete
+    const imageIndex = business.images.findIndex(img => img._id.toString() === imageId);
+    
+    if (imageIndex === -1) {
+      return errorResponseHelper(res, { 
+        message: 'Image not found',
+        code: '00404'
+      });
+    }
+    
+    const imageToDelete = business.images[imageIndex];
+    
+    // Delete image from Cloudinary
+    try {
+      const { deleteFile } = await import('../../helpers/cloudinaryHelper.js');
+      await deleteFile(imageToDelete.public_id);
+      if (imageToDelete.thumbnail && imageToDelete.thumbnail.public_id) {
+        await deleteFile(imageToDelete.thumbnail.public_id);
+      }
+    } catch (deleteError) {
+      console.error('Failed to delete image from Cloudinary:', deleteError);
+    }
+    
+    // Remove image from business
+    business.images.splice(imageIndex, 1);
+    await business.save();
+    
+    return successResponseHelper(res, {
+      message: 'Image deleted successfully',
+      data: {
+        totalImages: business.images.length
       }
     });
   } catch (error) {

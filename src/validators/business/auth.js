@@ -101,9 +101,14 @@ export const businessOwnerLoginValidation = (req, res, next) => {
 // Register Business Validation
 export const registerBusinessValidation = (req, res, next) => {
   const schema = Joi.object({
+    // Remove logo and images validation since they come from file uploads
     businessName: Joi.string().required().trim().min(2).max(100),
     category: Joi.string().required().trim(),
-    subcategories: Joi.array().items(Joi.string()).optional(),
+    // Allow subcategories to be either string or array (form data sends as multiple fields)
+    subcategories: Joi.alternatives().try(
+      Joi.string(),
+      Joi.array().items(Joi.string())
+    ).optional(),
     phoneNumber: Joi.string().required().trim(),
     email: Joi.string().email().required().lowercase().trim(),
     facebook: Joi.string().uri().optional().allow(null, ''),
@@ -112,7 +117,11 @@ export const registerBusinessValidation = (req, res, next) => {
     twitter: Joi.string().uri().optional().allow(null, ''),
     metaTitle: Joi.string().optional().allow(null, '').max(60),
     metaDescription: Joi.string().optional().allow(null, '').max(160),
-    focusKeywords: Joi.array().items(Joi.string()).optional(),
+    // Allow focusKeywords to be either string or array (form data sends as multiple fields)
+    focusKeywords: Joi.alternatives().try(
+      Joi.string(),
+      Joi.array().items(Joi.string())
+    ).optional(),
     about: Joi.string().optional().allow(null, ''),
     serviceOffer: Joi.string().optional().allow(null, ''),
     address: Joi.string().optional().allow(null, ''),
@@ -120,16 +129,7 @@ export const registerBusinessValidation = (req, res, next) => {
     state: Joi.string().optional().allow(null, ''),
     zipCode: Joi.string().optional().allow(null, ''),
     country: Joi.string().optional().allow(null, ''),
-    images: Joi.array().items(Joi.object({
-      url: Joi.string().uri().required(),
-      public_id: Joi.string().required(),
-      caption: Joi.string().optional()
-    })).optional(),
-    plan: Joi.object({
-      name: Joi.string().valid('bronze', 'silver', 'gold').optional(),
-      price: Joi.number().optional(),
-      features: Joi.array().items(Joi.string()).optional()
-    }).optional()
+    plan: Joi.string().valid('bronze', 'silver', 'gold').optional()
   });
 
   const { error } = schema.validate(req.body);

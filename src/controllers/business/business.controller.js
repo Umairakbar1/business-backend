@@ -1,6 +1,6 @@
 import Business from '../../models/business/business.js';
 import mongoose from 'mongoose';
-import stripeHelper from '../../helpers/stripeHelper.js';
+import { createStripeCheckoutSession } from '../../helpers/stripeHelper.js';
 import BusinessSubscription from '../../models/admin/businessSubsciption.js';
 import { uploadImageWithThumbnail } from '../../helpers/cloudinaryHelper.js';
 import axios from 'axios';
@@ -57,8 +57,76 @@ export const createBusiness = async (req, res) => {
 
 export const getMyBusinesses = async (req, res) => {
   try {
-    const businesses = await Business.find({ owner: req.user._id });
-    res.json({ success: true, businesses });
+    const businesses = await Business.find({ businessOwner: req.businessOwner });
+    
+    // Import Category and SubCategory models
+    const Category = (await import('../../models/admin/category.js')).default;
+    const SubCategory = (await import('../../models/admin/subCategory.js')).default;
+    
+    // Populate category and subcategory data for each business
+    const populatedBusinesses = await Promise.all(
+      businesses.map(async (business) => {
+        const businessObj = business.toObject();
+        
+        // Find and populate category data
+        if (businessObj.category) {
+          try {
+            const category = await Category.findOne({ 
+              title: businessObj.category, 
+              status: 'active' 
+            }).select('title description image');
+            
+            if (category) {
+              businessObj.categoryData = {
+                _id: category._id,
+                title: category.title,
+                description: category.description,
+                image: category.image
+              };
+            }
+          } catch (error) {
+            console.error('Error fetching category:', error);
+          }
+        }
+        
+        // Find and populate subcategory data
+        if (businessObj.subcategories && businessObj.subcategories.length > 0) {
+          try {
+            const subcategories = await SubCategory.find({
+              title: { $in: businessObj.subcategories },
+              isActive: true
+            }).select('title description image categoryId');
+            
+            // Populate category info for each subcategory
+            const populatedSubcategories = await Promise.all(
+              subcategories.map(async (subcategory) => {
+                const subcategoryObj = subcategory.toObject();
+                if (subcategoryObj.categoryId) {
+                  const parentCategory = await Category.findById(subcategoryObj.categoryId)
+                    .select('title description');
+                  if (parentCategory) {
+                    subcategoryObj.parentCategory = {
+                      _id: parentCategory._id,
+                      title: parentCategory.title,
+                      description: parentCategory.description
+                    };
+                  }
+                }
+                return subcategoryObj;
+              })
+            );
+            
+            businessObj.subcategoriesData = populatedSubcategories;
+          } catch (error) {
+            console.error('Error fetching subcategories:', error);
+          }
+        }
+        
+        return businessObj;
+      })
+    );
+    
+    res.json({ success: true, data: populatedBusinesses });
   } catch (error) {
     res.status(500).json({ success: false, message: 'Failed to fetch businesses', error: error.message });
   }
@@ -169,7 +237,7 @@ export const createPlanPaymentSession = async (req, res) => {
     const business = await Business.findOne({ _id: businessId, owner: req.user._id });
     if (!business) return res.status(404).json({ success: false, message: 'Business not found' });
     // Create Stripe session
-    const session = await stripeHelper.createStripeCheckoutSession(
+    const session = await createStripeCheckoutSession(
       `${plan.charAt(0).toUpperCase() + plan.slice(1)} Plan`,
       price,
       'usd',
@@ -376,4 +444,222 @@ export const validateBusinessWebsite = async (req, res) => {
   } catch (err) {
     return res.status(500).json({ success: false, message: 'Failed to check website content.', error: err.message });
   }
+};
+
+// Stripe Webhook Handler for Business Subscriptions
+export const handleStripeWebhook = async (req, res) => {
+  const sig = req.headers['stripe-signature'];
+  let event;
+
+  try {
+    // Verify webhook signature
+    const stripe = new (await import('stripe')).default(process.env.STRIPE_SECRET_KEY);
+    event = stripe.webhooks.constructEvent(req.body, sig, process.env.STRIPE_WEBHOOK_SECRET);
+  } catch (err) {
+    console.error('Webhook signature verification failed:', err.message);
+    return res.status(400).send(`Webhook Error: ${err.message}`);
+  }
+
+  try {
+    // Handle the event
+    switch (event.type) {
+      case 'checkout.session.completed':
+        await handleCheckoutSessionCompleted(event.data.object);
+        break;
+      
+      case 'payment_intent.succeeded':
+        await handlePaymentIntentSucceeded(event.data.object);
+        break;
+      
+      case 'payment_intent.payment_failed':
+        await handlePaymentIntentFailed(event.data.object);
+        break;
+      
+      case 'invoice.payment_succeeded':
+        await handleInvoicePaymentSucceeded(event.data.object);
+        break;
+      
+      case 'invoice.payment_failed':
+        await handleInvoicePaymentFailed(event.data.object);
+        break;
+      
+      case 'customer.subscription.created':
+        await handleSubscriptionCreated(event.data.object);
+        break;
+      
+      case 'customer.subscription.updated':
+        await handleSubscriptionUpdated(event.data.object);
+        break;
+      
+      case 'customer.subscription.deleted':
+        await handleSubscriptionDeleted(event.data.object);
+        break;
+      
+      default:
+        console.log(`Unhandled event type: ${event.type}`);
+    }
+
+    res.json({ received: true });
+  } catch (error) {
+    console.error('Webhook handler error:', error);
+    res.status(500).json({ error: 'Webhook handler failed' });
+  }
+};
+
+// Helper functions for webhook events
+const handleCheckoutSessionCompleted = async (session) => {
+  console.log('Checkout session completed:', session.id);
+  
+  const { businessId, plan } = session.metadata;
+  
+  if (!businessId || !plan) {
+    console.error('Missing metadata in checkout session');
+    return;
+  }
+
+  try {
+    // Update business plan
+    const business = await Business.findById(businessId);
+    if (!business) {
+      console.error('Business not found:', businessId);
+      return;
+    }
+
+    // Update business features based on plan
+    let features = [];
+    if (plan === 'silver') features = ['query_ticketing', 'review_management'];
+    if (plan === 'gold') features = ['query_ticketing', 'review_management', 'review_embed'];
+    
+    // Generate embed token for gold plan
+    let embedToken = business.embedToken;
+    if (plan === 'gold' && !embedToken) {
+      embedToken = Math.random().toString(36).substring(2, 15);
+    }
+
+    business.plan = plan;
+    business.features = features;
+    business.embedToken = embedToken;
+    business.status = 'active';
+    await business.save();
+
+    // Create subscription record
+    const subscription = await BusinessSubscription.create({
+      businessId: business._id,
+      planId: null, // You might want to create a plan model
+      status: 'active',
+      subscriptionType: plan,
+      createdAt: new Date(),
+      expiredAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // 30 days from now
+    });
+
+    console.log('Business plan updated successfully:', businessId, plan);
+  } catch (error) {
+    console.error('Error handling checkout session completed:', error);
+  }
+};
+
+const handlePaymentIntentSucceeded = async (paymentIntent) => {
+  console.log('Payment intent succeeded:', paymentIntent.id);
+  
+  const { businessId, plan } = paymentIntent.metadata;
+  
+  if (!businessId || !plan) {
+    console.error('Missing metadata in payment intent');
+    return;
+  }
+
+  try {
+    // Similar logic to checkout session completed
+    const business = await Business.findById(businessId);
+    if (!business) {
+      console.error('Business not found:', businessId);
+      return;
+    }
+
+    // Update business plan and features
+    let features = [];
+    if (plan === 'silver') features = ['query_ticketing', 'review_management'];
+    if (plan === 'gold') features = ['query_ticketing', 'review_management', 'review_embed'];
+    
+    let embedToken = business.embedToken;
+    if (plan === 'gold' && !embedToken) {
+      embedToken = Math.random().toString(36).substring(2, 15);
+    }
+
+    business.plan = plan;
+    business.features = features;
+    business.embedToken = embedToken;
+    business.status = 'active';
+    await business.save();
+
+    // Create or update subscription record
+    const existingSubscription = await BusinessSubscription.findOne({ 
+      businessId: business._id,
+      status: 'active'
+    });
+
+    if (existingSubscription) {
+      existingSubscription.subscriptionType = plan;
+      existingSubscription.expiredAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+      await existingSubscription.save();
+    } else {
+      await BusinessSubscription.create({
+        businessId: business._id,
+        planId: null,
+        status: 'active',
+        subscriptionType: plan,
+        createdAt: new Date(),
+        expiredAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+      });
+    }
+
+    console.log('Payment intent processed successfully:', paymentIntent.id);
+  } catch (error) {
+    console.error('Error handling payment intent succeeded:', error);
+  }
+};
+
+const handlePaymentIntentFailed = async (paymentIntent) => {
+  console.log('Payment intent failed:', paymentIntent.id);
+  
+  const { businessId } = paymentIntent.metadata;
+  
+  if (businessId) {
+    try {
+      // Optionally update business status or send notification
+      const business = await Business.findById(businessId);
+      if (business) {
+        // You might want to send an email notification to the business owner
+        console.log('Payment failed for business:', businessId);
+      }
+    } catch (error) {
+      console.error('Error handling payment intent failed:', error);
+    }
+  }
+};
+
+const handleInvoicePaymentSucceeded = async (invoice) => {
+  console.log('Invoice payment succeeded:', invoice.id);
+  // Handle recurring subscription payments
+  // This would be useful for monthly/yearly subscriptions
+};
+
+const handleInvoicePaymentFailed = async (invoice) => {
+  console.log('Invoice payment failed:', invoice.id);
+  // Handle failed recurring payments
+};
+
+const handleSubscriptionCreated = async (subscription) => {
+  console.log('Subscription created:', subscription.id);
+  // Handle new subscription creation
+};
+
+const handleSubscriptionUpdated = async (subscription) => {
+  console.log('Subscription updated:', subscription.id);
+  // Handle subscription updates
+};
+
+const handleSubscriptionDeleted = async (subscription) => {
+  console.log('Subscription deleted:', subscription.id);
+  // Handle subscription cancellation
 }; 

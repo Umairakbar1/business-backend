@@ -26,6 +26,10 @@ export default (app) => {
   app.use(morgan("dev"));
   app.enable("trust proxy");
   app.use(cors());
+  
+  // Raw body parsing for Stripe webhooks
+  app.use('/api/business/webhook/stripe', express.raw({ type: 'application/json' }));
+  
   app.use(
     bodyParser.urlencoded({
       parameterLimit: 100000,

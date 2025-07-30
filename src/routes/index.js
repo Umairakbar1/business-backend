@@ -12,8 +12,11 @@ import adminQueryTicketsRoutes from "./admin/queryTickets.js";
 import adminMetadataRoutes from "./admin/metadata.js";
 import adminMediaRoutes from "./admin/media.js";
 import businessAuthRoutes from "./business/auth.js";
+import businessBusinessRoutes from "./business/business.js";
 import businessReviewsRoutes from "./business/reviews.js";
 import businessQueryTicketsRoutes from "./business/queryTickets.js";
+import businessOwnerRoutes from "./business/owner.js";
+import businessCategoryRoutes from "./business/category.js";
 import userAuthRoutes from "./user/auth.js";
 import userBusinessRoutes from "./user/buisness.js";
 import userReviewRoutes from "./user/review.js";
@@ -41,6 +44,9 @@ router.use("/admin/media", adminMediaRoutes);
 router.use("/business/auth", businessAuthRoutes);
 router.use("/business/reviews", businessReviewsRoutes);
 router.use("/business/query-tickets", businessQueryTicketsRoutes);
+router.use("/business/businesses", businessBusinessRoutes);
+router.use("/business/owner", businessOwnerRoutes);
+router.use("/business/categories", businessCategoryRoutes);
 
 // User routes
 router.use("/user/auth", userAuthRoutes);

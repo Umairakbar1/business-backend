@@ -72,6 +72,10 @@ const BusinessSchema = new Schema({
   images: [{
     url: String,
     public_id: String,
+    thumbnail: {
+      url: String,
+      public_id: String
+    },
     caption: String
   }],
   

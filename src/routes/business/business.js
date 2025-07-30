@@ -17,31 +17,35 @@ import {
   deleteBusinessBoosts,
   getOwnerRecentSubscriptions,
   generateReviewEmbedLink,
-  validateBusinessWebsite
+  validateBusinessWebsite,
+  handleStripeWebhook
 } from '../../controllers/business/business.controller.js';
 import { validateBusiness, validateBusinessStatus } from '../../validators/business/business.js';
-import { authenticate } from '../../middleware/authorization.js';
+import { verifyBusinessOwnerToken } from '../../middleware/authorization.js';
 import { uploadSingleImageToCloudinary, handleCloudinaryUploadError } from '../../middleware/cloudinaryUpload.js';
 
 const router = Router();
 
-router.post('/', authenticate, uploadSingleImageToCloudinary, handleCloudinaryUploadError, validateBusiness, createBusiness);
-router.get('/', authenticate, getMyBusinesses);
-router.get('/:id', authenticate, getBusinessById);
-router.put('/:id', authenticate, uploadSingleImageToCloudinary, handleCloudinaryUploadError, validateBusiness, updateBusiness);
-router.delete('/:id', authenticate, deleteBusiness);
-router.patch('/:id/status', authenticate, validateBusinessStatus, updateBusinessStatus);
-router.get('/plans/available', authenticate, getAvailablePlans);
-router.get('/plans/current', authenticate, getCurrentPlan);
-router.post('/plans/payment-session', authenticate, createPlanPaymentSession);
-router.get('/subscriptions/all', authenticate, getAllMyBusinessSubscriptions);
-router.get('/subscriptions/recent', authenticate, getOwnerRecentSubscriptions);
-router.post('/embed/review-link', authenticate, generateReviewEmbedLink);
-router.post('/boost', authenticate, boostBusiness);
-router.post('/boost/agree', authenticate, agreeBoostBusiness);
+// Stripe webhook endpoint (no authentication required as Stripe will call this)
+router.post('/webhook/stripe', handleStripeWebhook);
+
+router.post('/', verifyBusinessOwnerToken, uploadSingleImageToCloudinary, handleCloudinaryUploadError, validateBusiness, createBusiness);
+router.get('/', verifyBusinessOwnerToken, getMyBusinesses);
+router.get('/:id', verifyBusinessOwnerToken, getBusinessById);
+router.put('/:id', verifyBusinessOwnerToken, uploadSingleImageToCloudinary, handleCloudinaryUploadError, validateBusiness, updateBusiness);
+router.delete('/:id', verifyBusinessOwnerToken, deleteBusiness);
+router.patch('/:id/status', verifyBusinessOwnerToken, validateBusinessStatus, updateBusinessStatus);
+router.get('/plans/available', verifyBusinessOwnerToken, getAvailablePlans);
+router.get('/plans/current', verifyBusinessOwnerToken, getCurrentPlan);
+router.post('/plans/payment-session', verifyBusinessOwnerToken, createPlanPaymentSession);
+router.get('/subscriptions/all', verifyBusinessOwnerToken, getAllMyBusinessSubscriptions);
+router.get('/subscriptions/recent', verifyBusinessOwnerToken, getOwnerRecentSubscriptions);
+router.post('/embed/review-link', verifyBusinessOwnerToken, generateReviewEmbedLink);
+router.post('/boost', verifyBusinessOwnerToken, boostBusiness);
+router.post('/boost/agree', verifyBusinessOwnerToken, agreeBoostBusiness);
 router.get('/boosted', getBoostedBusinesses);
-router.get('/boost/history', authenticate, getMyBusinessBoosts);
-router.delete('/boost/delete', authenticate, deleteBusinessBoosts);
-router.post('/validate-website', authenticate, validateBusinessWebsite);
+router.get('/boost/history', verifyBusinessOwnerToken, getMyBusinessBoosts);
+router.delete('/boost/delete', verifyBusinessOwnerToken, deleteBusinessBoosts);
+router.post('/validate-website', verifyBusinessOwnerToken, validateBusinessWebsite);
 
 export default router; 
