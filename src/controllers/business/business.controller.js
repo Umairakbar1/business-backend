@@ -5,6 +5,7 @@ import BusinessSubscription from '../../models/admin/businessSubsciption.js';
 import { uploadImageWithThumbnail } from '../../helpers/cloudinaryHelper.js';
 import axios from 'axios';
 import Joi from 'joi';
+import { errorResponseHelper, successResponseHelper } from '../../helpers/utilityHelper.js';
 
 export const createBusiness = async (req, res) => {
   try {
@@ -44,7 +45,7 @@ export const createBusiness = async (req, res) => {
     const business = await Business.create({
       ...data,
       logo: logoData,
-      owner: req.user._id,
+      businessOwner: req.businessOwner._id,
       plan,
       features,
       embedToken
@@ -57,13 +58,447 @@ export const createBusiness = async (req, res) => {
 
 export const getMyBusinesses = async (req, res) => {
   try {
-    const businesses = await Business.find({ businessOwner: req.businessOwner });
+    const { page = 1, limit = 10, search, status, sortBy = 'createdAt', sortOrder = 'desc' } = req.query;
+    
+    // Build filter object
+    const filter = { businessOwner: req.businessOwner?._id };
+    
+    // Add search functionality
+    if (search) {
+      filter.$or = [
+        { businessName: { $regex: search, $options: 'i' } },
+        { email: { $regex: search, $options: 'i' } },
+        { phoneNumber: { $regex: search, $options: 'i' } }
+      ];
+    }
+    
+    // Add status filter
+    if (status) {
+      filter.status = status;
+    }
+    
+    // Build sort object
+    const sort = {};
+    sort[sortBy] = sortOrder === 'desc' ? -1 : 1;
+    
+    // Calculate pagination
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+    
+    // Get businesses with pagination
+    const businesses = await Business.find(filter)
+      .sort(sort)
+      .skip(skip)
+      .limit(parseInt(limit));
+    
+    // Get total count for pagination
+    const total = await Business.countDocuments(filter);
     
     // Import Category and SubCategory models
     const Category = (await import('../../models/admin/category.js')).default;
     const SubCategory = (await import('../../models/admin/subCategory.js')).default;
     
     // Populate category and subcategory data for each business
+    const populatedBusinesses = await Promise.all(
+      businesses.map(async (business) => {
+        const businessObj = business.toObject();
+        
+        // Find and populate category data
+        if (businessObj.category) {
+          try {
+            // Check if category is an ObjectId or title
+            let category;
+            if (mongoose.Types.ObjectId.isValid(businessObj.category)) {
+              // If it's an ObjectId, find by _id
+              category = await Category.findById(businessObj.category)
+                .select('_id title description image slug status');
+            } else {
+              // If it's a title, find by title
+              category = await Category.findOne({ 
+                title: businessObj.category, 
+                status: 'active' 
+              }).select('_id title description image slug');
+            }
+            
+            if (category && category.status !== 'inactive') {
+              businessObj.category = {
+                _id: category._id,
+                title: category.title,
+                description: category.description,
+                image: category.image,
+                slug: category.slug
+              };
+            } else {
+              // If category not found, keep the original value
+              businessObj.category = businessObj.category;
+            }
+          } catch (error) {
+            console.error('Error fetching category:', error);
+            // Keep the original value on error
+            businessObj.category = businessObj.category;
+          }
+        }
+        
+        // Find and populate subcategory data
+        if (businessObj.subcategories && businessObj.subcategories.length > 0) {
+          console.log('Original subcategories:', businessObj.subcategories);
+          try {
+            // Check if subcategories are ObjectIds or titles
+            let subcategories;
+            const subcategoryIds = businessObj.subcategories.filter(sub => 
+              mongoose.Types.ObjectId.isValid(sub)
+            );
+            const subcategoryTitles = businessObj.subcategories.filter(sub => 
+              !mongoose.Types.ObjectId.isValid(sub)
+            );
+            
+            if (subcategoryIds.length > 0) {
+              // If we have ObjectIds, find by _id
+              subcategories = await SubCategory.find({
+                _id: { $in: subcategoryIds },
+                isActive: true
+              }).select('_id title description image categoryId slug');
+            } else if (subcategoryTitles.length > 0) {
+              // If we have titles, find by title
+              subcategories = await SubCategory.find({
+                title: { $in: subcategoryTitles },
+                isActive: true
+              }).select('_id title description image categoryId slug');
+            }
+            
+            // Populate category info for each subcategory
+            const populatedSubcategories = await Promise.all(
+              (subcategories || []).map(async (subcategory) => {
+                const subcategoryObj = subcategory.toObject();
+                if (subcategoryObj.categoryId) {
+                  const parentCategory = await Category.findById(subcategoryObj.categoryId)
+                    .select('_id title description slug');
+                  if (parentCategory) {
+                    subcategoryObj.parentCategory = {
+                      _id: parentCategory._id,
+                      title: parentCategory.title,
+                      description: parentCategory.description,
+                      slug: parentCategory.slug
+                    };
+                  }
+                }
+                return subcategoryObj;
+              })
+            );
+            
+            businessObj.subcategories = populatedSubcategories;
+          } catch (error) {
+            console.error('Error fetching subcategories:', error);
+            businessObj.subcategories = [];
+          }
+        } else {
+          businessObj.subcategories = [];
+        }
+        
+        // Get reviews for this business
+        const Review = (await import('../../models/admin/review.js')).default;
+        const reviews = await Review.find({ businessId: businessObj._id })
+          .populate('userId', 'name email profilePhoto')
+          .populate('approvedBy', 'name email')
+          .sort({ createdAt: -1 })
+          .limit(5); // Limit to recent 5 reviews for list view
+        
+        businessObj.reviews = reviews;
+        
+        // Clean up focusKeywords - convert objects to strings if needed
+        if (businessObj.focusKeywords && Array.isArray(businessObj.focusKeywords)) {
+          businessObj.focusKeywords = businessObj.focusKeywords.map(keyword => {
+            if (typeof keyword === 'object' && keyword !== null) {
+              return keyword.toString();
+            }
+            return keyword;
+          });
+        }
+        
+        // Clean up subcategories - only if they are still strings/objects (not already populated)
+        if (businessObj.subcategories && Array.isArray(businessObj.subcategories)) {
+          // Check if subcategories are already populated objects (have _id and title properties)
+          const isAlreadyPopulated = businessObj.subcategories.length > 0 && 
+            typeof businessObj.subcategories[0] === 'object' && 
+            businessObj.subcategories[0]._id && 
+            businessObj.subcategories[0].title;
+          
+          if (!isAlreadyPopulated) {
+            businessObj.subcategories = businessObj.subcategories.map(sub => {
+              if (typeof sub === 'object' && sub !== null) {
+                return sub.toString();
+              }
+              return sub;
+            });
+          }
+        }
+        
+        return businessObj;
+      })
+    );
+    
+    return successResponseHelper(res, {
+      message: 'Businesses retrieved successfully',
+      data: populatedBusinesses,
+      pagination: {
+        currentPage: parseInt(page),
+        totalPages: Math.ceil(total / parseInt(limit)),
+        totalItems: total,
+        itemsPerPage: parseInt(limit)
+      }
+    });
+  } catch (error) {
+    return errorResponseHelper(res, { message: 'Internal server error', code: '00500' });
+  }
+};
+
+export const getBusinessById = async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (!mongoose.Types.ObjectId.isValid(id)) return res.status(400).json({ success: false, message: 'Invalid business ID' });
+    
+    const business = await Business.findOne({ 
+      _id: id, 
+      businessOwner: req.businessOwner._id 
+    });
+    
+    if (!business) return res.status(404).json({ success: false, message: 'Business not found' });
+    
+    // Get reviews for this business
+    const Review = (await import('../../models/admin/review.js')).default;
+    const reviews = await Review.find({ businessId: id })
+      .populate('userId', 'name email profilePhoto')
+      .populate('approvedBy', 'name email')
+      .sort({ createdAt: -1 })
+      .limit(10); // Limit to recent 10 reviews
+    
+    const businessWithReviews = {
+      ...business.toObject(),
+      reviews
+    };
+    
+    return successResponseHelper(res, {
+      message: 'Business retrieved successfully',
+      data: businessWithReviews
+    });
+  } catch (error) {
+    return errorResponseHelper(res, { message: 'Internal server error', code: '00500' });
+  }
+};
+
+export const updateBusiness = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const updateData = req.body;
+    
+    // Handle logo upload
+    if (req.file) {
+      try {
+        const uploadResult = await uploadImageWithThumbnail(req.file.buffer, 'business-app/logos');
+        updateData.logo = {
+          url: uploadResult.original.url,
+          public_id: uploadResult.original.public_id,
+          thumbnail: {
+            url: uploadResult.thumbnail.url,
+            public_id: uploadResult.thumbnail.public_id
+          }
+        };
+      } catch (uploadError) {
+        console.error('Logo upload error:', uploadError);
+        return errorResponseHelper(res, { message: 'Failed to upload logo. Please try again.', code: '00500' });
+      }
+    }
+    
+    const business = await Business.findOneAndUpdate(
+      { _id: id, owner: req.user._id },
+      updateData,
+      { new: true, runValidators: true }
+    );
+    if (!business) return res.status(404).json({ success: false, message: 'Business not found' });
+    return successResponseHelper(res, {
+      message: 'Business updated successfully',
+      data: business
+    });
+  } catch (error) {
+    return errorResponseHelper(res, { message: 'Internal server error', code: '00500' });
+  }
+};
+
+export const deleteBusiness = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const business = await Business.findOneAndDelete({ _id: id, owner: req.user._id });
+    if (!business) return res.status(404).json({ success: false, message: 'Business not found' });
+    return successResponseHelper(res, {
+      message: 'Business deleted successfully',
+      data: business
+    });
+  } catch (error) {
+    return errorResponseHelper(res, { message: 'Internal server error', code: '00500' });
+  }
+};
+
+export const updateBusinessStatus = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { status } = req.body;
+    if (!['active', 'inactive'].includes(status)) return res.status(400).json({ success: false, message: 'Invalid status' });
+    const business = await Business.findOneAndUpdate(
+      { _id: id, owner: req.user._id },
+      { status },
+      { new: true, runValidators: true }
+    );
+    if (!business) return res.status(404).json({ success: false, message: 'Business not found' });
+    return successResponseHelper(res, {
+      message: 'Business status updated successfully',
+      data: business
+    });
+  } catch (error) {
+    return errorResponseHelper(res, { message: 'Internal server error', code: '00500' });
+  }
+};
+
+export const getAvailablePlans = async (req, res) => {
+  // Hardcoded for now, can be dynamic
+  const plans = [
+    { name: 'Bronze', value: 'bronze', price: 0, features: ['query_ticketing'] },
+    { name: 'Silver', value: 'silver', price: 20, features: ['query_ticketing', 'review_management'] },
+    { name: 'Gold', value: 'gold', price: 30, features: ['query_ticketing', 'review_management', 'review_embed'] },
+  ];
+  return successResponseHelper(res, {
+    message: 'Plans retrieved successfully',
+    data: plans
+  });
+};
+
+export const getCurrentPlan = async (req, res) => {
+  const business = await Business.findOne({ businessOwner: req.businessOwner._id });
+  if (!business) return res.status(404).json({ success: false, message: 'Business not found' });
+  return successResponseHelper(res, {
+    message: 'Current plan retrieved successfully',
+    data: {
+      plan: business.plan,
+      features: business.features,
+      status: business.status
+    }
+  });
+};
+
+// Get businesses for query ticket creation (simplified list)
+export const getBusinessesForQueryTicket = async (req, res) => {
+  try {
+    const businesses = await Business.find({ 
+      businessOwner: req.businessOwner._id,
+      status: { $in: ['active', 'approved'] }
+    })
+    .select('_id businessName email phoneNumber status')
+    .sort({ businessName: 1 });
+    
+    return successResponseHelper(res, {
+      message: 'Businesses retrieved successfully',
+      data: businesses
+    });
+  } catch (error) {
+    return errorResponseHelper(res, { message: 'Internal server error', code: '00500' });
+  }
+};
+
+// Get reviews for a specific business
+export const getBusinessReviews = async (req, res) => {
+  try {
+    const { businessId } = req.params;
+    const { page = 1, limit = 10, status, sortBy = 'createdAt', sortOrder = 'desc' } = req.query;
+    
+    // Verify business ownership
+    const business = await Business.findOne({ 
+      _id: businessId, 
+      businessOwner: req.businessOwner._id 
+    });
+    
+    if (!business) {
+      return res.status(404).json({ success: false, message: 'Business not found or access denied' });
+    }
+    
+    // Build filter object
+    const filter = { businessId };
+    if (status) filter.status = status;
+    
+    // Build sort object
+    const sort = {};
+    sort[sortBy] = sortOrder === 'desc' ? -1 : 1;
+    
+    // Calculate pagination
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+    
+    // Get reviews
+    const Review = (await import('../../models/admin/review.js')).default;
+    const reviews = await Review.find(filter)
+      .populate('userId', 'name email profilePhoto')
+      .populate('approvedBy', 'name email')
+      .sort(sort)
+      .skip(skip)
+      .limit(parseInt(limit));
+    
+    const total = await Review.countDocuments(filter);
+    
+    return successResponseHelper(res, {
+      message: 'Reviews retrieved successfully',
+      data: reviews,
+      pagination: {
+        page: parseInt(page),
+        limit: parseInt(limit),
+        total,
+        totalPages: Math.ceil(total / parseInt(limit))
+      }
+    });
+  } catch (error) {
+    return errorResponseHelper(res, { message: 'Internal server error', code: '00500' });
+  }
+};
+
+// Get businesses with reviews
+export const getBusinessesWithReviews = async (req, res) => {
+  try {
+    const { page = 1, limit = 10, search, status, sortBy = 'createdAt', sortOrder = 'desc', includeReviews = true, reviewsLimit = 5 } = req.query;
+    
+    // Build filter object
+    const filter = { businessOwner: req.businessOwner._id };
+    
+    // Add search functionality
+    if (search) {
+      filter.$or = [
+        { businessName: { $regex: search, $options: 'i' } },
+        { email: { $regex: search, $options: 'i' } },
+        { phoneNumber: { $regex: search, $options: 'i' } }
+      ];
+    }
+    
+    // Add status filter
+    if (status) {
+      filter.status = status;
+    }
+    
+    // Build sort object
+    const sort = {};
+    sort[sortBy] = sortOrder === 'desc' ? -1 : 1;
+    
+    // Calculate pagination
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+    
+    // Get businesses with pagination
+    const businesses = await Business.find(filter)
+      .sort(sort)
+      .skip(skip)
+      .limit(parseInt(limit));
+    
+    // Get total count for pagination
+    const total = await Business.countDocuments(filter);
+    
+    // Import Category and SubCategory models
+    const Category = (await import('../../models/admin/category.js')).default;
+    const SubCategory = (await import('../../models/admin/subCategory.js')).default;
+    const Review = (await import('../../models/admin/review.js')).default;
+    
+    // Populate category, subcategory, and reviews data for each business
     const populatedBusinesses = await Promise.all(
       businesses.map(async (business) => {
         const businessObj = business.toObject();
@@ -122,108 +557,58 @@ export const getMyBusinesses = async (req, res) => {
           }
         }
         
+        // Get reviews for this business if requested
+        if (includeReviews === 'true') {
+          try {
+            const reviews = await Review.find({ businessId: businessObj._id })
+              .populate('userId', 'name email profilePhoto')
+              .populate('approvedBy', 'name email')
+              .sort({ createdAt: -1 })
+              .limit(parseInt(reviewsLimit));
+            
+            businessObj.reviews = reviews;
+            
+            // Add review statistics
+            const totalReviews = await Review.countDocuments({ businessId: businessObj._id });
+            const approvedReviews = await Review.countDocuments({ businessId: businessObj._id, status: 'approved' });
+            const pendingReviews = await Review.countDocuments({ businessId: businessObj._id, status: 'pending' });
+            const manageableReviews = await Review.countDocuments({ businessId: businessObj._id, businessCanManage: true });
+            
+            businessObj.reviewStats = {
+              total: totalReviews,
+              approved: approvedReviews,
+              pending: pendingReviews,
+              manageable: manageableReviews
+            };
+          } catch (error) {
+            console.error('Error fetching reviews:', error);
+            businessObj.reviews = [];
+            businessObj.reviewStats = {
+              total: 0,
+              approved: 0,
+              pending: 0,
+              manageable: 0
+            };
+          }
+        }
+        
         return businessObj;
       })
     );
     
-    res.json({ success: true, data: populatedBusinesses });
-  } catch (error) {
-    res.status(500).json({ success: false, message: 'Failed to fetch businesses', error: error.message });
-  }
-};
-
-export const getBusinessById = async (req, res) => {
-  try {
-    const { id } = req.params;
-    if (!mongoose.Types.ObjectId.isValid(id)) return res.status(400).json({ success: false, message: 'Invalid business ID' });
-    const business = await Business.findOne({ _id: id, owner: req.user._id });
-    if (!business) return res.status(404).json({ success: false, message: 'Business not found' });
-    res.json({ success: true, business });
-  } catch (error) {
-    res.status(500).json({ success: false, message: 'Failed to fetch business', error: error.message });
-  }
-};
-
-export const updateBusiness = async (req, res) => {
-  try {
-    const { id } = req.params;
-    const updateData = req.body;
-    
-    // Handle logo upload
-    if (req.file) {
-      try {
-        const uploadResult = await uploadImageWithThumbnail(req.file.buffer, 'business-app/logos');
-        updateData.logo = {
-          url: uploadResult.original.url,
-          public_id: uploadResult.original.public_id,
-          thumbnail: {
-            url: uploadResult.thumbnail.url,
-            public_id: uploadResult.thumbnail.public_id
-          }
-        };
-      } catch (uploadError) {
-        console.error('Logo upload error:', uploadError);
-        return res.status(500).json({ 
-          success: false, 
-          message: 'Failed to upload logo. Please try again.' 
-        });
+    return successResponseHelper(res, {
+      message: 'Businesses retrieved successfully',
+      data: populatedBusinesses,
+      pagination: {
+        page: parseInt(page),
+        limit: parseInt(limit),
+        total,
+        totalPages: Math.ceil(total / parseInt(limit))
       }
-    }
-    
-    const business = await Business.findOneAndUpdate(
-      { _id: id, owner: req.user._id },
-      updateData,
-      { new: true, runValidators: true }
-    );
-    if (!business) return res.status(404).json({ success: false, message: 'Business not found' });
-    res.json({ success: true, business });
+    });
   } catch (error) {
-    res.status(500).json({ success: false, message: 'Failed to update business', error: error.message });
+    return errorResponseHelper(res, { message: 'Internal server error', code: '00500' });
   }
-};
-
-export const deleteBusiness = async (req, res) => {
-  try {
-    const { id } = req.params;
-    const business = await Business.findOneAndDelete({ _id: id, owner: req.user._id });
-    if (!business) return res.status(404).json({ success: false, message: 'Business not found' });
-    res.json({ success: true, message: 'Business deleted successfully' });
-  } catch (error) {
-    res.status(500).json({ success: false, message: 'Failed to delete business', error: error.message });
-  }
-};
-
-export const updateBusinessStatus = async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { status } = req.body;
-    if (!['active', 'inactive'].includes(status)) return res.status(400).json({ success: false, message: 'Invalid status' });
-    const business = await Business.findOneAndUpdate(
-      { _id: id, owner: req.user._id },
-      { status },
-      { new: true, runValidators: true }
-    );
-    if (!business) return res.status(404).json({ success: false, message: 'Business not found' });
-    res.json({ success: true, business });
-  } catch (error) {
-    res.status(500).json({ success: false, message: 'Failed to update status', error: error.message });
-  }
-};
-
-export const getAvailablePlans = async (req, res) => {
-  // Hardcoded for now, can be dynamic
-  const plans = [
-    { name: 'Bronze', value: 'bronze', price: 0, features: ['query_ticketing'] },
-    { name: 'Silver', value: 'silver', price: 20, features: ['query_ticketing', 'review_management'] },
-    { name: 'Gold', value: 'gold', price: 30, features: ['query_ticketing', 'review_management', 'review_embed'] },
-  ];
-  res.json({ success: true, plans });
-};
-
-export const getCurrentPlan = async (req, res) => {
-  const business = await Business.findOne({ owner: req.user._id });
-  if (!business) return res.status(404).json({ success: false, message: 'Business not found' });
-  res.json({ success: true, plan: business.plan, features: business.features, status: business.status });
 };
 
 export const createPlanPaymentSession = async (req, res) => {
@@ -244,9 +629,12 @@ export const createPlanPaymentSession = async (req, res) => {
       null, // customer (optional)
       { businessId, plan }
     );
-    res.json({ success: true, url: session.url });
+    return successResponseHelper(res, {
+      message: 'Payment session created successfully',
+      data: { url: session.url }
+    });
   } catch (error) {
-    res.status(500).json({ success: false, message: 'Failed to create payment session', error: error.message });
+    return errorResponseHelper(res, { message: 'Internal server error', code: '00500' });
   }
 };
 
@@ -258,9 +646,12 @@ export const getAllMyBusinessSubscriptions = async (req, res) => {
     // Find all subscriptions for these businesses
     const subscriptions = await BusinessSubscription.find({ businessId: { $in: businessIds } })
       .sort({ createdAt: -1 });
-    res.json({ success: true, subscriptions, businesses });
+    return successResponseHelper(res, {
+      message: 'Subscriptions retrieved successfully',
+      data: { subscriptions, businesses }
+    });
   } catch (error) {
-    res.status(500).json({ success: false, message: 'Failed to fetch subscriptions', error: error.message });
+    return errorResponseHelper(res, { message: 'Internal server error', code: '00500' });
   }
 };
 
@@ -305,7 +696,7 @@ export const boostBusiness = async (req, res) => {
       boostEndAt: business.boostEndAt
     });
   } catch (error) {
-    res.status(500).json({ success: false, message: 'Failed to boost business', error: error.message });
+    return errorResponseHelper(res, { message: 'Internal server error', code: '00500' });
   }
 };
 
@@ -326,9 +717,12 @@ export const agreeBoostBusiness = async (req, res) => {
     business.boostEndAt = nextBoost.end;
     business.boostQueue.shift();
     await business.save();
-    return res.json({ success: true, message: 'Business boost is now active.', boostStartAt: business.boostStartAt, boostEndAt: business.boostEndAt });
+    return successResponseHelper(res, {
+      message: 'Business boost is now active.',
+      data: { boostStartAt: business.boostStartAt, boostEndAt: business.boostEndAt }
+    });
   } catch (error) {
-    res.status(500).json({ success: false, message: 'Failed to activate boost', error: error.message });
+    return errorResponseHelper(res, { message: 'Internal server error', code: '00500' });
   }
 };
 
@@ -337,9 +731,12 @@ export const getBoostedBusinesses = async (req, res) => {
     const now = new Date();
     // Get all currently boosted businesses
     const boosted = await Business.find({ boostActive: true, boostEndAt: { $gt: now } }).sort({ boostEndAt: -1 });
-    res.json({ success: true, boosted });
+    return successResponseHelper(res, {
+      message: 'Boosted businesses retrieved successfully',
+      data: boosted
+    });
   } catch (error) {
-    res.status(500).json({ success: false, message: 'Failed to fetch boosted businesses', error: error.message });
+    return errorResponseHelper(res, { message: 'Internal server error', code: '00500' });
   }
 };
 
@@ -357,9 +754,12 @@ export const getMyBusinessBoosts = async (req, res) => {
       boostEndAt: b.boostEndAt,
       boostQueue: b.boostQueue
     }));
-    res.json({ success: true, boosts });
+    return successResponseHelper(res, {
+      message: 'Boost history retrieved successfully',
+      data: boosts
+    });
   } catch (error) {
-    res.status(500).json({ success: false, message: 'Failed to fetch boost history', error: error.message });
+    return errorResponseHelper(res, { message: 'Internal server error', code: '00500' });
   }
 };
 
@@ -374,9 +774,11 @@ export const deleteBusinessBoosts = async (req, res) => {
     business.boostEndAt = undefined;
     business.boostQueue = [];
     await business.save();
-    res.json({ success: true, message: 'All previous boosts deleted for this business.' });
+    return successResponseHelper(res, {
+      message: 'All previous boosts deleted for this business.'
+    });
   } catch (error) {
-    res.status(500).json({ success: false, message: 'Failed to delete boosts', error: error.message });
+    return errorResponseHelper(res, { message: 'Internal server error', code: '00500' });
   }
 };
 
@@ -388,40 +790,16 @@ export const getOwnerRecentSubscriptions = async (req, res) => {
     const businessIds = businesses.map(b => b._id);
     const subscriptions = await BusinessSubscription.find({ businessId: { $in: businessIds } })
       .sort({ createdAt: -1 });
-    res.json({ success: true, subscriptions });
+    return successResponseHelper(res, {
+      message: 'Recent subscriptions retrieved successfully',
+      data: subscriptions
+    });
   } catch (error) {
-    res.status(500).json({ success: false, message: 'Failed to fetch recent subscriptions', error: error.message });
+    return errorResponseHelper(res, { message: 'Internal server error', code: '00500' });
   }
 };
 
-export const generateReviewEmbedLink = async (req, res) => {
-  try {
-    const { businessId } = req.body;
-    const business = await Business.findOne({ _id: businessId, owner: req.user._id });
-    if (!business) return res.status(404).json({ success: false, message: 'Business not found' });
-    // Generate embed token if not present
-    if (!business.embedToken) {
-      business.embedToken = Math.random().toString(36).substring(2, 15);
-      await business.save();
-    }
-    const embedUrl = `${process.env.SITE_URL || 'https://yourdomain.com'}/embed/review/${business._id}/${business.embedToken}`;
-    // HTML code for the review card embed
-    const html = `
-<!-- Paste this code on your site to show your business reviews -->
-<div id="mybiz-review-embed"></div>
-<script>
-(function(){
-  var d=document,s=d.createElement('script');
-  s.src='${process.env.SITE_URL || 'https://yourdomain.com'}/embed/review-widget.js?bid=${business._id}&token=${business.embedToken}';
-  s.async=true;d.getElementById('mybiz-review-embed').appendChild(s);
-})();
-</script>
-`;
-    res.json({ success: true, embedUrl, html });
-  } catch (error) {
-    res.status(500).json({ success: false, message: 'Failed to generate embed link', error: error.message });
-  }
-};
+
 
 export const validateBusinessWebsite = async (req, res) => {
   const { website } = req.body;
@@ -440,9 +818,11 @@ export const validateBusinessWebsite = async (req, res) => {
       return res.status(400).json({ success: false, message: 'Website contains inappropriate content.' });
     }
     // If safe
-    return res.json({ success: true, message: 'Website is valid and safe.' });
+    return successResponseHelper(res, {
+      message: 'Website is valid and safe.'
+    });
   } catch (err) {
-    return res.status(500).json({ success: false, message: 'Failed to check website content.', error: err.message });
+    return errorResponseHelper(res, { message: 'Internal server error', code: '00500' });
   }
 };
 
@@ -499,10 +879,12 @@ export const handleStripeWebhook = async (req, res) => {
         console.log(`Unhandled event type: ${event.type}`);
     }
 
-    res.json({ received: true });
+    return successResponseHelper(res, {
+      message: 'Webhook received successfully'
+    });
   } catch (error) {
     console.error('Webhook handler error:', error);
-    res.status(500).json({ error: 'Webhook handler failed' });
+    return errorResponseHelper(res, { message: 'Internal server error', code: '00500' });
   }
 };
 

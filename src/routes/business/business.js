@@ -16,10 +16,10 @@ import {
   getMyBusinessBoosts,
   deleteBusinessBoosts,
   getOwnerRecentSubscriptions,
-  generateReviewEmbedLink,
   validateBusinessWebsite,
   handleStripeWebhook
 } from '../../controllers/business/business.controller.js';
+
 import { validateBusiness, validateBusinessStatus } from '../../validators/business/business.js';
 import { verifyBusinessOwnerToken } from '../../middleware/authorization.js';
 import { uploadSingleImageToCloudinary, handleCloudinaryUploadError } from '../../middleware/cloudinaryUpload.js';
@@ -40,7 +40,7 @@ router.get('/plans/current', verifyBusinessOwnerToken, getCurrentPlan);
 router.post('/plans/payment-session', verifyBusinessOwnerToken, createPlanPaymentSession);
 router.get('/subscriptions/all', verifyBusinessOwnerToken, getAllMyBusinessSubscriptions);
 router.get('/subscriptions/recent', verifyBusinessOwnerToken, getOwnerRecentSubscriptions);
-router.post('/embed/review-link', verifyBusinessOwnerToken, generateReviewEmbedLink);
+
 router.post('/boost', verifyBusinessOwnerToken, boostBusiness);
 router.post('/boost/agree', verifyBusinessOwnerToken, agreeBoostBusiness);
 router.get('/boosted', getBoostedBusinesses);

@@ -6,15 +6,33 @@ import mongoose from 'mongoose';
 // GET /business/reviews - Get reviews for business (only those they can manage)
 export const getBusinessReviews = async (req, res) => {
   try {
-    const businessId = req.business?._id;
-    const { page = 1, limit = 10, status, sortBy = 'createdAt', sortOrder = 'desc' } = req.query;
+    const businessOwnerId = req.businessOwner?._id;
+    const { page = 1, limit = 10, status, businessId, sortBy = 'createdAt', sortOrder = 'desc' } = req.query;
     
-    if (!businessId) {
-      return errorResponseHelper(res, { message: 'Business not authenticated', code: '00401' });
+    if (!businessOwnerId) {
+      return errorResponseHelper(res, { message: 'Business owner not authenticated', code: '00401' });
     }
     
-    // Build filter object - only reviews for this business
-    const filter = { businessId };
+    // Build filter object - only reviews for businesses owned by this business owner
+    const filter = {};
+    
+    // If specific businessId is provided, verify ownership
+    if (businessId) {
+      const business = await Business.findOne({ 
+        _id: businessId, 
+        businessOwner: businessOwnerId 
+      });
+      if (!business) {
+        return errorResponseHelper(res, { message: 'Business not found or access denied', code: '00404' });
+      }
+      filter.businessId = businessId;
+    } else {
+      // Get all businesses owned by this business owner
+      const businesses = await Business.find({ businessOwner: businessOwnerId }, '_id');
+      const businessIds = businesses.map(b => b._id);
+      filter.businessId = { $in: businessIds };
+    }
+    
     if (status) filter.status = status;
     
     // Build sort object
@@ -54,18 +72,35 @@ export const getBusinessReviews = async (req, res) => {
 // GET /business/reviews/manageable - Get reviews that business can manage
 export const getManageableReviews = async (req, res) => {
   try {
-    const businessId = req.business?._id;
-    const { page = 1, limit = 10, status, sortBy = 'createdAt', sortOrder = 'desc' } = req.query;
+    const businessOwnerId = req.businessOwner?._id;
+    const { page = 1, limit = 10, status, businessId, sortBy = 'createdAt', sortOrder = 'desc' } = req.query;
     
-    if (!businessId) {
-      return errorResponseHelper(res, { message: 'Business not authenticated', code: '00401' });
+    if (!businessOwnerId) {
+      return errorResponseHelper(res, { message: 'Business owner not authenticated', code: '00401' });
     }
     
-    // Build filter object - only reviews this business can manage
+    // Build filter object - only reviews this business owner can manage
     const filter = { 
-      businessId,
       businessCanManage: true
     };
+    
+    // If specific businessId is provided, verify ownership
+    if (businessId) {
+      const business = await Business.findOne({ 
+        _id: businessId, 
+        businessOwner: businessOwnerId 
+      });
+      if (!business) {
+        return errorResponseHelper(res, { message: 'Business not found or access denied', code: '00404' });
+      }
+      filter.businessId = businessId;
+    } else {
+      // Get all businesses owned by this business owner
+      const businesses = await Business.find({ businessOwner: businessOwnerId }, '_id');
+      const businessIds = businesses.map(b => b._id);
+      filter.businessId = { $in: businessIds };
+    }
+    
     if (status) filter.status = status;
     
     // Build sort object
@@ -106,26 +141,34 @@ export const getManageableReviews = async (req, res) => {
 export const getReviewById = async (req, res) => {
   try {
     const { id } = req.params;
-    const businessId = req.business?._id;
+    const businessOwnerId = req.businessOwner?._id;
     
-    if (!businessId) {
-      return errorResponseHelper(res, { message: 'Business not authenticated', code: '00401' });
+    if (!businessOwnerId) {
+      return errorResponseHelper(res, { message: 'Business owner not authenticated', code: '00401' });
     }
     
     if (!mongoose.Types.ObjectId.isValid(id)) {
       return errorResponseHelper(res, { message: 'Invalid review ID', code: '00400' });
     }
     
-    const review = await Review.findOne({ 
-      _id: id, 
-      businessId 
-    })
+    // Get the review and verify business ownership
+    const review = await Review.findById(id)
       .populate('userId', 'name email profilePhoto')
       .populate('approvedBy', 'name email')
       .populate('businessManagementGrantedBy', 'name email');
     
     if (!review) {
       return errorResponseHelper(res, { message: 'Review not found', code: '00404' });
+    }
+    
+    // Verify business ownership
+    const business = await Business.findOne({ 
+      _id: review.businessId, 
+      businessOwner: businessOwnerId 
+    });
+    
+    if (!business) {
+      return errorResponseHelper(res, { message: 'Access denied to this review', code: '00403' });
     }
     
     return successResponseHelper(res, {
@@ -141,24 +184,35 @@ export const getReviewById = async (req, res) => {
 export const approveReview = async (req, res) => {
   try {
     const { id } = req.params;
-    const businessId = req.business?._id;
+    const businessOwnerId = req.businessOwner?._id;
     
-    if (!businessId) {
-      return errorResponseHelper(res, { message: 'Business not authenticated', code: '00401' });
+    if (!businessOwnerId) {
+      return errorResponseHelper(res, { message: 'Business owner not authenticated', code: '00401' });
     }
     
     if (!mongoose.Types.ObjectId.isValid(id)) {
       return errorResponseHelper(res, { message: 'Invalid review ID', code: '00400' });
     }
     
-    const review = await Review.findOne({ 
-      _id: id, 
-      businessId,
-      businessCanManage: true
-    });
+    // Get the review and verify business ownership and management access
+    const review = await Review.findById(id);
     
     if (!review) {
-      return errorResponseHelper(res, { message: 'Review not found or you do not have access to manage it', code: '00404' });
+      return errorResponseHelper(res, { message: 'Review not found', code: '00404' });
+    }
+    
+    // Verify business ownership
+    const business = await Business.findOne({ 
+      _id: review.businessId, 
+      businessOwner: businessOwnerId 
+    });
+    
+    if (!business) {
+      return errorResponseHelper(res, { message: 'Access denied to this review', code: '00403' });
+    }
+    
+    if (!review.businessCanManage) {
+      return errorResponseHelper(res, { message: 'You do not have access to manage this review', code: '00403' });
     }
     
     if (review.status === 'approved') {
@@ -166,7 +220,7 @@ export const approveReview = async (req, res) => {
     }
     
     review.status = 'approved';
-    review.approvedBy = businessId;
+    review.approvedBy = businessOwnerId;
     review.approvedByType = 'business';
     review.approvedAt = new Date();
     review.updatedAt = new Date();
@@ -186,24 +240,35 @@ export const approveReview = async (req, res) => {
 export const rejectReview = async (req, res) => {
   try {
     const { id } = req.params;
-    const businessId = req.business?._id;
+    const businessOwnerId = req.businessOwner?._id;
     
-    if (!businessId) {
-      return errorResponseHelper(res, { message: 'Business not authenticated', code: '00401' });
+    if (!businessOwnerId) {
+      return errorResponseHelper(res, { message: 'Business owner not authenticated', code: '00401' });
     }
     
     if (!mongoose.Types.ObjectId.isValid(id)) {
       return errorResponseHelper(res, { message: 'Invalid review ID', code: '00400' });
     }
     
-    const review = await Review.findOne({ 
-      _id: id, 
-      businessId,
-      businessCanManage: true
-    });
+    // Get the review and verify business ownership and management access
+    const review = await Review.findById(id);
     
     if (!review) {
-      return errorResponseHelper(res, { message: 'Review not found or you do not have access to manage it', code: '00404' });
+      return errorResponseHelper(res, { message: 'Review not found', code: '00404' });
+    }
+    
+    // Verify business ownership
+    const business = await Business.findOne({ 
+      _id: review.businessId, 
+      businessOwner: businessOwnerId 
+    });
+    
+    if (!business) {
+      return errorResponseHelper(res, { message: 'Access denied to this review', code: '00403' });
+    }
+    
+    if (!review.businessCanManage) {
+      return errorResponseHelper(res, { message: 'You do not have access to manage this review', code: '00403' });
     }
     
     if (review.status === 'rejected') {
@@ -211,7 +276,7 @@ export const rejectReview = async (req, res) => {
     }
     
     review.status = 'rejected';
-    review.approvedBy = businessId;
+    review.approvedBy = businessOwnerId;
     review.approvedByType = 'business';
     review.approvedAt = new Date();
     review.updatedAt = new Date();
@@ -231,24 +296,35 @@ export const rejectReview = async (req, res) => {
 export const deleteReview = async (req, res) => {
   try {
     const { id } = req.params;
-    const businessId = req.business?._id;
+    const businessOwnerId = req.businessOwner?._id;
     
-    if (!businessId) {
-      return errorResponseHelper(res, { message: 'Business not authenticated', code: '00401' });
+    if (!businessOwnerId) {
+      return errorResponseHelper(res, { message: 'Business owner not authenticated', code: '00401' });
     }
     
     if (!mongoose.Types.ObjectId.isValid(id)) {
       return errorResponseHelper(res, { message: 'Invalid review ID', code: '00400' });
     }
     
-    const review = await Review.findOne({ 
-      _id: id, 
-      businessId,
-      businessCanManage: true
-    });
+    // Get the review and verify business ownership and management access
+    const review = await Review.findById(id);
     
     if (!review) {
-      return errorResponseHelper(res, { message: 'Review not found or you do not have access to manage it', code: '00404' });
+      return errorResponseHelper(res, { message: 'Review not found', code: '00404' });
+    }
+    
+    // Verify business ownership
+    const business = await Business.findOne({ 
+      _id: review.businessId, 
+      businessOwner: businessOwnerId 
+    });
+    
+    if (!business) {
+      return errorResponseHelper(res, { message: 'Access denied to this review', code: '00403' });
+    }
+    
+    if (!review.businessCanManage) {
+      return errorResponseHelper(res, { message: 'You do not have access to manage this review', code: '00403' });
     }
     
     await Review.findByIdAndDelete(id);
@@ -264,17 +340,37 @@ export const deleteReview = async (req, res) => {
 // GET /business/reviews/stats - Get review statistics for business
 export const getReviewStats = async (req, res) => {
   try {
-    const businessId = req.business?._id;
+    const businessOwnerId = req.businessOwner?._id;
+    const { businessId } = req.query;
     
-    if (!businessId) {
-      return errorResponseHelper(res, { message: 'Business not authenticated', code: '00401' });
+    if (!businessOwnerId) {
+      return errorResponseHelper(res, { message: 'Business owner not authenticated', code: '00401' });
     }
     
-    const totalReviews = await Review.countDocuments({ businessId });
-    const pendingReviews = await Review.countDocuments({ businessId, status: 'pending' });
-    const approvedReviews = await Review.countDocuments({ businessId, status: 'approved' });
-    const rejectedReviews = await Review.countDocuments({ businessId, status: 'rejected' });
-    const manageableReviews = await Review.countDocuments({ businessId, businessCanManage: true });
+    let filter = {};
+    
+    // If specific businessId is provided, verify ownership
+    if (businessId) {
+      const business = await Business.findOne({ 
+        _id: businessId, 
+        businessOwner: businessOwnerId 
+      });
+      if (!business) {
+        return errorResponseHelper(res, { message: 'Business not found or access denied', code: '00404' });
+      }
+      filter.businessId = businessId;
+    } else {
+      // Get all businesses owned by this business owner
+      const businesses = await Business.find({ businessOwner: businessOwnerId }, '_id');
+      const businessIds = businesses.map(b => b._id);
+      filter.businessId = { $in: businessIds };
+    }
+    
+    const totalReviews = await Review.countDocuments(filter);
+    const pendingReviews = await Review.countDocuments({ ...filter, status: 'pending' });
+    const approvedReviews = await Review.countDocuments({ ...filter, status: 'approved' });
+    const rejectedReviews = await Review.countDocuments({ ...filter, status: 'rejected' });
+    const manageableReviews = await Review.countDocuments({ ...filter, businessCanManage: true });
     
     return successResponseHelper(res, {
       message: 'Review statistics fetched successfully',

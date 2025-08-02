@@ -7,18 +7,24 @@ import mongoose from 'mongoose';
 // GET /business/query-tickets - Get all query tickets for business
 export const getBusinessQueryTickets = async (req, res) => {
   try {
-    const businessId = req.business?._id;
-    const { page = 1, limit = 10, status, sortBy = 'createdAt', sortOrder = 'desc' } = req.query;
+    const businessOwnerId = req.businessOwner?._id;
+    const { page = 1, limit = 10, status, businessId, sortBy = 'createdAt', sortOrder = 'desc' } = req.query;
     
-    if (!businessId) {
-      return errorResponseHelper(res, { message: 'Business not authenticated', code: '00401' });
+    if (!businessOwnerId) {
+      return errorResponseHelper(res, { message: 'Business owner not authenticated', code: '00401' });
     }
     
-    // Build filter object - only tickets created by this business
+    // Build filter object - only tickets created by this business owner
     const filter = { 
-      createdBy: businessId,
+      createdBy: businessOwnerId,
       createdByType: 'business'
     };
+    
+    // Filter by specific business if provided
+    if (businessId) {
+      filter.businessId = businessId;
+    }
+    
     if (status) filter.status = status;
     
     // Build sort object
@@ -38,7 +44,7 @@ export const getBusinessQueryTickets = async (req, res) => {
     
     return successResponseHelper(res, {
       message: 'Business query tickets fetched successfully',
-      data: {
+      data: 
         tickets,
         pagination: {
           page: parseInt(page),
@@ -46,7 +52,7 @@ export const getBusinessQueryTickets = async (req, res) => {
           total,
           totalPages: Math.ceil(total / parseInt(limit))
         }
-      }
+      
     });
   } catch (error) {
     return errorResponseHelper(res, { message: error.message, code: '00500' });
@@ -57,10 +63,10 @@ export const getBusinessQueryTickets = async (req, res) => {
 export const getQueryTicketById = async (req, res) => {
   try {
     const { id } = req.params;
-    const businessId = req.business?._id;
+    const businessOwnerId = req.businessOwner?._id;
     
-    if (!businessId) {
-      return errorResponseHelper(res, { message: 'Business not authenticated', code: '00401' });
+    if (!businessOwnerId) {
+      return errorResponseHelper(res, { message: 'Business owner not authenticated', code: '00401' });
     }
     
     if (!mongoose.Types.ObjectId.isValid(id)) {
@@ -69,7 +75,7 @@ export const getQueryTicketById = async (req, res) => {
     
     const ticket = await QueryTicket.findOne({ 
       _id: id, 
-      createdBy: businessId,
+      createdBy: businessOwnerId,
       createdByType: 'business'
     }).populate('businessId', 'businessName contactPerson email');
     
@@ -89,22 +95,26 @@ export const getQueryTicketById = async (req, res) => {
 // POST /business/query-tickets - Create new query ticket
 export const createQueryTicket = async (req, res) => {
   try {
-    const businessId = req.business?._id;
-    const { title, businessName, description, childIssue, linkedIssue, websiteUrl } = req.body;
+    const businessOwnerId = req.businessOwner?._id;
+    const { title, businessId, description, childIssue, linkedIssue, websiteUrl } = req.body;
     
-    if (!businessId) {
-      return errorResponseHelper(res, { message: 'Business not authenticated', code: '00401' });
+    if (!businessOwnerId) {
+      return errorResponseHelper(res, { message: 'Business owner not authenticated', code: '00401' });
     }
     
     // Validate required fields
-    if (!title || !businessName || !description) {
-      return errorResponseHelper(res, { message: 'Title, business name, and description are required', code: '00400' });
+    if (!title || !businessId || !description) {
+      return errorResponseHelper(res, { message: 'Title, business ID, and description are required', code: '00400' });
     }
     
-    // Get business details
-    const business = await Business.findById(businessId);
+    // Get business details and verify ownership
+    const business = await Business.findOne({ 
+      _id: businessId, 
+      businessOwner: businessOwnerId 
+    });
+    
     if (!business) {
-      return errorResponseHelper(res, { message: 'Business not found', code: '00404' });
+      return errorResponseHelper(res, { message: 'Business not found or access denied', code: '00404' });
     }
     
     // Handle file upload if present
@@ -146,13 +156,13 @@ export const createQueryTicket = async (req, res) => {
     
     const ticketData = {
       title,
-      businessName,
+      businessName: business.businessName,
       description,
       childIssue,
       linkedIssue,
       websiteUrl,
       attachment,
-      createdBy: businessId,
+      createdBy: businessOwnerId,
       createdByType: 'business',
       businessId: businessId
     };
@@ -173,11 +183,11 @@ export const createQueryTicket = async (req, res) => {
 export const updateQueryTicket = async (req, res) => {
   try {
     const { id } = req.params;
-    const businessId = req.business?._id;
-    const { title, businessName, description, childIssue, linkedIssue, websiteUrl } = req.body;
+    const businessOwnerId = req.businessOwner?._id;
+    const { title, businessId, description, childIssue, linkedIssue, websiteUrl } = req.body;
     
-    if (!businessId) {
-      return errorResponseHelper(res, { message: 'Business not authenticated', code: '00401' });
+    if (!businessOwnerId) {
+      return errorResponseHelper(res, { message: 'Business owner not authenticated', code: '00401' });
     }
     
     if (!mongoose.Types.ObjectId.isValid(id)) {
@@ -186,7 +196,7 @@ export const updateQueryTicket = async (req, res) => {
     
     const ticket = await QueryTicket.findOne({ 
       _id: id, 
-      createdBy: businessId,
+      createdBy: businessOwnerId,
       createdByType: 'business'
     });
     
@@ -232,7 +242,18 @@ export const updateQueryTicket = async (req, res) => {
     
     // Update fields
     if (title) ticket.title = title;
-    if (businessName) ticket.businessName = businessName;
+    if (businessId) {
+      // Verify business ownership if changing business
+      const business = await Business.findOne({ 
+        _id: businessId, 
+        businessOwner: businessOwnerId 
+      });
+      if (!business) {
+        return errorResponseHelper(res, { message: 'Business not found or access denied', code: '00404' });
+      }
+      ticket.businessId = businessId;
+      ticket.businessName = business.businessName;
+    }
     if (description) ticket.description = description;
     if (childIssue !== undefined) ticket.childIssue = childIssue;
     if (linkedIssue !== undefined) ticket.linkedIssue = linkedIssue;
@@ -254,10 +275,10 @@ export const updateQueryTicket = async (req, res) => {
 export const deleteQueryTicket = async (req, res) => {
   try {
     const { id } = req.params;
-    const businessId = req.business?._id;
+    const businessOwnerId = req.businessOwner?._id;
     
-    if (!businessId) {
-      return errorResponseHelper(res, { message: 'Business not authenticated', code: '00401' });
+    if (!businessOwnerId) {
+      return errorResponseHelper(res, { message: 'Business owner not authenticated', code: '00401' });
     }
     
     if (!mongoose.Types.ObjectId.isValid(id)) {
@@ -266,7 +287,7 @@ export const deleteQueryTicket = async (req, res) => {
     
     const ticket = await QueryTicket.findOne({ 
       _id: id, 
-      createdBy: businessId,
+      createdBy: businessOwnerId,
       createdByType: 'business'
     });
     
@@ -289,10 +310,10 @@ export const updateTicketStatus = async (req, res) => {
   try {
     const { id } = req.params;
     const { status } = req.body;
-    const businessId = req.business?._id;
+    const businessOwnerId = req.businessOwner?._id;
     
-    if (!businessId) {
-      return errorResponseHelper(res, { message: 'Business not authenticated', code: '00401' });
+    if (!businessOwnerId) {
+      return errorResponseHelper(res, { message: 'Business owner not authenticated', code: '00401' });
     }
     
     if (!mongoose.Types.ObjectId.isValid(id)) {
@@ -305,7 +326,7 @@ export const updateTicketStatus = async (req, res) => {
     
     const ticket = await QueryTicket.findOne({ 
       _id: id, 
-      createdBy: businessId,
+      createdBy: businessOwnerId,
       createdByType: 'business'
     });
     
@@ -331,10 +352,10 @@ export const addComment = async (req, res) => {
   try {
     const { id } = req.params;
     const { content } = req.body;
-    const businessId = req.business?._id;
+    const businessOwnerId = req.businessOwner?._id;
     
-    if (!businessId) {
-      return errorResponseHelper(res, { message: 'Business not authenticated', code: '00401' });
+    if (!businessOwnerId) {
+      return errorResponseHelper(res, { message: 'Business owner not authenticated', code: '00401' });
     }
     
     if (!content) {
@@ -347,7 +368,7 @@ export const addComment = async (req, res) => {
     
     const ticket = await QueryTicket.findOne({ 
       _id: id, 
-      createdBy: businessId,
+      createdBy: businessOwnerId,
       createdByType: 'business'
     });
     
@@ -356,12 +377,12 @@ export const addComment = async (req, res) => {
     }
     
     // Get business details for author name
-    const business = await Business.findById(businessId);
+    const business = await Business.findById(ticket.businessId);
     const authorName = business ? `${business.contactPerson} (${business.businessName})` : 'Business User';
     
     const comment = {
       content,
-      authorId: businessId,
+      authorId: businessOwnerId,
       authorType: 'business',
       authorName,
       createdAt: new Date()
@@ -385,10 +406,10 @@ export const editComment = async (req, res) => {
   try {
     const { id, commentId } = req.params;
     const { content } = req.body;
-    const businessId = req.business?._id;
+    const businessOwnerId = req.businessOwner?._id;
     
-    if (!businessId) {
-      return errorResponseHelper(res, { message: 'Business not authenticated', code: '00401' });
+    if (!businessOwnerId) {
+      return errorResponseHelper(res, { message: 'Business owner not authenticated', code: '00401' });
     }
     
     if (!content) {
@@ -401,7 +422,7 @@ export const editComment = async (req, res) => {
     
     const ticket = await QueryTicket.findOne({ 
       _id: id, 
-      createdBy: businessId,
+      createdBy: businessOwnerId,
       createdByType: 'business'
     });
     
@@ -414,8 +435,8 @@ export const editComment = async (req, res) => {
       return errorResponseHelper(res, { message: 'Comment not found', code: '00404' });
     }
     
-    // Check if comment belongs to this business
-    if (comment.authorId.toString() !== businessId.toString()) {
+    // Check if comment belongs to this business owner
+    if (comment.authorId.toString() !== businessOwnerId.toString()) {
       return errorResponseHelper(res, { message: 'You can only edit your own comments', code: '00403' });
     }
     
@@ -438,10 +459,10 @@ export const editComment = async (req, res) => {
 export const deleteComment = async (req, res) => {
   try {
     const { id, commentId } = req.params;
-    const businessId = req.business?._id;
+    const businessOwnerId = req.businessOwner?._id;
     
-    if (!businessId) {
-      return errorResponseHelper(res, { message: 'Business not authenticated', code: '00401' });
+    if (!businessOwnerId) {
+      return errorResponseHelper(res, { message: 'Business owner not authenticated', code: '00401' });
     }
     
     if (!mongoose.Types.ObjectId.isValid(id) || !mongoose.Types.ObjectId.isValid(commentId)) {
@@ -450,7 +471,7 @@ export const deleteComment = async (req, res) => {
     
     const ticket = await QueryTicket.findOne({ 
       _id: id, 
-      createdBy: businessId,
+      createdBy: businessOwnerId,
       createdByType: 'business'
     });
     
@@ -463,8 +484,8 @@ export const deleteComment = async (req, res) => {
       return errorResponseHelper(res, { message: 'Comment not found', code: '00404' });
     }
     
-    // Check if comment belongs to this business
-    if (comment.authorId.toString() !== businessId.toString()) {
+    // Check if comment belongs to this business owner
+    if (comment.authorId.toString() !== businessOwnerId.toString()) {
       return errorResponseHelper(res, { message: 'You can only delete your own comments', code: '00403' });
     }
     
@@ -483,14 +504,14 @@ export const deleteComment = async (req, res) => {
 // GET /business/query-tickets/stats - Get ticket statistics
 export const getTicketStats = async (req, res) => {
   try {
-    const businessId = req.business?._id;
+    const businessOwnerId = req.businessOwner?._id;
     
-    if (!businessId) {
-      return errorResponseHelper(res, { message: 'Business not authenticated', code: '00401' });
+    if (!businessOwnerId) {
+      return errorResponseHelper(res, { message: 'Business owner not authenticated', code: '00401' });
     }
     
     const filter = { 
-      createdBy: businessId,
+      createdBy: businessOwnerId,
       createdByType: 'business'
     };
     

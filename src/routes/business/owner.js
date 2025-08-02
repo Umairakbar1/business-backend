@@ -6,24 +6,24 @@ import {
   deleteBusinessOwnerAccount,
   getBusinessOwnerDashboardStats
 } from '../../controllers/business/businessOwner.controller.js';
-import { authorizedAccessBusiness } from '../../middleware/authorization.js';
+import { verifyBusinessOwnerToken } from '../../middleware/authorization.js';
 import { uploadSingleImageToCloudinary, handleCloudinaryUploadError } from '../../middleware/cloudinaryUpload.js';
 
 const router = Router();
 
 // Get Business Owner Profile
-router.get('/profile', authorizedAccessBusiness, getBusinessOwnerProfile);
+router.get('/profile', verifyBusinessOwnerToken, getBusinessOwnerProfile);
 
 // Update Business Owner Profile
-router.put('/profile', authorizedAccessBusiness, uploadSingleImageToCloudinary, handleCloudinaryUploadError, updateBusinessOwnerProfile);
+router.put('/profile', verifyBusinessOwnerToken, uploadSingleImageToCloudinary, handleCloudinaryUploadError, updateBusinessOwnerProfile);
 
 // Change Business Owner Password
-router.put('/password', authorizedAccessBusiness, changeBusinessOwnerPassword);
+router.put('/password', verifyBusinessOwnerToken, changeBusinessOwnerPassword);
 
 // Delete Business Owner Account
-router.delete('/account', authorizedAccessBusiness, deleteBusinessOwnerAccount);
+router.delete('/account', verifyBusinessOwnerToken, deleteBusinessOwnerAccount);
 
 // Get Business Owner Dashboard Stats
-router.get('/dashboard-stats', authorizedAccessBusiness, getBusinessOwnerDashboardStats);
+router.get('/dashboard-stats', verifyBusinessOwnerToken, getBusinessOwnerDashboardStats);
 
 export default router; 

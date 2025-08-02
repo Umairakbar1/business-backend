@@ -105,6 +105,9 @@ const BusinessSchema = new Schema({
   embedToken: {
     type: String
   },
+  reviewEmbedToken: {
+    type: String
+  },
   
   // Review Management Access
   reviewManagementAccess: {

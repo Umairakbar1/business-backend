@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { authorizedAccessBusiness } from "../../middleware/authorization.js";
+import { verifyBusinessOwnerToken } from "../../middleware/authorization.js";
 import { uploadSingleDocumentToCloudinary, handleCloudinaryUploadError } from "../../middleware/cloudinaryUpload.js";
 import {
   getBusinessQueryTickets,
@@ -17,33 +17,33 @@ import {
 const router = Router();
 
 // GET /business/query-tickets - Get all query tickets for business
-router.get("/", authorizedAccessBusiness, getBusinessQueryTickets);
+router.get("/", verifyBusinessOwnerToken, getBusinessQueryTickets);
 
 // GET /business/query-tickets/stats - Get ticket statistics
-router.get("/stats", authorizedAccessBusiness, getTicketStats);
+router.get("/stats", verifyBusinessOwnerToken, getTicketStats);
 
 // GET /business/query-tickets/:id - Get single query ticket details
-router.get("/:id", authorizedAccessBusiness, getQueryTicketById);
+router.get("/:id", verifyBusinessOwnerToken, getQueryTicketById);
 
 // POST /business/query-tickets - Create new query ticket with file upload
-router.post("/", authorizedAccessBusiness, uploadSingleDocumentToCloudinary, handleCloudinaryUploadError, createQueryTicket);
+router.post("/", verifyBusinessOwnerToken, uploadSingleDocumentToCloudinary, handleCloudinaryUploadError, createQueryTicket);
 
 // PUT /business/query-tickets/:id - Update query ticket with file upload
-router.put("/:id", authorizedAccessBusiness, uploadSingleDocumentToCloudinary, handleCloudinaryUploadError, updateQueryTicket);
+router.put("/:id", verifyBusinessOwnerToken, uploadSingleDocumentToCloudinary, handleCloudinaryUploadError, updateQueryTicket);
 
 // DELETE /business/query-tickets/:id - Delete query ticket
-router.delete("/:id", authorizedAccessBusiness, deleteQueryTicket);
+router.delete("/:id", verifyBusinessOwnerToken, deleteQueryTicket);
 
 // PUT /business/query-tickets/:id/status - Update ticket status
-router.put("/:id/status", authorizedAccessBusiness, updateTicketStatus);
+router.put("/:id/status", verifyBusinessOwnerToken, updateTicketStatus);
 
 // POST /business/query-tickets/:id/comments - Add comment to ticket
-router.post("/:id/comments", authorizedAccessBusiness, addComment);
+router.post("/:id/comments", verifyBusinessOwnerToken, addComment);
 
 // PUT /business/query-tickets/:id/comments/:commentId - Edit comment
-router.put("/:id/comments/:commentId", authorizedAccessBusiness, editComment);
+router.put("/:id/comments/:commentId", verifyBusinessOwnerToken, editComment);
 
 // DELETE /business/query-tickets/:id/comments/:commentId - Delete comment
-router.delete("/:id/comments/:commentId", authorizedAccessBusiness, deleteComment);
+router.delete("/:id/comments/:commentId", verifyBusinessOwnerToken, deleteComment);
 
 export default router; 

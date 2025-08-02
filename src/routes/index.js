@@ -17,6 +17,8 @@ import businessReviewsRoutes from "./business/reviews.js";
 import businessQueryTicketsRoutes from "./business/queryTickets.js";
 import businessOwnerRoutes from "./business/owner.js";
 import businessCategoryRoutes from "./business/category.js";
+import businessReviewEmbedRoutes from "./business/reviewEmbed.js";
+import embedRoutes from "./embed.js";
 import userAuthRoutes from "./user/auth.js";
 import userBusinessRoutes from "./user/buisness.js";
 import userReviewRoutes from "./user/review.js";
@@ -47,6 +49,10 @@ router.use("/business/query-tickets", businessQueryTicketsRoutes);
 router.use("/business/businesses", businessBusinessRoutes);
 router.use("/business/owner", businessOwnerRoutes);
 router.use("/business/categories", businessCategoryRoutes);
+router.use("/business/review-embed", businessReviewEmbedRoutes);
+
+// Public embed routes (no authentication required) - Review embeds only
+router.use("/embed", embedRoutes);
 
 // User routes
 router.use("/user/auth", userAuthRoutes);

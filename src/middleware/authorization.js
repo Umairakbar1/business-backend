@@ -90,15 +90,15 @@ const verifyBusinessOwnerToken = async (req, res, next) => {
     token = req.header("Authorization").replace("Bearer ", "");
 
   try {
-    req.businessOwner = verify(token, GLOBAL_ENV.jwtSecretKeyBusiness || GLOBAL_ENV.jwtSecretKeyAdmin, { expiresIn: GLOBAL_ENV.jwtExpiresInBusiness || GLOBAL_ENV.jwtExpiresInAdmin });
-    if (!mongoose.Types.ObjectId.isValid(req.businessOwner._id))
+    const data = verify(token, GLOBAL_ENV.jwtSecretKeyBusiness, { expiresIn: GLOBAL_ENV.jwtExpiresInBusiness });
+    if (!mongoose.Types.ObjectId.isValid(data._id))
       return errorResponseHelper(res, {message:GLOBAL_MESSAGES.invalidData,code:"00401"});
 
-    const businessOwnerExists = await BusinessOwner.findById(req.businessOwner._id);
+    const businessOwner = await BusinessOwner.findById(data._id);
 
-    if (!businessOwnerExists)
+    if (!businessOwner)
       return errorResponseHelper(res, {message:GLOBAL_MESSAGES.dataNotFound,code:"00401"});
-
+    req.businessOwner = businessOwner;
     next();
   } catch (error) {
     return serverErrorHelper(req, res, 500, error);
