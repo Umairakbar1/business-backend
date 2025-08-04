@@ -17,7 +17,8 @@ import {
   deleteBusinessBoosts,
   getOwnerRecentSubscriptions,
   validateBusinessWebsite,
-  handleStripeWebhook
+  handleStripeWebhook,
+  getBusinessesWithReviews
 } from '../../controllers/business/business.controller.js';
 
 import { validateBusiness, validateBusinessStatus } from '../../validators/business/business.js';
@@ -31,6 +32,7 @@ router.post('/webhook/stripe', handleStripeWebhook);
 
 router.post('/', verifyBusinessOwnerToken, uploadSingleImageToCloudinary, handleCloudinaryUploadError, validateBusiness, createBusiness);
 router.get('/', verifyBusinessOwnerToken, getMyBusinesses);
+router.get('/with-reviews', verifyBusinessOwnerToken, getBusinessesWithReviews);
 router.get('/:id', verifyBusinessOwnerToken, getBusinessById);
 router.put('/:id', verifyBusinessOwnerToken, uploadSingleImageToCloudinary, handleCloudinaryUploadError, validateBusiness, updateBusiness);
 router.delete('/:id', verifyBusinessOwnerToken, deleteBusiness);

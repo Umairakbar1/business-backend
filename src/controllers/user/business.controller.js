@@ -25,6 +25,18 @@ export const getBusinessListings = async (req, res) => {
     // Aggregate to filter by average rating if needed - Only approved reviews
     let pipeline = [
       { $match: filter },
+      // Ensure subcategories is always an array
+      {
+        $addFields: {
+          subcategories: {
+            $cond: {
+              if: { $isArray: '$subcategories' },
+              then: '$subcategories',
+              else: []
+            }
+          }
+        }
+      },
       {
         $lookup: {
           from: 'reviews',
@@ -46,6 +58,57 @@ export const getBusinessListings = async (req, res) => {
           reviewsCount: { $size: '$reviews' },
         },
       },
+      // Lookup category data
+      {
+        $lookup: {
+          from: 'categories',
+          let: { categoryId: '$category' },
+          pipeline: [
+            {
+              $match: {
+                $expr: { $eq: ['$_id', '$$categoryId'] },
+                status: 'active'
+              }
+            },
+            {
+              $project: {
+                _id: 1,
+                title: 1,
+                description: 1,
+                image: 1,
+                slug: 1
+              }
+            }
+          ],
+          as: 'categoryData',
+        },
+      },
+             // Lookup subcategory data
+       {
+         $lookup: {
+           from: 'subcategories',
+           let: { subcategoryIds: '$subcategories' },
+           pipeline: [
+             {
+               $match: {
+                 $expr: { $in: ['$_id', '$$subcategoryIds'] },
+                 isActive: true
+               }
+             },
+             {
+               $project: {
+                 _id: 1,
+                 title: 1,
+                 description: 1,
+                 image: 1,
+                 categoryId: 1,
+                 slug: 1
+               }
+             }
+           ],
+           as: 'subcategoryData',
+         },
+       },
     ];
     if (rating) {
       pipeline.push({ $match: { avgRating: { $gte: Number(rating) } } });
@@ -65,13 +128,24 @@ export const getBusinessListings = async (req, res) => {
     // Project fields
     pipeline.push({
       $project: {
-        name: 1,
+        _id: 1,
+        businessName: 1,
+        email: 1,
+        phoneNumber: 1,
+        address: 1,
         location: 1,
+        website: 1,
+        logo: 1,
+        description: 1,
+        category: { $arrayElemAt: ['$categoryData', 0] },
+        subcategories: '$subcategoryData',
         claimed: 1,
         status: 1,
         avgRating: 1,
         reviewsCount: 1,
         media: 1,
+        createdAt: 1,
+        updatedAt: 1,
       },
     });
 
@@ -90,6 +164,10 @@ export const getBusinessDetails = async (req, res) => {
 
     const business = await Business.findById(id).lean();
     if (!business) return res.status(404).json({ success: false, message: 'Business not found' });
+
+    // Import Category and SubCategory models
+    const Category = (await import('../../models/admin/category.js')).default;
+    const SubCategory = (await import('../../models/admin/subCategory.js')).default;
 
     // Get all media
     const media = await Media.find({ businessId: id });
@@ -121,10 +199,38 @@ export const getBusinessDetails = async (req, res) => {
     const breakdown = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
     reviewStats.forEach(r => { breakdown[r._id] = r.count; });
 
+    // Populate category data
+    let categoryData = null;
+    if (business.category) {
+      try {
+        categoryData = await Category.findOne({ 
+          _id: business.category, 
+          status: 'active' 
+        }).select('_id title description image slug');
+      } catch (error) {
+        console.error('Error fetching category:', error);
+      }
+    }
+
+    // Populate subcategory data
+    let subcategoryData = [];
+    if (business.subcategories && business.subcategories.length > 0) {
+      try {
+        subcategoryData = await SubCategory.find({
+          _id: { $in: business.subcategories },
+          isActive: true
+        }).select('_id title description image categoryId slug');
+      } catch (error) {
+        console.error('Error fetching subcategories:', error);
+      }
+    }
+
     res.json({
       success: true,
       data: {
         ...business,
+        category: categoryData,
+        subcategories: subcategoryData,
         media,
         avgRating,
         totalReviews,
@@ -152,7 +258,8 @@ export const getBusinessReviews = async (req, res) => {
       businessId: id, 
       status: 'approved' 
     })
-      .populate('userId', 'name profilePhoto')
+      .populate('userId', 'name email profilePhoto')
+      .populate('approvedBy', 'name email')
       .sort(sort)
       .skip((Number(page) - 1) * Number(limit))
       .limit(Number(limit));

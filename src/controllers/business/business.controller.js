@@ -309,7 +309,7 @@ export const updateBusiness = async (req, res) => {
     }
     
     const business = await Business.findOneAndUpdate(
-      { _id: id, owner: req.user._id },
+      { _id: id, businessOwner: req.businessOwner._id },
       updateData,
       { new: true, runValidators: true }
     );
@@ -326,7 +326,7 @@ export const updateBusiness = async (req, res) => {
 export const deleteBusiness = async (req, res) => {
   try {
     const { id } = req.params;
-    const business = await Business.findOneAndDelete({ _id: id, owner: req.user._id });
+    const business = await Business.findOneAndDelete({ _id: id, businessOwner: req.businessOwner._id });
     if (!business) return res.status(404).json({ success: false, message: 'Business not found' });
     return successResponseHelper(res, {
       message: 'Business deleted successfully',
@@ -341,16 +341,120 @@ export const updateBusinessStatus = async (req, res) => {
   try {
     const { id } = req.params;
     const { status } = req.body;
+    
+    if (!mongoose.Types.ObjectId.isValid(id)) return res.status(400).json({ success: false, message: 'Invalid business ID' });
     if (!['active', 'inactive'].includes(status)) return res.status(400).json({ success: false, message: 'Invalid status' });
+    
     const business = await Business.findOneAndUpdate(
-      { _id: id, owner: req.user._id },
+      { _id: id, businessOwner: req.businessOwner._id },
       { status },
       { new: true, runValidators: true }
     );
+    
     if (!business) return res.status(404).json({ success: false, message: 'Business not found' });
+    
+    // Import Category and SubCategory models
+    const Category = (await import('../../models/admin/category.js')).default;
+    const SubCategory = (await import('../../models/admin/subCategory.js')).default;
+    
+    // Convert business to object for manipulation
+    const businessObj = business.toObject();
+    
+    // Find and populate category data
+    if (businessObj.category) {
+      try {
+        const category = await Category.findOne({ 
+          _id: businessObj.category, 
+          status: 'active' 
+        }).select('_id title description image slug');
+        
+        if (category) {
+          businessObj.category = {
+            _id: category._id,
+            title: category.title,
+            description: category.description,
+            image: category.image,
+            slug: category.slug
+          };
+        } else {
+          // If category not found, keep the original value
+          businessObj.category = businessObj.category;
+        }
+      } catch (error) {
+        console.error('Error fetching category:', error);
+        // Keep the original value on error
+        businessObj.category = businessObj.category;
+      }
+    }
+    
+    // Find and populate subcategory data
+    if (businessObj.subcategories && businessObj.subcategories.length > 0) {
+      try {
+        const subcategories = await SubCategory.find({
+          _id: { $in: businessObj.subcategories },
+          isActive: true
+        }).select('_id title description image categoryId slug');
+        
+        // Populate category info for each subcategory
+        const populatedSubcategories = await Promise.all(
+          (subcategories || []).map(async (subcategory) => {
+            const subcategoryObj = subcategory.toObject();
+            if (subcategoryObj.categoryId) {
+              const parentCategory = await Category.findById(subcategoryObj.categoryId)
+                .select('_id title description slug');
+              if (parentCategory) {
+                subcategoryObj.parentCategory = {
+                  _id: parentCategory._id,
+                  title: parentCategory.title,
+                  description: parentCategory.description,
+                  slug: parentCategory.slug
+                };
+              }
+            }
+            return subcategoryObj;
+          })
+        );
+        
+        businessObj.subcategories = populatedSubcategories;
+      } catch (error) {
+        console.error('Error fetching subcategories:', error);
+        businessObj.subcategories = [];
+      }
+    } else {
+      businessObj.subcategories = [];
+    }
+    
+    // Clean up focusKeywords - convert objects to strings if needed
+    if (businessObj.focusKeywords && Array.isArray(businessObj.focusKeywords)) {
+      businessObj.focusKeywords = businessObj.focusKeywords.map(keyword => {
+        if (typeof keyword === 'object' && keyword !== null) {
+          return keyword.toString();
+        }
+        return keyword;
+      });
+    }
+    
+    // Clean up subcategories - only if they are still strings/objects (not already populated)
+    if (businessObj.subcategories && Array.isArray(businessObj.subcategories)) {
+      // Check if subcategories are already populated objects (have _id and title properties)
+      const isAlreadyPopulated = businessObj.subcategories.length > 0 && 
+        typeof businessObj.subcategories[0] === 'object' && 
+        businessObj.subcategories[0]._id && 
+        businessObj.subcategories[0].title;
+      
+      if (!isAlreadyPopulated) {
+        businessObj.subcategories = businessObj.subcategories.map(sub => {
+          if (typeof sub === 'object' && sub !== null) {
+            return sub.toString();
+          }
+          return sub;
+        });
+      }
+    }
+    
     return successResponseHelper(res, {
       message: 'Business status updated successfully',
-      data: business
+      data: businessObj
     });
   } catch (error) {
     return errorResponseHelper(res, { message: 'Internal server error', code: '00500' });
@@ -460,6 +564,10 @@ export const getBusinessesWithReviews = async (req, res) => {
   try {
     const { page = 1, limit = 10, search, status, sortBy = 'createdAt', sortOrder = 'desc', includeReviews = true, reviewsLimit = 5 } = req.query;
     
+    console.log('getBusinessesWithReviews called with params:', {
+      page, limit, search, status, sortBy, sortOrder, includeReviews, reviewsLimit
+    });
+    
     // Build filter object
     const filter = { businessOwner: req.businessOwner._id };
     
@@ -507,12 +615,12 @@ export const getBusinessesWithReviews = async (req, res) => {
         if (businessObj.category) {
           try {
             const category = await Category.findOne({ 
-              title: businessObj.category, 
+              _id: businessObj.category, 
               status: 'active' 
             }).select('title description image');
             
             if (category) {
-              businessObj.categoryData = {
+              businessObj.category = {
                 _id: category._id,
                 title: category.title,
                 description: category.description,
@@ -528,7 +636,7 @@ export const getBusinessesWithReviews = async (req, res) => {
         if (businessObj.subcategories && businessObj.subcategories.length > 0) {
           try {
             const subcategories = await SubCategory.find({
-              title: { $in: businessObj.subcategories },
+              _id: { $in: businessObj.subcategories },
               isActive: true
             }).select('title description image categoryId');
             
@@ -551,21 +659,76 @@ export const getBusinessesWithReviews = async (req, res) => {
               })
             );
             
-            businessObj.subcategoriesData = populatedSubcategories;
+            businessObj.subcategories = populatedSubcategories;
           } catch (error) {
             console.error('Error fetching subcategories:', error);
           }
         }
         
         // Get reviews for this business if requested
-        if (includeReviews === 'true') {
+        if (includeReviews === 'true' || includeReviews === true) {
           try {
-            const reviews = await Review.find({ businessId: businessObj._id })
+            console.log('Fetching reviews for business:', businessObj._id);
+            console.log('Business ID type:', typeof businessObj._id);
+            console.log('Business ID value:', businessObj._id);
+            
+            // First, let's check if any reviews exist for this business
+            const allReviewsForBusiness = await Review.find({ businessId: businessObj._id });
+            console.log('All reviews in DB for business:', allReviewsForBusiness.length);
+            
+            // Let's also check all reviews in the database to see if there are any
+            const totalReviewsInDB = await Review.countDocuments({});
+            console.log('Total reviews in entire database:', totalReviewsInDB);
+            
+            if (totalReviewsInDB > 0) {
+              const sampleReview = await Review.findOne({});
+              console.log('Sample review from DB:', {
+                _id: sampleReview._id,
+                businessId: sampleReview.businessId,
+                businessIdType: typeof sampleReview.businessId,
+                businessIdString: sampleReview.businessId.toString(),
+                rating: sampleReview.rating,
+                status: sampleReview.status
+              });
+              
+              // Let's also check if there are any reviews with this business ID using a direct query
+              const directQuery = await Review.find({});
+              console.log('All reviews business IDs:', directQuery.map(r => ({
+                reviewId: r._id,
+                businessId: r.businessId,
+                businessIdString: r.businessId.toString()
+              })));
+            }
+            console.log('Sample review data:', allReviewsForBusiness[0] ? {
+              _id: allReviewsForBusiness[0]._id,
+              businessId: allReviewsForBusiness[0].businessId,
+              rating: allReviewsForBusiness[0].rating,
+              status: allReviewsForBusiness[0].status
+            } : 'No reviews found');
+            
+            // Try querying with the business ID directly
+            let reviews = await Review.find({ businessId: businessObj._id })
               .populate('userId', 'name email profilePhoto')
               .populate('approvedBy', 'name email')
               .sort({ createdAt: -1 })
-              .limit(parseInt(reviewsLimit));
+              .limit(parseInt(reviewsLimit) || 5);
             
+            console.log('Found reviews with direct business ID:', reviews.length);
+            
+            // If no reviews found, try with string version of business ID
+            if (reviews.length === 0) {
+              console.log('No reviews found with ObjectId, trying with string version');
+              reviews = await Review.find({ businessId: businessObj._id.toString() })
+                .populate('userId', 'name email profilePhoto')
+                .populate('approvedBy', 'name email')
+                .sort({ createdAt: -1 })
+                .limit(parseInt(reviewsLimit) || 5);
+              console.log('Found reviews with string ID:', reviews.length);
+            }
+            
+
+            
+            console.log('Found reviews after population:', reviews.length);
             businessObj.reviews = reviews;
             
             // Add review statistics
@@ -574,27 +737,51 @@ export const getBusinessesWithReviews = async (req, res) => {
             const pendingReviews = await Review.countDocuments({ businessId: businessObj._id, status: 'pending' });
             const manageableReviews = await Review.countDocuments({ businessId: businessObj._id, businessCanManage: true });
             
+            // Calculate overall rating from all reviews
+            const allReviews = await Review.find({ businessId: businessObj._id });
+            let overallRating = 0;
+            if (allReviews.length > 0) {
+              const totalRating = allReviews.reduce((sum, review) => sum + review.rating, 0);
+              overallRating = Math.round((totalRating / allReviews.length) * 10) / 10; // Round to 1 decimal place
+            }
+            
             businessObj.reviewStats = {
               total: totalReviews,
               approved: approvedReviews,
               pending: pendingReviews,
-              manageable: manageableReviews
+              manageable: manageableReviews,
+              overallRating: overallRating
             };
+            
+            console.log('Review stats:', businessObj.reviewStats);
           } catch (error) {
-            console.error('Error fetching reviews:', error);
+            console.error('Error fetching reviews for business:', businessObj._id, error);
             businessObj.reviews = [];
             businessObj.reviewStats = {
               total: 0,
               approved: 0,
               pending: 0,
-              manageable: 0
+              manageable: 0,
+              overallRating: 0
             };
           }
+        } else {
+          businessObj.reviews = [];
+          businessObj.reviewStats = {
+            total: 0,
+            approved: 0,
+            pending: 0,
+            manageable: 0,
+            overallRating: 0
+          };
         }
         
         return businessObj;
       })
     );
+    
+    console.log('Sending response with', populatedBusinesses.length, 'businesses');
+    console.log('First business reviews:', populatedBusinesses[0]?.reviews?.length || 0);
     
     return successResponseHelper(res, {
       message: 'Businesses retrieved successfully',
@@ -619,7 +806,7 @@ export const createPlanPaymentSession = async (req, res) => {
     // Set price (should match getAvailablePlans)
     const price = plan === 'silver' ? 2000 : 3000; // in cents
     // Get business
-    const business = await Business.findOne({ _id: businessId, owner: req.user._id });
+    const business = await Business.findOne({ _id: businessId, businessOwner: req.businessOwner._id });
     if (!business) return res.status(404).json({ success: false, message: 'Business not found' });
     // Create Stripe session
     const session = await createStripeCheckoutSession(
@@ -641,7 +828,7 @@ export const createPlanPaymentSession = async (req, res) => {
 export const getAllMyBusinessSubscriptions = async (req, res) => {
   try {
     // Find all businesses owned by the user
-    const businesses = await Business.find({ owner: req.user._id }, '_id businessName');
+      const businesses = await Business.find({ businessOwner: req.businessOwner._id }, '_id businessName');
     const businessIds = businesses.map(b => b._id);
     // Find all subscriptions for these businesses
     const subscriptions = await BusinessSubscription.find({ businessId: { $in: businessIds } })
@@ -658,7 +845,7 @@ export const getAllMyBusinessSubscriptions = async (req, res) => {
 export const boostBusiness = async (req, res) => {
   try {
     const { businessId } = req.body;
-    const business = await Business.findOne({ _id: businessId, owner: req.user._id });
+    const business = await Business.findOne({ _id: businessId, businessOwner: req.businessOwner._id });
     if (!business) return res.status(404).json({ success: false, message: 'Business not found' });
     const category = business.businessCategory;
     // Find any currently boosted business in this category
@@ -671,7 +858,7 @@ export const boostBusiness = async (req, res) => {
     if (boosted && String(boosted._id) !== String(business._id)) {
       // Queue this boost after the current one ends
       business.boostQueue.push({
-        owner: req.user._id,
+        owner: req.businessOwner._id,
         start: boosted.boostEndAt,
         end: new Date(boosted.boostEndAt.getTime() + 24 * 60 * 60 * 1000)
       });
@@ -703,7 +890,7 @@ export const boostBusiness = async (req, res) => {
 export const agreeBoostBusiness = async (req, res) => {
   try {
     const { businessId } = req.body;
-    const business = await Business.findOne({ _id: businessId, owner: req.user._id });
+    const business = await Business.findOne({ _id: businessId, businessOwner: req.businessOwner._id });
     if (!business) return res.status(404).json({ success: false, message: 'Business not found' });
     if (!business.boostQueue.length) return res.status(400).json({ success: false, message: 'No boost queued.' });
     const nextBoost = business.boostQueue[0];
@@ -743,7 +930,7 @@ export const getBoostedBusinesses = async (req, res) => {
 export const getMyBusinessBoosts = async (req, res) => {
   try {
     // Find all businesses owned by the user
-    const businesses = await Business.find({ owner: req.user._id });
+    const businesses = await Business.find({ businessOwner: req.businessOwner._id });
     // Collect boost info for each business
     const boosts = businesses.map(b => ({
       businessId: b._id,
@@ -766,7 +953,7 @@ export const getMyBusinessBoosts = async (req, res) => {
 export const deleteBusinessBoosts = async (req, res) => {
   try {
     const { businessId } = req.body;
-    const business = await Business.findOne({ _id: businessId, owner: req.user._id });
+    const business = await Business.findOne({ _id: businessId, businessOwner: req.businessOwner._id });
     if (!business) return res.status(404).json({ success: false, message: 'Business not found' });
     business.boostActive = false;
     business.boostCategory = undefined;
@@ -786,7 +973,7 @@ export const getOwnerRecentSubscriptions = async (req, res) => {
   try {
     // Find all subscriptions where the owner is the payer (assuming owner._id is stored in subscription, otherwise filter by their businesses)
     // Here, we filter by all businesses owned by the user
-    const businesses = await Business.find({ owner: req.user._id }, '_id businessName');
+    const businesses = await Business.find({ businessOwner: req.businessOwner._id }, '_id businessName');
     const businessIds = businesses.map(b => b._id);
     const subscriptions = await BusinessSubscription.find({ businessId: { $in: businessIds } })
       .sort({ createdAt: -1 });
