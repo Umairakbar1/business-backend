@@ -21,19 +21,20 @@ const QueryTicketSchema = new Schema({
   linkedIssue: { type: String },
   websiteUrl: { type: String },
   attachment: {
-    url: String,
-    public_id: String,
-    originalName: String,
     type: {
-      type: String,
-      enum: ['document', 'video'],
-      required: true
+      url: String,
+      public_id: String,
+      originalName: String,
+      type: {
+        type: String,
+        enum: ['document', 'video'],
+      },
+      // For documents
+      format: String,
+      bytes: Number,
+      // For videos
+      duration: Number
     },
-    // For documents
-    format: String,
-    bytes: Number,
-    // For videos
-    duration: Number
   },
   
   // Creator information
@@ -45,14 +46,14 @@ const QueryTicketSchema = new Schema({
   
   // Assignment information
   assignedTo: { 
-    type: Schema.Types.ObjectId, 
-    ref: 'Admin',
+    type: Schema.Types.String, 
+    // ref: 'Admin',
     default: null 
   },
   assignedAt: { type: Date },
   assignedBy: { 
-    type: Schema.Types.ObjectId, 
-    ref: 'Admin' 
+    type: Schema.Types.String, 
+    // ref: 'Admin' 
   },
   
   // Status management

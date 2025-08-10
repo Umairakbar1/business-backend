@@ -129,7 +129,16 @@ export const registerBusinessValidation = (req, res, next) => {
     state: Joi.string().optional().allow(null, ''),
     zipCode: Joi.string().optional().allow(null, ''),
     country: Joi.string().optional().allow(null, ''),
-    plan: Joi.string().valid('bronze', 'silver', 'gold').optional()
+    plan: Joi.string().valid('bronze', 'silver', 'gold').optional(),
+    // Add location validation
+    location: Joi.alternatives().try(
+      Joi.object({
+        description: Joi.string().optional().allow(null, ''),
+        lat: Joi.number().optional().allow(null),
+        lng: Joi.number().optional().allow(null)
+      }),
+      Joi.string().optional().allow(null, '') // Allow string format for FormData
+    ).optional()
   });
 
   const { error } = schema.validate(req.body);

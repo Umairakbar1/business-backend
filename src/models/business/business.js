@@ -25,11 +25,13 @@ const BusinessSchema = new Schema({
     }
   },
   category: {
-    type: String,
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Category',
     required: true
   },
   subcategories: [{
-    type: String
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'SubCategory'
   }],
   
   // Contact Information
@@ -62,7 +64,11 @@ const BusinessSchema = new Schema({
   serviceOffer: String,
   
   // Address Information
-  address: String,
+  location: {
+    description: String,
+    lat: Number,
+    lng: Number
+  },
   city: String,
   state: String,
   zipCode: String,
@@ -96,7 +102,7 @@ const BusinessSchema = new Schema({
   plan: {
     type: String,
     enum: ['bronze', 'silver', 'gold'],
-    default: 'bronze'
+    default: null
   },
   features: [{
     type: String,
@@ -143,8 +149,7 @@ const BusinessSchema = new Schema({
   ],
   
   // Timestamps
-  createdAt: { type: Date, default: Date.now },
-  updatedAt: { type: Date, default: Date.now }
+  createdAt: { type: Date, default: Date.now }
 }, {
   timestamps: true
 });

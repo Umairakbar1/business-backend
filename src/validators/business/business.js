@@ -4,6 +4,8 @@ import Joi from 'joi';
 export const validateBusiness = [
   body('businessName').notEmpty().withMessage('Business name is required'),
   body('plan').isIn(['bronze', 'silver', 'gold']).withMessage('Invalid plan'),
+  // Allow any additional fields (including location)
+  body('*').optional(),
   // Add more validation as needed
 ];
 
@@ -21,6 +23,11 @@ export const businessJoiSchema = Joi.object({
   state: Joi.string().optional(),
   zipCode: Joi.string().optional(),
   country: Joi.string().optional(),
+  location: Joi.object({
+    description: Joi.string().optional(),
+    lat: Joi.number().optional(),
+    lng: Joi.number().optional()
+  }).optional(),
   // Add more fields as needed
 });
 

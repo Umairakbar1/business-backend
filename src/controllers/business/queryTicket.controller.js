@@ -44,15 +44,13 @@ export const getBusinessQueryTickets = async (req, res) => {
     
     return successResponseHelper(res, {
       message: 'Business query tickets fetched successfully',
-      data: 
-        tickets,
-        pagination: {
-          page: parseInt(page),
-          limit: parseInt(limit),
-          total,
-          totalPages: Math.ceil(total / parseInt(limit))
-        }
-      
+      data: tickets,
+      pagination: {
+        page: parseInt(page),
+        limit: parseInt(limit),
+        total,
+        totalPages: Math.ceil(total / parseInt(limit))
+      }
     });
   } catch (error) {
     return errorResponseHelper(res, { message: error.message, code: '00500' });
@@ -96,7 +94,7 @@ export const getQueryTicketById = async (req, res) => {
 export const createQueryTicket = async (req, res) => {
   try {
     const businessOwnerId = req.businessOwner?._id;
-    const { title, businessId, description, childIssue, linkedIssue, websiteUrl } = req.body;
+    const { title, businessId, description, childIssue, linkedIssue, websiteUrl, assignedTo } = req.body;
     
     if (!businessOwnerId) {
       return errorResponseHelper(res, { message: 'Business owner not authenticated', code: '00401' });
@@ -121,6 +119,7 @@ export const createQueryTicket = async (req, res) => {
     let attachment = null;
     if (req.file) {
       try {
+        console.log('File received:', req.file.originalname, req.file.mimetype);
         if (req.file.mimetype.startsWith('video/')) {
           // Upload video to Cloudinary
           const videoResult = await uploadVideo(req.file.buffer, 'business-app/tickets/videos');
@@ -145,6 +144,7 @@ export const createQueryTicket = async (req, res) => {
             bytes: imageResult.bytes
           };
         }
+        console.log('Attachment created:', attachment);
       } catch (uploadError) {
         console.error('File upload error:', uploadError);
         return errorResponseHelper(res, { 
@@ -152,6 +152,8 @@ export const createQueryTicket = async (req, res) => {
           code: '00500' 
         });
       }
+    } else {
+      console.log('No file uploaded - attachment will be null');
     }
     
     const ticketData = {
@@ -161,11 +163,22 @@ export const createQueryTicket = async (req, res) => {
       childIssue,
       linkedIssue,
       websiteUrl,
-      attachment,
       createdBy: businessOwnerId,
       createdByType: 'business',
-      businessId: businessId
+      businessId: businessId,
+      assignedTo: assignedTo
     };
+    
+    // Only add attachment if file was uploaded and processed successfully
+    if (attachment && attachment.type) {
+      ticketData.attachment = attachment;
+      console.log('Adding attachment to ticket data:', attachment);
+    } else {
+      console.log('No valid attachment to add - attachment:', attachment);
+    }
+    
+    console.log('Final ticket data:', JSON.stringify(ticketData, null, 2));
+    console.log('Attachment field in ticket data:', ticketData.attachment);
     
     const ticket = new QueryTicket(ticketData);
     await ticket.save();
@@ -184,7 +197,7 @@ export const updateQueryTicket = async (req, res) => {
   try {
     const { id } = req.params;
     const businessOwnerId = req.businessOwner?._id;
-    const { title, businessId, description, childIssue, linkedIssue, websiteUrl } = req.body;
+    const { status, title, businessId, description, childIssue, linkedIssue, websiteUrl, assignedTo, attachment, comments } = req.body;
     
     if (!businessOwnerId) {
       return errorResponseHelper(res, { message: 'Business owner not authenticated', code: '00401' });
@@ -258,7 +271,10 @@ export const updateQueryTicket = async (req, res) => {
     if (childIssue !== undefined) ticket.childIssue = childIssue;
     if (linkedIssue !== undefined) ticket.linkedIssue = linkedIssue;
     if (websiteUrl !== undefined) ticket.websiteUrl = websiteUrl;
-    
+    if (assignedTo !== undefined) ticket.assignedTo = assignedTo;
+    if (status !== undefined) ticket.status = status;
+    if (attachment !== undefined) ticket.attachment = attachment;
+    if (comments !== undefined) ticket.comments = comments;
     ticket.updatedAt = new Date();
     await ticket.save();
     
@@ -547,4 +563,4 @@ export const getTicketStats = async (req, res) => {
   } catch (error) {
     return errorResponseHelper(res, { message: error.message, code: '00500' });
   }
-}; 
+};

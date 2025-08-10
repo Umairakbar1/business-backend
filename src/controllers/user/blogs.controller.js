@@ -119,14 +119,11 @@ const getAllBlogs = async (req, res) => {
         const skip = (parseInt(page) - 1) * parseInt(limit);
         
         const blogs = await Blog.find(query)
-            .populate('category', 'name description')
-            .populate('subCategory', 'name description')
+            .populate('category', '_id title description')
+            .populate('subCategory', '_id title description')
             .populate({
                 path: 'author',
-                select: 'firstName lastName email',
-                model: function(doc) {
-                    return doc.authorModel;
-                }
+                select: 'firstName lastName email'
             })
             .sort({ createdAt: -1 })
             .skip(skip)
@@ -136,7 +133,7 @@ const getAllBlogs = async (req, res) => {
         const total = await Blog.countDocuments(query);
 
         return successResponseHelper(res, {
-            blogs,
+            data:blogs,
             pagination: {
                 page: parseInt(page),
                 limit: parseInt(limit),
@@ -171,10 +168,7 @@ const getBlogById = async (req, res) => {
         })
         .populate({
             path: 'author',
-            select: 'firstName lastName email',
-            model: function(doc) {
-                return doc.authorModel;
-            }
+            select: 'firstName lastName email'
         })
         .select('-__v');
 

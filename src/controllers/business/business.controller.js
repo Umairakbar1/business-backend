@@ -9,8 +9,8 @@ import { errorResponseHelper, successResponseHelper } from '../../helpers/utilit
 
 export const createBusiness = async (req, res) => {
   try {
-    const { plan, ...data } = req.body;
-    
+    const { plan, location, ...data } = req.body;
+      
     // Handle logo upload
     let logoData = null;
     if (req.file) {
@@ -33,6 +33,34 @@ export const createBusiness = async (req, res) => {
       }
     }
     
+    // Handle location data
+    let locationData = null;
+    
+    if (location) {
+      let parsedLocation = location;
+      
+      // If location is a string, try to parse it as JSON
+      if (typeof location === 'string') {
+        try {
+          parsedLocation = JSON.parse(location);
+        } catch (parseError) {
+          console.error('Error parsing location string:', parseError);
+          parsedLocation = null;
+        }
+      }
+      
+      // If we have a valid location object
+      if (parsedLocation && typeof parsedLocation === 'object') {
+        locationData = {
+          description: parsedLocation.description || '',
+          lat: parsedLocation.lat ? parseFloat(parsedLocation.lat) : null,
+          lng: parsedLocation.lng ? parseFloat(parsedLocation.lng) : null
+        };
+      }
+    }
+    
+    console.log("Location data being saved:", locationData);
+    
     // Assign features based on plan
     let features = [];
     if (plan === 'bronze') features = ['query_ticketing'];
@@ -44,13 +72,112 @@ export const createBusiness = async (req, res) => {
     
     const business = await Business.create({
       ...data,
+      location: locationData,
       logo: logoData,
       businessOwner: req.businessOwner._id,
-      plan,
+      plan: plan || null,
       features,
       embedToken
     });
-    res.status(201).json({ success: true, business });
+    
+    // Import Category and SubCategory models
+    const Category = (await import('../../models/admin/category.js')).default;
+    const SubCategory = (await import('../../models/admin/subCategory.js')).default;
+    
+    const businessObj = business.toObject();
+    
+    // Populate category data
+    if (businessObj.category) {
+      try {
+        // Check if category is an ObjectId or title
+        let category;
+        if (mongoose.Types.ObjectId.isValid(businessObj.category)) {
+          // If it's an ObjectId, find by _id
+          category = await Category.findById(businessObj.category)
+            .select('_id title description image slug status');
+        } else {
+          // If it's a title, find by title
+          category = await Category.findOne({ 
+            title: businessObj.category, 
+            status: 'active' 
+          }).select('_id title description image slug');
+        }
+        
+        if (category && category.status !== 'inactive') {
+          businessObj.category = {
+            _id: category._id,
+            title: category.title,
+            description: category.description,
+            image: category.image,
+            slug: category.slug
+          };
+        } else {
+          // If category not found, keep the original value
+          businessObj.category = businessObj.category;
+        }
+      } catch (error) {
+        console.error('Error fetching category:', error);
+        // Keep the original value on error
+        businessObj.category = businessObj.category;
+      }
+    }
+    
+    // Populate subcategory data
+    if (businessObj.subcategories && businessObj.subcategories.length > 0) {
+      try {
+        // Check if subcategories are ObjectIds or titles
+        let subcategories;
+        const subcategoryIds = businessObj.subcategories.filter(sub => 
+          mongoose.Types.ObjectId.isValid(sub)
+        );
+        const subcategoryTitles = businessObj.subcategories.filter(sub => 
+          !mongoose.Types.ObjectId.isValid(sub)
+        );
+        
+        if (subcategoryIds.length > 0) {
+          // If we have ObjectIds, find by _id
+          subcategories = await SubCategory.find({
+            _id: { $in: subcategoryIds },
+            isActive: true
+          }).select('_id title description image categoryId slug');
+        } else if (subcategoryTitles.length > 0) {
+          // If we have titles, find by title
+          subcategories = await SubCategory.find({
+            title: { $in: subcategoryTitles },
+            isActive: true
+          }).select('_id title description image categoryId slug');
+        }
+        
+        // Populate category info for each subcategory
+        const populatedSubcategories = await Promise.all(
+          (subcategories || []).map(async (subcategory) => {
+            const subcategoryObj = subcategory.toObject();
+            if (subcategoryObj.categoryId) {
+              const parentCategory = await Category.findById(subcategoryObj.categoryId)
+                .select('_id title description slug');
+              if (parentCategory) {
+                subcategoryObj.parentCategory = {
+                  _id: parentCategory._id,
+                  title: parentCategory.title,
+                  description: parentCategory.description,
+                  slug: parentCategory.slug
+                };
+              }
+            }
+            return subcategoryObj;
+          })
+        );
+        
+        businessObj.subcategories = populatedSubcategories;
+      } catch (error) {
+        console.error('Error fetching subcategories:', error);
+        businessObj.subcategories = [];
+      }
+    } else {
+      businessObj.subcategories = [];
+    }
+    
+    res.status(201).json({ success: true, business: businessObj, message: 'Business created successfully' });
   } catch (error) {
     res.status(500).json({ success: false, message: 'Failed to create business', error: error.message });
   }
@@ -263,6 +390,103 @@ export const getBusinessById = async (req, res) => {
     
     if (!business) return res.status(404).json({ success: false, message: 'Business not found' });
     
+    // Import Category and SubCategory models
+    const Category = (await import('../../models/admin/category.js')).default;
+    const SubCategory = (await import('../../models/admin/subCategory.js')).default;
+    
+    const businessObj = business.toObject();
+    
+    // Populate category data
+    if (businessObj.category) {
+      try {
+        // Check if category is an ObjectId or title
+        let category;
+        if (mongoose.Types.ObjectId.isValid(businessObj.category)) {
+          // If it's an ObjectId, find by _id
+          category = await Category.findById(businessObj.category)
+            .select('_id title description image slug status');
+        } else {
+          // If it's a title, find by title
+          category = await Category.findOne({ 
+            title: businessObj.category, 
+            status: 'active' 
+          }).select('_id title description image slug');
+        }
+        
+        if (category && category.status !== 'inactive') {
+          businessObj.category = {
+            _id: category._id,
+            title: category.title,
+            description: category.description,
+            image: category.image,
+            slug: category.slug
+          };
+        } else {
+          // If category not found, keep the original value
+          businessObj.category = businessObj.category;
+        }
+      } catch (error) {
+        console.error('Error fetching category:', error);
+        // Keep the original value on error
+        businessObj.category = businessObj.category;
+      }
+    }
+    
+    // Populate subcategory data
+    if (businessObj.subcategories && businessObj.subcategories.length > 0) {
+      try {
+        // Check if subcategories are ObjectIds or titles
+        let subcategories;
+        const subcategoryIds = businessObj.subcategories.filter(sub => 
+          mongoose.Types.ObjectId.isValid(sub)
+        );
+        const subcategoryTitles = businessObj.subcategories.filter(sub => 
+          !mongoose.Types.ObjectId.isValid(sub)
+        );
+        
+        if (subcategoryIds.length > 0) {
+          // If we have ObjectIds, find by _id
+          subcategories = await SubCategory.find({
+            _id: { $in: subcategoryIds },
+            isActive: true
+          }).select('_id title description image categoryId slug');
+        } else if (subcategoryTitles.length > 0) {
+          // If we have titles, find by title
+          subcategories = await SubCategory.find({
+            title: { $in: subcategoryTitles },
+            isActive: true
+          }).select('_id title description image categoryId slug');
+        }
+        
+        // Populate category info for each subcategory
+        const populatedSubcategories = await Promise.all(
+          (subcategories || []).map(async (subcategory) => {
+            const subcategoryObj = subcategory.toObject();
+            if (subcategoryObj.categoryId) {
+              const parentCategory = await Category.findById(subcategoryObj.categoryId)
+                .select('_id title description slug');
+              if (parentCategory) {
+                subcategoryObj.parentCategory = {
+                  _id: parentCategory._id,
+                  title: parentCategory.title,
+                  description: parentCategory.description,
+                  slug: parentCategory.slug
+                };
+              }
+            }
+            return subcategoryObj;
+          })
+        );
+        
+        businessObj.subcategories = populatedSubcategories;
+      } catch (error) {
+        console.error('Error fetching subcategories:', error);
+        businessObj.subcategories = [];
+      }
+    } else {
+      businessObj.subcategories = [];
+    }
+    
     // Get reviews for this business
     const Review = (await import('../../models/admin/review.js')).default;
     const reviews = await Review.find({ businessId: id })
@@ -272,7 +496,7 @@ export const getBusinessById = async (req, res) => {
       .limit(10); // Limit to recent 10 reviews
     
     const businessWithReviews = {
-      ...business.toObject(),
+      ...businessObj,
       reviews
     };
     
@@ -288,8 +512,8 @@ export const getBusinessById = async (req, res) => {
 export const updateBusiness = async (req, res) => {
   try {
     const { id } = req.params;
-    const updateData = req.body;
-    
+    const { location, ...updateData } = req.body;
+     console.log("updateData", location,updateData);
     // Handle logo upload
     if (req.file) {
       try {
@@ -308,15 +532,139 @@ export const updateBusiness = async (req, res) => {
       }
     }
     
+    // Handle location data
+    if (location) {
+      let parsedLocation = location;
+      
+      // If location is a string, try to parse it as JSON
+      if (typeof location === 'string') {
+        try {
+          parsedLocation = JSON.parse(location);
+        } catch (parseError) {
+          console.error('Error parsing location string:', parseError);
+          parsedLocation = null;
+        }
+      }
+      
+      // If we have a valid location object
+      if (parsedLocation && typeof parsedLocation === 'object') {
+        updateData.location = {
+          description: parsedLocation.description || '',
+          lat: parsedLocation.lat ? parseFloat(parsedLocation.lat) : null,
+          lng: parsedLocation.lng ? parseFloat(parsedLocation.lng) : null
+        };
+        console.log("Location data being updated:", updateData.location);
+      }
+    }
+    
+    
     const business = await Business.findOneAndUpdate(
       { _id: id, businessOwner: req.businessOwner._id },
       updateData,
       { new: true, runValidators: true }
     );
     if (!business) return res.status(404).json({ success: false, message: 'Business not found' });
+    
+    // Import Category and SubCategory models
+    const Category = (await import('../../models/admin/category.js')).default;
+    const SubCategory = (await import('../../models/admin/subCategory.js')).default;
+    
+    const businessObj = business.toObject();
+    
+    // Populate category data
+    if (businessObj.category) {
+      try {
+        // Check if category is an ObjectId or title
+        let category;
+        if (mongoose.Types.ObjectId.isValid(businessObj.category)) {
+          // If it's an ObjectId, find by _id
+          category = await Category.findById(businessObj.category)
+            .select('_id title description image slug status');
+        } else {
+          // If it's a title, find by title
+          category = await Category.findOne({ 
+            title: businessObj.category, 
+            status: 'active' 
+          }).select('_id title description image slug');
+        }
+        
+        if (category && category.status !== 'inactive') {
+          businessObj.category = {
+            _id: category._id,
+            title: category.title,
+            description: category.description,
+            image: category.image,
+            slug: category.slug
+          };
+        } else {
+          // If category not found, keep the original value
+          businessObj.category = businessObj.category;
+        }
+      } catch (error) {
+        console.error('Error fetching category:', error);
+        // Keep the original value on error
+        businessObj.category = businessObj.category;
+      }
+    }
+    
+    // Populate subcategory data
+    if (businessObj.subcategories && businessObj.subcategories.length > 0) {
+      try {
+        // Check if subcategories are ObjectIds or titles
+        let subcategories;
+        const subcategoryIds = businessObj.subcategories.filter(sub => 
+          mongoose.Types.ObjectId.isValid(sub)
+        );
+        const subcategoryTitles = businessObj.subcategories.filter(sub => 
+          !mongoose.Types.ObjectId.isValid(sub)
+        );
+        
+        if (subcategoryIds.length > 0) {
+          // If we have ObjectIds, find by _id
+          subcategories = await SubCategory.find({
+            _id: { $in: subcategoryIds },
+            isActive: true
+          }).select('_id title description image categoryId slug');
+        } else if (subcategoryTitles.length > 0) {
+          // If we have titles, find by title
+          subcategories = await SubCategory.find({
+            title: { $in: subcategoryTitles },
+            isActive: true
+          }).select('_id title description image categoryId slug');
+        }
+        
+        // Populate category info for each subcategory
+        const populatedSubcategories = await Promise.all(
+          (subcategories || []).map(async (subcategory) => {
+            const subcategoryObj = subcategory.toObject();
+            if (subcategoryObj.categoryId) {
+              const parentCategory = await Category.findById(subcategoryObj.categoryId)
+                .select('_id title description slug');
+              if (parentCategory) {
+                subcategoryObj.parentCategory = {
+                  _id: parentCategory._id,
+                  title: parentCategory.title,
+                  description: parentCategory.description,
+                  slug: parentCategory.slug
+                };
+              }
+            }
+            return subcategoryObj;
+          })
+        );
+        
+        businessObj.subcategories = populatedSubcategories;
+      } catch (error) {
+        console.error('Error fetching subcategories:', error);
+        businessObj.subcategories = [];
+      }
+    } else {
+      businessObj.subcategories = [];
+    }
+    
     return successResponseHelper(res, {
       message: 'Business updated successfully',
-      data: business
+      data: businessObj
     });
   } catch (error) {
     return errorResponseHelper(res, { message: 'Internal server error', code: '00500' });
