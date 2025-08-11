@@ -2,6 +2,7 @@ import QueryTicket from '../../models/admin/queryTicket.js';
 import Admin from '../../models/admin/admin.js';
 import Business from '../../models/business/business.js';
 import { errorResponseHelper, successResponseHelper } from '../../helpers/utilityHelper.js';
+import { uploadImage, uploadVideo } from '../../helpers/cloudinaryHelper.js';
 import mongoose from 'mongoose';
 
 // GET /admin/query-tickets - Get all query tickets (admin can see all)
@@ -28,7 +29,7 @@ export const getAllQueryTickets = async (req, res) => {
     
     // Get tickets with populated information
     const tickets = await QueryTicket.find(filter)
-      .populate('businessId', 'businessName contactPerson email')
+      .populate('businessId', 'businessId contactPerson email')
       .populate('createdBy', 'firstName lastName email')
       .populate('assignedTo', 'firstName lastName email')
       .populate('assignedBy', 'firstName lastName email')
@@ -40,15 +41,13 @@ export const getAllQueryTickets = async (req, res) => {
     
     return successResponseHelper(res, {
       message: 'Query tickets fetched successfully',
-      data: {
-        tickets,
+      data: tickets,
         pagination: {
           page: parseInt(page),
           limit: parseInt(limit),
           total,
           totalPages: Math.ceil(total / parseInt(limit))
         }
-      }
     });
   } catch (error) {
     return errorResponseHelper(res, { message: error.message, code: '00500' });
@@ -70,7 +69,7 @@ export const getQueryTicketById = async (req, res) => {
     }
     
     const ticket = await QueryTicket.findById(id)
-      .populate('businessId', 'businessName contactPerson email')
+      .populate('businessId', 'businessId contactPerson email')
       .populate('createdBy', 'firstName lastName email')
       .populate('assignedTo', 'firstName lastName email')
       .populate('assignedBy', 'firstName lastName email');
@@ -92,15 +91,15 @@ export const getQueryTicketById = async (req, res) => {
 export const createQueryTicket = async (req, res) => {
   try {
     const adminId = req.user?._id;
-    const { title, businessName, description, childIssue, linkedIssue, websiteUrl } = req.body;
+    const { title, businessId, description, childIssue, linkedIssue, websiteUrl, assignedTo } = req.body;
     
     if (!adminId) {
       return errorResponseHelper(res, { message: 'Admin not authenticated', code: '00401' });
     }
     
     // Validate required fields
-    if (!title || !businessName || !description) {
-      return errorResponseHelper(res, { message: 'Title, business name, and description are required', code: '00400' });
+    if (!title || !businessId || !description) {
+      return errorResponseHelper(res, { message: 'Title, business ID, and description are required', code: '00400' });
     }
     
     // Get admin details
@@ -109,27 +108,76 @@ export const createQueryTicket = async (req, res) => {
       return errorResponseHelper(res, { message: 'Admin not found', code: '00404' });
     }
     
+    // Get business details and verify it exists
+    const business = await Business.findById(businessId);
+    if (!business) {
+      return errorResponseHelper(res, { message: 'Business not found', code: '00404' });
+    }
+    
     // Handle file upload if present
     let attachment = null;
     if (req.file) {
-      attachment = {
-        url: req.file.location || req.file.path,
-        key: req.file.key,
-        originalName: req.file.originalname
-      };
+      try {
+        console.log('File received:', req.file.originalname, req.file.mimetype);
+        if (req.file.mimetype.startsWith('video/')) {
+          // Upload video to Cloudinary
+          const videoResult = await uploadVideo(req.file.buffer, 'admin-app/tickets/videos');
+          attachment = {
+            url: videoResult.url,
+            public_id: videoResult.public_id,
+            originalName: req.file.originalname,
+            type: 'video',
+            duration: videoResult.duration,
+            format: videoResult.format,
+            bytes: videoResult.bytes
+          };
+        } else {
+          // Upload image/document to Cloudinary
+          const imageResult = await uploadImage(req.file.buffer, 'admin-app/tickets/documents');
+          attachment = {
+            url: imageResult.url,
+            public_id: imageResult.public_id,
+            originalName: req.file.originalname,
+            type: 'document',
+            format: imageResult.format,
+            bytes: imageResult.bytes
+          };
+        }
+        console.log('Attachment created:', attachment);
+      } catch (uploadError) {
+        console.error('File upload error:', uploadError);
+        return errorResponseHelper(res, { 
+          message: 'Failed to upload attachment. Please try again.', 
+          code: '00500' 
+        });
+      }
+    } else {
+      console.log('No file uploaded - attachment will be null');
     }
     
     const ticketData = {
       title,
-      businessName,
+      businessId: businessId,
+      businessName: business.businessName, // Get business name from business object
       description,
       childIssue,
       linkedIssue,
       websiteUrl,
-      attachment,
       createdBy: adminId,
-      createdByType: 'admin'
+      createdByType: 'admin',
+      assignedTo: assignedTo
     };
+    
+    // Only add attachment if file was uploaded and processed successfully
+    if (attachment && attachment.type) {
+      ticketData.attachment = attachment;
+      console.log('Adding attachment to ticket data:', attachment);
+    } else {
+      console.log('No valid attachment to add - attachment:', attachment);
+    }
+    
+    console.log('Final ticket data:', JSON.stringify(ticketData, null, 2));
+    console.log('Attachment field in ticket data:', ticketData.attachment);
     
     const ticket = new QueryTicket(ticketData);
     await ticket.save();
@@ -148,7 +196,7 @@ export const updateQueryTicket = async (req, res) => {
   try {
     const { id } = req.params;
     const adminId = req.user?._id;
-    const { title, businessName, description, childIssue, linkedIssue, websiteUrl } = req.body;
+    const { status,title, businessId, description, childIssue, linkedIssue, websiteUrl, assignedTo, attachment, comments } = req.body;
     
     if (!adminId) {
       return errorResponseHelper(res, { message: 'Admin not authenticated', code: '00401' });
@@ -169,23 +217,61 @@ export const updateQueryTicket = async (req, res) => {
       return errorResponseHelper(res, { message: 'You can only update tickets you created', code: '00403' });
     }
     
+    // Handle file upload if present
+    if (req.file) {
+      try {
+        if (req.file.mimetype.startsWith('video/')) {
+          // Upload video to Cloudinary
+          const videoResult = await uploadVideo(req.file.buffer, 'admin-app/tickets/videos');
+          ticket.attachment = {
+            url: videoResult.url,
+            public_id: videoResult.public_id,
+            originalName: req.file.originalname,
+            type: 'video',
+            duration: videoResult.duration,
+            format: videoResult.format,
+            bytes: videoResult.bytes
+          };
+        } else {
+          // Upload image/document to Cloudinary
+          const imageResult = await uploadImage(req.file.buffer, 'admin-app/tickets/documents');
+          ticket.attachment = {
+            url: imageResult.url,
+            public_id: imageResult.public_id,
+            originalName: req.file.originalname,
+            type: 'document',
+            format: imageResult.format,
+            bytes: imageResult.bytes
+          };
+        }
+      } catch (uploadError) {
+        console.error('File upload error:', uploadError);
+        return errorResponseHelper(res, { 
+          message: 'Failed to upload attachment. Please try again.', 
+          code: '00500' 
+        });
+      }
+    }
+    
     // Update fields
     if (title) ticket.title = title;
-    if (businessName) ticket.businessName = businessName;
+    if (businessId) {
+      // Verify business exists and update both businessId and businessName
+      const business = await Business.findById(businessId);
+      if (!business) {
+        return errorResponseHelper(res, { message: 'Business not found', code: '00404' });
+      }
+      ticket.businessId = businessId;
+      ticket.businessName = business.businessName;
+    }
     if (description) ticket.description = description;
     if (childIssue !== undefined) ticket.childIssue = childIssue;
     if (linkedIssue !== undefined) ticket.linkedIssue = linkedIssue;
     if (websiteUrl !== undefined) ticket.websiteUrl = websiteUrl;
-    
-    // Handle file upload if present
-    if (req.file) {
-      ticket.attachment = {
-        url: req.file.location || req.file.path,
-        key: req.file.key,
-        originalName: req.file.originalname
-      };
-    }
-    
+    if (assignedTo !== undefined) ticket.assignedTo = assignedTo;
+    if (attachment !== undefined) ticket.attachment = attachment;
+    if (comments !== undefined) ticket.comments = comments;
+    if (status !== undefined) ticket.status = status;
     ticket.updatedAt = new Date();
     await ticket.save();
     
