@@ -67,7 +67,17 @@ const BusinessSchema = new Schema({
   location: {
     description: String,
     lat: Number,
-    lng: Number
+    lng: Number,
+    // GeoJSON Point for geospatial queries
+    type: {
+      type: String,
+      enum: ['Point'],
+      default: 'Point'
+    },
+    coordinates: {
+      type: [Number], // [longitude, latitude] as per GeoJSON spec
+      default: undefined
+    }
   },
   city: String,
   state: String,
@@ -167,6 +177,33 @@ BusinessSchema.methods.getBusinessInfo = function() {
   };
 };
 
+// Pre-save middleware to automatically populate coordinates for geospatial queries
+BusinessSchema.pre('save', function(next) {
+  if (this.location && this.location.lat && this.location.lng) {
+    this.location.coordinates = [this.location.lng, this.location.lat]; // [longitude, latitude]
+    this.location.type = 'Point';
+  }
+  next();
+});
+
+// Pre-update middleware for findOneAndUpdate operations
+BusinessSchema.pre('findOneAndUpdate', function(next) {
+  const update = this.getUpdate();
+  if (update.location && update.location.lat && update.location.lng) {
+    update.location.coordinates = [update.location.lng, update.location.lat];
+    update.location.type = 'Point';
+  }
+  next();
+});
+
 const Business = model('Business', BusinessSchema);
+
+// Create geospatial index for location-based queries
+BusinessSchema.index({ 'location.lat': 1, 'location.lng': 1 });
+
+// Alternative: Create a 2dsphere index for more accurate geospatial queries
+// This is better for the $geoNear operation
+BusinessSchema.index({ location: '2dsphere' });
+
 export default Business;
   

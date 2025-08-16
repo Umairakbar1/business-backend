@@ -150,4 +150,64 @@ export const registerBusinessValidation = (req, res, next) => {
     });
   }
   next();
+};
+
+// Password Recovery Validation Functions
+
+// Request Password Reset Validation
+export const requestPasswordResetValidation = (req, res, next) => {
+  const schema = Joi.object({
+    email: Joi.string().email().required().lowercase().trim()
+  });
+
+  const { error } = schema.validate(req.body);
+  if (error) {
+    return res.status(400).json({
+      success: false,
+      message: error.details[0].message,
+      code: '00400'
+    });
+  }
+  next();
+};
+
+// Verify Password Reset OTP Validation
+export const verifyPasswordResetOtpValidation = (req, res, next) => {
+  const schema = Joi.object({
+    email: Joi.string().email().required().lowercase().trim(),
+    otp: Joi.string().required().length(6),
+    passwordResetToken: Joi.string().required()
+  });
+
+  const { error } = schema.validate(req.body);
+  if (error) {
+    return res.status(400).json({
+      success: false,
+      message: error.details[0].message,
+      code: '00400'
+    });
+  }
+  next();
+};
+
+// Reset Password Validation
+export const resetPasswordValidation = (req, res, next) => {
+  const schema = Joi.object({
+    email: Joi.string().email().required().lowercase().trim(),
+    newPassword: Joi.string().required().min(8).max(100),
+    confirmPassword: Joi.string().required().valid(Joi.ref('newPassword')),
+    finalPasswordResetToken: Joi.string().required()
+  }).messages({
+    'any.only': 'New password and confirm password do not match'
+  });
+
+  const { error } = schema.validate(req.body);
+  if (error) {
+    return res.status(400).json({
+      success: false,
+      message: error.details[0].message,
+      code: '00400'
+    });
+  }
+  next();
 }; 

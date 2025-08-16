@@ -1,6 +1,8 @@
 import Business from '../../models/business/business.js';
 import Review from '../../models/admin/review.js';
 import Media from '../../models/admin/media.js';
+import Category from '../../models/admin/category.js';
+import SubCategory from '../../models/admin/subCategory.js';
 import mongoose from 'mongoose';
 
 // 1. Get business listings with filters
@@ -12,15 +14,47 @@ export const getBusinessListings = async (req, res) => {
       sortBy,
       claimed,
       status,
-      nearby, // not implemented: needs geolocation
       page = 1,
       limit = 10
     } = req.query;
 
+    const lat = location?.lat;
+    const lng = location?.lng;
+
     const filter = {};
     if (typeof claimed !== 'undefined') filter.claimed = claimed === 'true';
     if (status) filter.status = status;
-    if (location) filter.location = { $regex: location, $options: 'i' };
+    
+    // Handle location filtering
+    if (location) {
+      // Text-based location search (city, address, etc.)
+      filter.$or = [
+        { 'location.description': { $regex: location, $options: 'i' } },
+        { city: { $regex: location, $options: 'i' } },
+        { state: { $regex: location, $options: 'i' } },
+        { address: { $regex: location, $options: 'i' } }
+      ];
+    }
+    
+    // Handle coordinates-based location filtering
+    let hasCoordinates = false;
+    let userLat, userLng;
+    const DEFAULT_RADIUS = 25; // Default 25km radius for better user experience
+    
+    if (lat && lng) {
+      userLat = parseFloat(lat);
+      userLng = parseFloat(lng);
+      
+      if (!isNaN(userLat) && !isNaN(userLng)) {
+        hasCoordinates = true;
+        
+        // Add geospatial filter for businesses with coordinates
+        filter.$and = [
+          { 'location.lat': { $exists: true, $ne: null } },
+          { 'location.lng': { $exists: true, $ne: null } }
+        ];
+      }
+    }
 
     // Aggregate to filter by average rating if needed - Only approved reviews
     let pipeline = [
@@ -110,6 +144,57 @@ export const getBusinessListings = async (req, res) => {
          },
        },
     ];
+    
+    // Add distance calculation if coordinates are provided
+    if (hasCoordinates) {
+      pipeline.push({
+        $addFields: {
+          distance: {
+            $cond: {
+              if: {
+                $and: [
+                  { $ne: ['$location.lat', null] },
+                  { $ne: ['$location.lng', null] }
+                ]
+              },
+              then: {
+                $multiply: [
+                  {
+                    $acos: {
+                      $add: [
+                        {
+                          $multiply: [
+                            { $sin: { $multiply: [{ $divide: [{ $multiply: ['$location.lat', 0.0174533] }, 2] }, 2] } },
+                            { $sin: { $multiply: [{ $divide: [{ $multiply: [userLat, 0.0174533] }, 2] }, 2] } }
+                          ]
+                        },
+                        {
+                          $multiply: [
+                            { $cos: { $multiply: ['$location.lat', 0.0174533] } },
+                            { $cos: { $multiply: [userLat, 0.0174533] } },
+                            { $cos: { $multiply: [{ $subtract: ['$location.lng', userLng] }, 0.0174533] } }
+                          ]
+                        }
+                      ]
+                    }
+                  },
+                  6371 // Earth's radius in kilometers
+                ]
+              },
+              else: null
+            }
+          }
+        }
+      });
+      
+             // Filter by radius (only include businesses within the default radius)
+       pipeline.push({
+         $match: {
+           distance: { $lte: DEFAULT_RADIUS }
+         }
+       });
+    }
+    
     if (rating) {
       pipeline.push({ $match: { avgRating: { $gte: Number(rating) } } });
     }
@@ -119,6 +204,8 @@ export const getBusinessListings = async (req, res) => {
     if (sortBy === 'rating') sort.avgRating = -1;
     else if (sortBy === 'reviews') sort.reviewsCount = -1;
     else if (sortBy === 'name') sort.name = 1;
+    else if (sortBy === 'distance' && hasCoordinates) sort.distance = 1; // Sort by distance (nearest first)
+    else if (hasCoordinates) sort.distance = 1; // Default to distance sorting when coordinates are provided
     else sort._id = -1;
 
     pipeline.push({ $sort: sort });
@@ -146,11 +233,35 @@ export const getBusinessListings = async (req, res) => {
         media: 1,
         createdAt: 1,
         updatedAt: 1,
+        ...(hasCoordinates && { distance: 1 }), // Include distance only when coordinates are provided
       },
     });
 
     const businesses = await Business.aggregate(pipeline);
-    res.json({ success: true, data: businesses });
+    
+    // Add metadata about the search
+    const response = {
+      success: true,
+      data: businesses,
+      meta: {
+        total: businesses.length,
+        page: Number(page),
+        limit: Number(limit),
+        hasNextPage: businesses.length === Number(limit)
+      }
+    };
+    
+         // Add location info if coordinates were used
+     if (hasCoordinates) {
+       response.meta.location = {
+         userLat,
+         userLng,
+         radius: DEFAULT_RADIUS,
+         unit: 'km'
+       };
+     }
+    
+    res.json(response);
   } catch (error) {
     res.status(500).json({ success: false, message: 'Failed to fetch businesses', error: error.message });
   }
@@ -279,4 +390,53 @@ export const getBusinessReviews = async (req, res) => {
   } catch (error) {
     res.status(500).json({ success: false, message: 'Failed to fetch reviews', error: error.message });
   }
-}; 
+};
+
+// 4. Get all business categories with nested subcategories
+export const getBusinessCategoriesWithSubcategories = async (req, res) => {
+  try {
+    const { status = 'active' } = req.query;
+    
+    const filter = {};
+    if (status) {
+      filter.status = status;
+    }
+
+    // Get all categories
+    const categories = await Category.find(filter)
+      .select('_id title description image slug color sortOrder')
+      .sort({ sortOrder: 1, title: 1 });
+
+    // Get subcategories for each category
+    const categoriesWithSubcategories = await Promise.all(
+      categories.map(async (category) => {
+        const categoryObj = category.toObject();
+        
+        // Find subcategories for this category
+        const subcategories = await SubCategory.find({
+          categoryId: category._id,
+          isActive: true
+        })
+        .select('_id title description image slug')
+        .sort({ title: 1 });
+        
+        // Add subcategories array to category object
+        categoryObj.subcategories = subcategories;
+        return categoryObj;
+      })
+    );
+
+    res.json({
+      success: true,
+      data: categoriesWithSubcategories,
+      total: categoriesWithSubcategories.length
+    });
+  } catch (error) {
+    console.error('Error fetching business categories with subcategories:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Failed to fetch business categories', 
+      error: error.message 
+    });
+  }
+};

@@ -97,6 +97,36 @@ const verifyOtpVerificationToken = (token) => {
   }
 };
 
+// Password Reset Token Functions
+const signPasswordResetToken = (email) => {
+  // Use business secret key, fallback to admin, then user
+  const secretKey = GLOBAL_ENV.jwtSecretKeyBusiness || GLOBAL_ENV.jwtSecretKeyAdmin || GLOBAL_ENV.jwtSecretKeyUser;
+  if (!secretKey) {
+    throw new Error('JWT secret key for business is not configured');
+  }
+  const passwordResetToken = sign({ email, type: 'password_reset' }, secretKey, {
+    expiresIn: "15m", // 15 minutes for password reset
+  });
+  return passwordResetToken;
+};
+
+const verifyPasswordResetToken = (token) => {
+  // Use business secret key, fallback to admin, then user
+  const secretKey = GLOBAL_ENV.jwtSecretKeyBusiness || GLOBAL_ENV.jwtSecretKeyAdmin || GLOBAL_ENV.jwtSecretKeyUser;
+  if (!secretKey) {
+    throw new Error('JWT secret key for business is not configured');
+  }
+  try {
+    const decoded = verify(token, secretKey);
+    if (decoded.type !== 'password_reset') {
+      throw new Error('Invalid token type');
+    }
+    return decoded;
+  } catch (error) {
+    throw new Error('Invalid or expired password reset token');
+  }
+};
+
 export {
   signAccessToken,
   signRefreshToken,
@@ -105,5 +135,7 @@ export {
   signAccessTokenBusiness,
   signAccountCreationToken,
   signOtpVerificationToken,
-  verifyOtpVerificationToken
+  verifyOtpVerificationToken,
+  signPasswordResetToken,
+  verifyPasswordResetToken
 };

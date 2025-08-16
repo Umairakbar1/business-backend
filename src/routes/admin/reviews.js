@@ -6,10 +6,12 @@ import {
   approveReview,
   rejectReview,
   deleteReview,
-  getReviewsByBusiness,
   getReviewStats,
   grantBusinessAccess,
-  revokeBusinessAccess
+  revokeBusinessAccess,
+  getBusinessesWithReviews,
+  getBusinessWithReviewsById,
+  
 } from "../../controllers/admin/review.controller.js";
 
 const router = Router();
@@ -20,8 +22,11 @@ router.get("/", authorizedAccessAdmin, getAllReviews);
 // GET /admin/reviews/stats - Get review statistics
 router.get("/stats", authorizedAccessAdmin, getReviewStats);
 
-// GET /admin/reviews/business/:businessId - Get reviews for a specific business
-router.get("/business/:businessId", authorizedAccessAdmin, getReviewsByBusiness);
+// GET /admin/reviews/businesses-with-reviews - Get businesses with their review information
+router.get("/businesses-with-reviews", authorizedAccessAdmin, getBusinessesWithReviews);
+
+// GET /admin/reviews/business-with-reviews/:businessId - Get single business with detailed review information
+router.get("/business/:businessId", authorizedAccessAdmin, getBusinessWithReviewsById);
 
 // GET /admin/reviews/:id - Get single review details
 router.get("/:id", authorizedAccessAdmin, getReviewById);

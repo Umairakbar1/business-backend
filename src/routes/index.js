@@ -23,10 +23,22 @@ import userAuthRoutes from "./user/auth.js";
 import userBusinessRoutes from "./user/buisness.js";
 import userReviewRoutes from "./user/review.js";
 import userBlogsRoutes from "./user/blogs.js";
+import userCommentsRoutes from "./user/comments.js";
+import userRepliesRoutes from "./user/replies.js";
 import mediaRoutes from "./media.js";
 import { getMetadataByUrl } from "../controllers/admin/metadata.controller.js";
 
 const router = Router();
+
+// Health check endpoint
+router.get("/health", (req, res) => {
+  res.status(200).json({ 
+    success: true, 
+    message: "Backend server is running", 
+    timestamp: new Date().toISOString(),
+    uptime: process.uptime()
+  });
+});
 
 // Admin routes
 router.use("/admin/auth", adminAuthRoutes);
@@ -59,6 +71,8 @@ router.use("/user/auth", userAuthRoutes);
 router.use("/user/business", userBusinessRoutes);
 router.use("/user/review", userReviewRoutes);
 router.use("/user/blogs", userBlogsRoutes);
+router.use("/user/comments", userCommentsRoutes);
+router.use("/user/replies", userRepliesRoutes);
 
 // Media routes
 router.use("/media", mediaRoutes);

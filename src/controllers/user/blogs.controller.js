@@ -154,13 +154,38 @@ const getAllBlogs = async (req, res) => {
 const getBlogById = async (req, res) => {
     try {
         const { id } = req.params;
+        
+        // Debug logging
+        console.log('getBlogById - req.params:', req.params);
+        console.log('getBlogById - id from params:', id);
+        console.log('getBlogById - typeof id:', typeof id);
+        console.log('getBlogById - id === "undefined":', id === "undefined");
+        console.log('getBlogById - id === undefined:', id === undefined);
+        
+        const { 
+            includeComments = 'true', 
+            commentPage = 1, 
+            commentLimit = 10, 
+            commentSort = 'newest' 
+        } = req.query; // Query parameters for comments
 
         if (!id) {
+            console.log('getBlogById - ID is falsy, returning error');
             return errorResponseHelper(res, {
                 message: 'Blog ID is required',
                 code: 'BLOG_ID_REQUIRED'
             });
         }
+
+        if (id === "undefined") {
+            console.log('getBlogById - ID is literally "undefined" string, returning error');
+            return errorResponseHelper(res, {
+                message: 'Invalid blog ID: "undefined"',
+                code: 'BLOG_ID_INVALID'
+            });
+        }
+
+        console.log('getBlogById - Attempting to find blog with ID:', id);
 
         const blog = await Blog.findOne({ 
             _id: id, 
@@ -173,13 +198,123 @@ const getBlogById = async (req, res) => {
         .select('-__v');
 
         if (!blog) {
+            console.log('getBlogById - Blog not found with ID:', id);
             return errorResponseHelper(res, {
                 message: 'Blog not found or not published',
                 code: 'BLOG_NOT_FOUND'
             });
         }
 
-        return successResponseHelper(res, blog);
+        console.log('getBlogById - Blog found successfully:', blog._id);
+
+        // Get comment count for the blog
+        const Comment = (await import('../../models/user/comment.js')).default;
+        const commentCount = await Comment.countDocuments({ 
+            blogId: id, 
+            status: 'active'
+            // parentComment: null // Only count top-level comments - temporarily removed for debugging
+        });
+
+        // Add comment count to blog data
+        let blogWithData = {
+            ...blog.toObject(),
+            commentCount
+        };
+
+        // Include comments if requested
+        if (includeComments === 'true') {
+            const Reply = (await import('../../models/user/reply.js')).default;
+            
+            console.log('Fetching comments for blog:', id);
+            
+            // First, let's check if there are any comments at all for this blog
+            const totalCommentsInDB = await Comment.countDocuments({ blogId: id });
+            console.log('Total comments in DB for this blog:', totalCommentsInDB);
+            
+            // Check all comments regardless of status
+            const allComments = await Comment.find({ blogId: id }).select('_id status content');
+            console.log('All comments in DB:', allComments.map(c => ({ id: c._id, status: c.status, content: c.content.substring(0, 30) })));
+            
+            // Build sort object for comments
+            let sortObj = {};
+            switch (commentSort) {
+                case 'oldest':
+                    sortObj = { createdAt: 1 };
+                    break;
+                case 'mostLiked':
+                    sortObj = { likes: -1, createdAt: -1 };
+                    break;
+                case 'mostReplied':
+                    sortObj = { replyCount: -1, createdAt: -1 };
+                    break;
+                default: // newest
+                    sortObj = { createdAt: -1 };
+            }
+
+            const skip = (parseInt(commentPage) - 1) * parseInt(commentLimit);
+            
+            // Get top-level comments first (temporarily removing parentComment filter to debug)
+            const comments = await Comment.find({ 
+                blogId: id, 
+                // status: 'active'
+                // parentComment: null // Only top-level comments - temporarily removed for debugging
+            })
+            .populate('author', 'firstName lastName email')
+            .sort(sortObj)
+            .skip(skip)
+            .limit(parseInt(commentLimit))
+            .select('-__v');
+
+            console.log('Found comments:', comments.length);
+            console.log('Comments:', comments.map(c => ({ 
+                id: c._id, 
+                content: c.content.substring(0, 50),
+                parentComment: c.parentComment,
+                status: c.status
+            })));
+
+            // Now fetch replies for each comment
+            const commentsWithReplies = await Promise.all(
+                comments.map(async (comment) => {
+                    const commentObj = comment.toObject();
+                    
+                    // Find all replies for this comment
+                    const replies = await Reply.find({
+                        comment: comment._id,
+                        // status: 'active'
+                    })
+                    .populate('author', 'firstName lastName email')
+                    .sort({ createdAt: 1 })
+                    .select('-__v');
+                    
+                    console.log(`Comment ${comment._id} has ${replies.length} replies`);
+                    
+                    // Also check for replies regardless of status
+                    const allReplies = await Reply.find({ comment: comment._id }).select('_id status content');
+                    console.log(`All replies for comment ${comment._id}:`, allReplies.map(r => ({ id: r._id, status: r.status, content: r.content.substring(0, 30) })));
+                    
+                    commentObj.replies = replies;
+                    return commentObj;
+                })
+            );
+
+            // Get total comment count for pagination
+            const totalComments = await Comment.countDocuments({ 
+                blogId: id, 
+                // status: 'active'
+                // parentComment: null // temporarily removed for debugging
+            });
+
+            blogWithData.comments = commentsWithReplies;
+            blogWithData.commentPagination = {
+                page: parseInt(commentPage),
+                limit: parseInt(commentLimit),
+                total: totalComments,
+                pages: Math.ceil(totalComments / parseInt(commentLimit))
+            };
+        }
+
+        return successResponseHelper(res, blogWithData);
     } catch (error) {
         console.error('Error in getBlogById:', error);
         return errorResponseHelper(res, {
@@ -243,6 +378,8 @@ const getSubCategoriesByCategory = async (req, res) => {
         });
     }
 };
+
+
 
 export {
     createBlog,

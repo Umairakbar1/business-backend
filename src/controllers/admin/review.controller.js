@@ -362,3 +362,412 @@ export const getReviewStats = async (req, res) => {
     return errorResponseHelper(res, { message: error.message, code: '00500' });
   }
 }; 
+
+// GET /admin/business/businesses-with-reviews - Get businesses with their review information
+export const getBusinessesWithReviews = async (req, res) => {
+  try {
+    const { page = 1, limit = 10, search, status, sortBy = 'createdAt', sortOrder = 'desc', includeReviews = true, reviewsLimit = 5 } = req.query;
+    
+    console.log('getBusinessesWithReviews called with params:', {
+      page, limit, search, status, sortBy, sortOrder, includeReviews, reviewsLimit
+    });
+    
+    // Build filter object - Admin can see all businesses
+    const filter = {};
+    
+    // Add search functionality
+    if (search) {
+      filter.$or = [
+        { businessName: { $regex: search, $options: 'i' } },
+        { email: { $regex: search, $options: 'i' } },
+        { phoneNumber: { $regex: search, $options: 'i' } }
+      ];
+    }
+    
+    // Add status filter
+    if (status) {
+      filter.status = status;
+    }
+    
+    // Build sort object
+    const sort = {};
+    sort[sortBy] = sortOrder === 'desc' ? -1 : 1;
+    
+    // Calculate pagination
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+    
+    // Get businesses with pagination
+    const businesses = await Business.find(filter)
+      .sort(sort)
+      .skip(skip)
+      .limit(parseInt(limit));
+    
+    if (!businesses || businesses.length === 0) {
+      return successResponseHelper(res, {
+        message: 'No businesses found',
+        data: [],
+        pagination: {
+          page: parseInt(page),
+          limit: parseInt(limit),
+          total: 0,
+          totalPages: 0
+        }
+      });
+    }
+    
+    // Get total count for pagination
+    const total = await Business.countDocuments(filter);
+    
+    // Import Category and SubCategory models
+    let Category, SubCategory, Review;
+    try {
+      Category = (await import('../../models/admin/category.js')).default;
+      SubCategory = (await import('../../models/admin/subCategory.js')).default;
+      Review = (await import('../../models/admin/review.js')).default;
+      
+      if (!Category || !SubCategory || !Review) {
+        throw new Error('Failed to import required models');
+      }
+    } catch (importError) {
+      console.error('Error importing models:', importError);
+      return errorResponseHelper(res, { message: 'Failed to load required models', code: '00500' });
+    }
+    
+    // Populate category, subcategory, and reviews data for each business
+    let populatedBusinesses;
+    try {
+      populatedBusinesses = await Promise.all(
+        businesses.map(async (business) => {
+        const businessObj = business.toObject();
+        
+        // Find and populate category data
+        if (businessObj.category) {
+          try {
+            const category = await Category.findOne({ 
+              _id: businessObj.category, 
+              status: 'active' 
+            }).select('title description image');
+            
+            if (category) {
+              businessObj.category = {
+                _id: category._id,
+                title: category.title,
+                description: category.description,
+                image: category.image
+              };
+            }
+          } catch (error) {
+            console.error('Error fetching category:', error);
+          }
+        }
+        
+        // Find and populate subcategory data
+        if (businessObj.subcategories && businessObj.subcategories.length > 0) {
+          try {
+            const subcategories = await SubCategory.find({
+              _id: { $in: businessObj.subcategories },
+              isActive: true
+            }).select('title description image categoryId');
+            
+            // Populate category info for each subcategory
+            const populatedSubcategories = await Promise.all(
+              subcategories.map(async (subcategory) => {
+                const subcategoryObj = subcategory.toObject();
+                if (subcategoryObj.categoryId) {
+                  const parentCategory = await Category.findById(subcategoryObj.categoryId)
+                    .select('title description');
+                  if (parentCategory) {
+                    subcategoryObj.parentCategory = {
+                      _id: parentCategory._id,
+                      title: parentCategory.title,
+                      description: parentCategory.description
+                    };
+                  }
+                }
+                return subcategoryObj;
+              })
+            );
+            
+            businessObj.subcategories = populatedSubcategories;
+          } catch (error) {
+            console.error('Error fetching subcategories:', error);
+          }
+        }
+        
+        // Get reviews for this business if requested
+        if (includeReviews === 'true' || includeReviews === true) {
+          try {
+            console.log('Fetching reviews for business:', businessObj._id);
+            console.log('Business ID type:', typeof businessObj._id);
+            console.log('Business ID value:', businessObj._id);
+            
+            // First, let's check if any reviews exist for this business
+            const allReviewsForBusiness = await Review.find({ businessId: businessObj._id });
+            console.log('All reviews in DB for business:', allReviewsForBusiness.length);
+            
+            // Let's also check all reviews in the database to see if there are any
+            const totalReviewsInDB = await Review.countDocuments({});
+            console.log('Total reviews in entire database:', totalReviewsInDB);
+            
+            if (totalReviewsInDB > 0) {
+              const sampleReview = await Review.findOne({});
+              console.log('Sample review from DB:', {
+                _id: sampleReview._id,
+                businessId: sampleReview.businessId,
+                businessIdType: typeof sampleReview.businessId,
+                businessIdString: sampleReview.businessId.toString(),
+                rating: sampleReview.rating,
+                status: sampleReview.status
+              });
+              
+              // Let's also check if there are any reviews with this business ID using a direct query
+              const directQuery = await Review.find({});
+              console.log('All reviews business IDs:', directQuery.map(r => ({
+                reviewId: r._id,
+                businessId: r.businessId,
+                businessIdString: r.businessId.toString()
+              })));
+            }
+            console.log('Sample review data:', allReviewsForBusiness[0] ? {
+              _id: allReviewsForBusiness[0]._id,
+              businessId: allReviewsForBusiness[0].businessId,
+              rating: allReviewsForBusiness[0].rating,
+              status: allReviewsForBusiness[0].status
+            } : 'No reviews found');
+            
+            // Try querying with the business ID directly
+            let reviews = await Review.find({ businessId: businessObj._id })
+              .populate('userId', 'name email profilePhoto')
+              .populate('approvedBy', 'name email')
+              .sort({ createdAt: -1 })
+              .limit(parseInt(reviewsLimit) || 5);
+            
+            console.log('Found reviews with direct business ID:', reviews.length);
+            
+            // If no reviews found, try with string version of business ID
+            if (reviews.length === 0) {
+              console.log('No reviews found with ObjectId, trying with string version');
+              reviews = await Review.find({ businessId: businessObj._id.toString() })
+                .populate('userId', 'name email profilePhoto')
+                .populate('approvedBy', 'name email')
+                .sort({ createdAt: -1 })
+                .limit(parseInt(reviewsLimit) || 5);
+              console.log('Found reviews with string ID:', reviews.length);
+            }
+            
+
+            
+            console.log('Found reviews after population:', reviews.length);
+            businessObj.reviews = reviews;
+            
+            // Add review statistics
+            const totalReviews = await Review.countDocuments({ businessId: businessObj._id });
+            const approvedReviews = await Review.countDocuments({ businessId: businessObj._id, status: 'approved' });
+            const pendingReviews = await Review.countDocuments({ businessId: businessObj._id, status: 'pending' });
+            const manageableReviews = await Review.countDocuments({ businessId: businessObj._id, businessCanManage: true });
+            
+            // Calculate overall rating from all reviews
+            const allReviews = await Review.find({ businessId: businessObj._id });
+            let overallRating = 0;
+            if (allReviews.length > 0) {
+              const totalRating = allReviews.reduce((sum, review) => sum + review.rating, 0);
+              overallRating = Math.round((totalRating / allReviews.length) * 10) / 10; // Round to 1 decimal place
+            }
+            
+            businessObj.reviewStats = {
+              total: totalReviews,
+              approved: approvedReviews,
+              pending: pendingReviews,
+              manageable: manageableReviews,
+              overallRating: overallRating
+            };
+            
+            console.log('Review stats:', businessObj.reviewStats);
+          } catch (error) {
+            console.error('Error fetching reviews for business:', businessObj._id, error);
+            businessObj.reviews = [];
+            businessObj.reviewStats = {
+              total: 0,
+              approved: 0,
+              pending: 0,
+              manageable: 0,
+              overallRating: 0
+            };
+          }
+        } else {
+          businessObj.reviews = [];
+          businessObj.reviewStats = {
+            total: 0,
+            approved: 0,
+            pending: 0,
+            manageable: 0,
+            overallRating: 0
+          };
+        }
+        
+        return businessObj;
+      })
+      );
+    } catch (populateError) {
+      console.error('Error populating business data:', populateError);
+      return errorResponseHelper(res, { message: 'Failed to populate business data', code: '00500' });
+    }
+    
+    console.log('Sending response with', populatedBusinesses.length, 'businesses');
+    console.log('First business reviews:', populatedBusinesses[0]?.reviews?.length || 0);
+    
+    return successResponseHelper(res, {
+      message: 'Businesses retrieved successfully',
+      data: populatedBusinesses,
+      pagination: {
+        page: parseInt(page),
+        limit: parseInt(limit),
+        total,
+        totalPages: Math.ceil(total / parseInt(limit))
+      }
+    });
+  } catch (error) {
+    console.error('Error in getBusinessesWithReviews:', error);
+    return errorResponseHelper(res, { message: error.message || 'Internal server error', code: '00500' });
+  }
+};
+
+// GET /admin/businesses-with-reviews/:businessId - Get single business with detailed review information
+export const getBusinessWithReviewsById = async (req, res) => {
+  try {
+    const { businessId } = req.params;
+    const { page = 1, limit = 20, status, sortBy = 'createdAt', sortOrder = 'desc' } = req.query;
+    
+    if (!mongoose.Types.ObjectId.isValid(businessId)) {
+      return errorResponseHelper(res, { message: 'Invalid business ID', code: '00400' });
+    }
+    
+    // Get business details
+    const business = await Business.findById(businessId)
+      .populate('category', 'name')
+      .populate('businessOwner', 'name email phoneNumber')
+      .populate('subcategories', 'name');
+    
+    if (!business) {
+      return errorResponseHelper(res, { message: 'Business not found', code: '00404' });
+    }
+    
+    // Build filter for reviews
+    const reviewFilter = { businessId };
+    if (status) reviewFilter.status = status;
+    
+    // Build sort object for reviews
+    const sort = {};
+    sort[sortBy] = sortOrder === 'desc' ? -1 : 1;
+    
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+    
+    // Get review statistics
+    const reviewStats = await Review.aggregate([
+      { $match: { businessId: business._id } },
+      {
+        $group: {
+          _id: '$businessId',
+          totalReviews: { $sum: 1 },
+          approvedReviews: {
+            $sum: { $cond: [{ $eq: ['$status', 'approved'] }, 1, 0] }
+          },
+          pendingReviews: {
+            $sum: { $cond: [{ $eq: ['$status', 'pending'] }, 1, 0] }
+          },
+          rejectedReviews: {
+            $sum: { $cond: [{ $eq: ['$status', 'rejected'] }, 1, 0] }
+          },
+          averageRating: { $avg: '$rating' },
+          ratingDistribution: {
+            $push: '$rating'
+          }
+        }
+      }
+    ]);
+    
+    // Get reviews with pagination
+    const reviews = await Review.find(reviewFilter)
+      .populate('userId', 'name email profilePhoto')
+      .populate('approvedBy', 'name email')
+      .populate('businessManagementGrantedBy', 'name email')
+      .sort(sort)
+      .skip(skip)
+      .limit(parseInt(limit));
+    
+    const totalReviews = await Review.countDocuments(reviewFilter);
+    
+    // Calculate rating distribution
+    const stats = reviewStats[0] || {
+      totalReviews: 0,
+      approvedReviews: 0,
+      pendingReviews: 0,
+      rejectedReviews: 0,
+      averageRating: 0,
+      ratingDistribution: []
+    };
+    
+    const ratingDistribution = {
+      1: stats.ratingDistribution.filter(r => r === 1).length,
+      2: stats.ratingDistribution.filter(r => r === 2).length,
+      3: stats.ratingDistribution.filter(r => r === 3).length,
+      4: stats.ratingDistribution.filter(r => r === 4).length,
+      5: stats.ratingDistribution.filter(r => r === 5).length
+    };
+    
+    return successResponseHelper(res, {
+      message: 'Business with reviews fetched successfully',
+      data: {
+        business: {
+          _id: business._id,
+          businessName: business.businessName,
+          logo: business.logo,
+          category: business.category,
+          subcategories: business.subcategories,
+          email: business.email,
+          phoneNumber: business.phoneNumber,
+          status: business.status,
+          plan: business.plan,
+          about: business.about,
+          serviceOffer: business.serviceOffer,
+          location: business.location,
+          city: business.city,
+          state: business.state,
+          zipCode: business.zipCode,
+          country: business.country,
+          socialMedia: {
+            facebook: business.facebook,
+            linkedIn: business.linkedIn,
+            website: business.website,
+            twitter: business.twitter
+          },
+          businessOwner: business.businessOwner,
+          reviewManagementAccess: business.reviewManagementAccess,
+          features: business.features,
+          createdAt: business.createdAt,
+          updatedAt: business.updatedAt
+        },
+        reviewStats: {
+          totalReviews: stats.totalReviews,
+          approvedReviews: stats.approvedReviews,
+          pendingReviews: stats.pendingReviews,
+          rejectedReviews: stats.rejectedReviews,
+          averageRating: Math.round(stats.averageRating * 10) / 10 || 0,
+          ratingDistribution
+        },
+        reviews: {
+          data: reviews,
+          pagination: {
+            page: parseInt(page),
+            limit: parseInt(limit),
+            total: totalReviews,
+            totalPages: Math.ceil(totalReviews / parseInt(limit))
+          }
+        }
+      }
+    });
+  } catch (error) {
+    return errorResponseHelper(res, { message: error.message, code: '00500' });
+  }
+}; 
+

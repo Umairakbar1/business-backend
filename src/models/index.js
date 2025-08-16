@@ -11,5 +11,7 @@ export { default as Review } from './admin/review.js';
 export { default as StaticPage } from './admin/staticPage.js';
 export { default as User } from './user/user.js';
 export { default as UserModal } from './user/user.js';
+export { default as Comment } from './user/comment.js';
+export { default as Reply } from './user/reply.js';
 export { default as Business } from './business/business.js';
 export { default as BusinessOwner } from './business/businessOwner.js';

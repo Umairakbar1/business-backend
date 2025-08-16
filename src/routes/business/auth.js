@@ -9,7 +9,10 @@ import {
   updateBusinessLogo,
   updateBusinessImages,
   deleteBusinessImage,
-  getBusinessOwnerBusinesses
+  getBusinessOwnerBusinesses,
+  requestPasswordReset,
+  verifyPasswordResetOtp,
+  resetPassword
 } from '../../controllers/business/auth.controller.js';
 import { 
   businessOwnerSignupValidation,
@@ -17,7 +20,10 @@ import {
   verifyOtpCreateBusinessOwnerValidation,
   setBusinessOwnerCredentialsValidation,
   businessOwnerLoginValidation,
-  registerBusinessValidation
+  registerBusinessValidation,
+  requestPasswordResetValidation,
+  verifyPasswordResetOtpValidation,
+  resetPasswordValidation
 } from '../../validators/business/auth.js';
 import { verifyBusinessOwnerToken, verifyAccountCreationToken } from '../../middleware/authorization.js';
 import { 
@@ -75,5 +81,10 @@ router.delete('/business/:businessId/images/:imageId',
 
 // Get Business Owner's Businesses
 router.get('/my-businesses', verifyBusinessOwnerToken, getBusinessOwnerBusinesses);
+
+// Password Recovery Routes
+router.post('/forgot-password', requestPasswordResetValidation, requestPasswordReset);
+router.post('/verify-reset-otp', verifyPasswordResetOtpValidation, verifyPasswordResetOtp);
+router.post('/reset-password', resetPasswordValidation, resetPassword);
 
 export default router; 
