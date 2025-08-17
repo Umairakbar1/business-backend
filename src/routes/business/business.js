@@ -23,18 +23,18 @@ import {
 
 import { validateBusiness, validateBusinessStatus } from '../../validators/business/business.js';
 import { verifyBusinessOwnerToken } from '../../middleware/authorization.js';
-import { uploadSingleImageToCloudinary, handleCloudinaryUploadError } from '../../middleware/cloudinaryUpload.js';
+import { uploadBusinessAssets, handleCloudinaryUploadError } from '../../middleware/cloudinaryUpload.js';
 
 const router = Router();
 
 // Stripe webhook endpoint (no authentication required as Stripe will call this)
 router.post('/webhook/stripe', handleStripeWebhook);
 
-router.post('/', verifyBusinessOwnerToken, uploadSingleImageToCloudinary, handleCloudinaryUploadError, validateBusiness, createBusiness);
+router.post('/', verifyBusinessOwnerToken, uploadBusinessAssets, handleCloudinaryUploadError, validateBusiness, createBusiness);
 router.get('/', verifyBusinessOwnerToken, getMyBusinesses);
 router.get('/with-reviews', verifyBusinessOwnerToken, getBusinessesWithReviews);
 router.get('/:id', verifyBusinessOwnerToken, getBusinessById);
-router.put('/:id', verifyBusinessOwnerToken, uploadSingleImageToCloudinary, handleCloudinaryUploadError, validateBusiness, updateBusiness);
+router.put('/:id', verifyBusinessOwnerToken, uploadBusinessAssets, handleCloudinaryUploadError, validateBusiness, updateBusiness);
 router.delete('/:id', verifyBusinessOwnerToken, deleteBusiness);
 router.patch('/:id/status', verifyBusinessOwnerToken, validateBusinessStatus, updateBusinessStatus);
 router.get('/plans/available', verifyBusinessOwnerToken, getAvailablePlans);

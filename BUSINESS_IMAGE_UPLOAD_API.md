@@ -18,7 +18,89 @@ The system supports both single and multiple image uploads for business logos an
 
 ## API Endpoints
 
-### 1. Register Business with Images
+### 1. Create Business with Media
+
+**POST** `/api/business/business`
+
+Create a new business with logo and multiple images support.
+
+**Headers:**
+```
+Authorization: Bearer <business_owner_token>
+Content-Type: multipart/form-data
+```
+
+**Form Data:**
+- `logo` (file, optional): Business logo image
+- `images` (files, optional): Up to 10 business images
+- `imageCaption_0` (string, optional): Caption for first image
+- `imageCaption_1` (string, optional): Caption for second image
+- ... (up to imageCaption_9)
+- `businessName` (string, required): Business name
+- `category` (string, required): Business category
+- `phoneNumber` (string, required): Business phone number
+- `email` (string, required): Business email
+- `subcategories` (array, optional): Business subcategories
+- `facebook` (string, optional): Facebook URL
+- `linkedIn` (string, optional): LinkedIn URL
+- `website` (string, optional): Website URL
+- `twitter` (string, optional): Twitter URL
+- `metaTitle` (string, optional): SEO meta title
+- `metaDescription` (string, optional): SEO meta description
+- `focusKeywords` (array, optional): SEO focus keywords
+- `about` (string, optional): Business description
+- `serviceOffer` (string, optional): Services offered
+- `address` (string, optional): Business address
+- `city` (string, optional): City
+- `state` (string, optional): State
+- `zipCode` (string, optional): ZIP code
+- `country` (string, optional): Country
+- `plan` (string, optional): Business plan (bronze/silver/gold)
+- `location` (object, optional): Location coordinates
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Business created successfully",
+  "data": {
+    "business": {
+      "_id": "business_id",
+      "businessName": "Business Name",
+      "category": "Category",
+      "email": "business@example.com",
+      "phoneNumber": "+1234567890",
+      "status": "pending",
+      "plan": "bronze",
+      "logo": {
+        "url": "https://res.cloudinary.com/.../logo.jpg",
+        "public_id": "business-app/logos/...",
+        "thumbnail": {
+          "url": "https://res.cloudinary.com/.../logo_thumb.jpg",
+          "public_id": "business-app/logos/thumbnails/..."
+        }
+      },
+      "images": [
+        {
+          "url": "https://res.cloudinary.com/.../image1.jpg",
+          "public_id": "business-app/images/...",
+          "thumbnail": {
+            "url": "https://res.cloudinary.com/.../image1_thumb.jpg",
+            "public_id": "business-app/images/thumbnails/..."
+          },
+          "caption": "Image caption",
+          "uploadedAt": "2024-01-01T00:00:00.000Z"
+        }
+      ],
+      "media": [
+        // Same as images array for consistency
+      ]
+    }
+  }
+}
+```
+
+### 2. Register Business with Images
 
 **POST** `/api/business/auth/register-business`
 
@@ -190,6 +272,153 @@ Authorization: Bearer <business_owner_token>
 }
 ```
 
+### 5. Update Business with Media Management
+
+**PUT** `/api/business/business/:id`
+
+Update an existing business with full media management capabilities.
+
+**Headers:**
+```
+Authorization: Bearer <business_owner_token>
+Content-Type: multipart/form-data
+```
+
+**Form Data:**
+- `logo` (file, optional): New business logo image
+- `images` (files, optional): New business images to add
+- `imageCaption_0` (string, optional): Caption for first new image
+- `imageCaption_1` (string, optional): Caption for second new image
+- ... (up to imageCaption_9)
+- `removeLogo` (boolean, optional): Set to `true` to remove existing logo
+- `removeImages` (array, optional): Array of public_ids of images to remove
+- `businessName` (string, optional): Updated business name
+- `category` (string, optional): Updated business category
+- `phoneNumber` (string, optional): Updated phone number
+- `email` (string, optional): Updated email
+- `subcategories` (array, optional): Updated subcategories
+- `facebook` (string, optional): Updated Facebook URL
+- `linkedIn` (string, optional): Updated LinkedIn URL
+- `website` (string, optional): Updated website URL
+- `twitter` (string, optional): Updated Twitter URL
+- `metaTitle` (string, optional): Updated SEO meta title
+- `metaDescription` (string, optional): Updated SEO meta description
+- `focusKeywords` (array, optional): Updated SEO focus keywords
+- `about` (string, optional): Updated business description
+- `serviceOffer` (string, optional): Updated services offered
+- `address` (string, optional): Updated business address
+- `city` (string, optional): Updated city
+- `state` (string, optional): Updated state
+- `zipCode` (string, optional): Updated ZIP code
+- `country` (string, optional): Updated country
+- `plan` (string, optional): Updated business plan (bronze/silver/gold)
+- `location` (object, optional): Updated location coordinates
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Business updated successfully",
+  "data": {
+    "_id": "business_id",
+    "businessName": "Updated Business Name",
+    "category": "Updated Category",
+    "email": "updated@example.com",
+    "phoneNumber": "+1234567890",
+    "status": "active",
+    "plan": "silver",
+    "logo": {
+      "url": "https://res.cloudinary.com/.../updated_logo.jpg",
+      "public_id": "business-app/logos/...",
+      "thumbnail": {
+        "url": "https://res.cloudinary.com/.../updated_logo_thumb.jpg",
+        "public_id": "business-app/logos/thumbnails/..."
+      }
+    },
+    "images": [
+      {
+        "url": "https://res.cloudinary.com/.../image1.jpg",
+        "public_id": "business-app/images/...",
+        "thumbnail": {
+          "url": "https://res.cloudinary.com/.../image1_thumb.jpg",
+          "public_id": "business-app/images/thumbnails/..."
+        },
+        "caption": "Updated image caption",
+        "uploadedAt": "2024-01-01T00:00:00.000Z"
+      }
+    ],
+    "media": [
+      // Same as images array for consistency
+    ]
+  }
+}
+```
+
+**Media Management Features:**
+- **Logo Update**: Upload new logo (automatically replaces old one)
+- **Logo Removal**: Set `removeLogo: true` to remove existing logo
+- **Image Addition**: Upload new images (added to existing ones)
+- **Image Removal**: Specify `removeImages` array with public_ids to remove
+- **Automatic Cleanup**: Removed images are automatically deleted from Cloudinary
+- **Thumbnail Sync**: Both original and thumbnail images are managed together
+
+**Example Usage:**
+```javascript
+// Update business with logo change and image removal
+const formData = new FormData();
+formData.append('businessName', 'Updated Business Name');
+
+// Change logo
+if (newLogoFile) {
+  formData.append('logo', newLogoFile);
+}
+
+// Remove logo
+formData.append('removeLogo', 'false');
+
+// Add new images
+newImageFiles.forEach((file, index) => {
+  formData.append('images', file);
+  if (captions[index]) {
+    formData.append(`imageCaption_${index}`, captions[index]);
+  }
+});
+
+// Remove specific images
+const imagesToRemove = ['public_id_1', 'public_id_2'];
+formData.append('removeImages', JSON.stringify(imagesToRemove));
+
+const response = await fetch(`/api/business/business/${businessId}`, {
+  method: 'PUT',
+  headers: {
+    'Authorization': `Bearer ${token}`
+  },
+  body: formData
+});
+```
+
+### 6. Delete Business Image
+
+**DELETE** `/api/business/auth/business/:businessId/images/:imageId`
+
+Delete a specific image from a business.
+
+**Headers:**
+```
+Authorization: Bearer <business_owner_token>
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Image deleted successfully",
+  "data": {
+    "totalImages": 4
+  }
+}
+```
+
 ## File Requirements
 
 ### Supported Formats
@@ -282,7 +511,7 @@ business-app/
 ### Frontend Implementation (JavaScript)
 
 ```javascript
-// Register business with images
+// Create business with images
 const formData = new FormData();
 formData.append('businessName', 'My Business');
 formData.append('category', 'Technology');
@@ -302,7 +531,7 @@ imageFiles.forEach((file, index) => {
   }
 });
 
-const response = await fetch('/api/business/auth/register-business', {
+const response = await fetch('/api/business/business', {
   method: 'POST',
   headers: {
     'Authorization': `Bearer ${token}`
@@ -311,12 +540,107 @@ const response = await fetch('/api/business/auth/register-business', {
 });
 
 const result = await response.json();
+
+// Update business with media management
+const updateFormData = new FormData();
+updateFormData.append('businessName', 'Updated Business Name');
+
+// Change logo
+if (newLogoFile) {
+  updateFormData.append('logo', newLogoFile);
+}
+
+// Remove logo
+if (removeLogo) {
+  updateFormData.append('removeLogo', 'true');
+}
+
+// Add new images
+newImageFiles.forEach((file, index) => {
+  updateFormData.append('images', file);
+  if (captions[index]) {
+    updateFormData.append(`imageCaption_${index}`, captions[index]);
+  }
+});
+
+// Remove specific images
+if (imagesToRemove.length > 0) {
+  updateFormData.append('removeImages', JSON.stringify(imagesToRemove));
+}
+
+const updateResponse = await fetch(`/api/business/business/${businessId}`, {
+  method: 'PUT',
+  headers: {
+    'Authorization': `Bearer ${token}`
+  },
+  body: updateFormData
+});
+
+const updateResult = await updateResponse.json();
+
+// Legacy business registration (still supported)
+const legacyFormData = new FormData();
+legacyFormData.append('businessName', 'My Business');
+legacyFormData.append('category', 'Technology');
+legacyFormData.append('phoneNumber', '+1234567890');
+legacyFormData.append('email', 'business@example.com');
+
+// Add logo
+if (logoFile) {
+  legacyFormData.append('logo', logoFile);
+}
+
+// Add images
+imageFiles.forEach((file, index) => {
+  legacyFormData.append('images', file);
+  if (captions[index]) {
+    legacyFormData.append(`imageCaption_${index}`, captions[index]);
+  }
+});
+
+const legacyResponse = await fetch('/api/business/auth/register-business', {
+  method: 'POST',
+  headers: {
+    'Authorization': `Bearer ${token}`
+  },
+  body: legacyFormData
+});
+
+const legacyResult = await legacyResponse.json();
 ```
 
 ### cURL Examples
 
 ```bash
-# Register business with logo and images
+# Create business with logo and images
+curl -X POST \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -F "businessName=My Business" \
+  -F "category=Technology" \
+  -F "phoneNumber=+1234567890" \
+  -F "email=business@example.com" \
+  -F "logo=@logo.jpg" \
+  -F "images=@image1.jpg" \
+  -F "images=@image2.jpg" \
+  -F "imageCaption_0=Office front" \
+  -F "imageCaption_1=Team meeting" \
+  http://localhost:3000/api/business/business
+
+# Update business with logo change and image removal
+curl -X PUT \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -F "businessName=Updated Business Name" \
+  -F "logo=@new_logo.jpg" \
+  -F "removeImages=[\"public_id_1\",\"public_id_2\"]" \
+  http://localhost:3000/api/business/business/BUSINESS_ID
+
+# Update business to remove logo
+curl -X PUT \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -F "removeLogo=true" \
+  http://localhost:3000/api/business/business/BUSINESS_ID
+
+# Register business with images (legacy endpoint)
 curl -X POST \
   -H "Authorization: Bearer YOUR_TOKEN" \
   -F "businessName=My Business" \

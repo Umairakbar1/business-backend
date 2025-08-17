@@ -188,6 +188,161 @@ export const updateBusiness = async (req, res) => {
   try {
     const { businessId } = req.params;
     let updateData = req.body;
+    const { removeImages, removeLogo } = req.body;
+    
+    // Handle logo removal
+    if (removeLogo === true) {
+      try {
+        // Get current business to see existing logo
+        const currentBusiness = await Business.findById(businessId).select('logo');
+        const currentLogo = currentBusiness?.logo;
+        
+        if (currentLogo && currentLogo.public_id) {
+          // Delete logo from Cloudinary
+          const { deleteMultipleFiles } = await import('../../helpers/cloudinaryHelper.js');
+          const publicIds = [currentLogo.public_id];
+          
+          if (currentLogo.thumbnail && currentLogo.thumbnail.public_id) {
+            publicIds.push(currentLogo.thumbnail.public_id);
+          }
+          
+          try {
+            await deleteMultipleFiles(publicIds, 'image');
+            console.log('Successfully deleted logo from Cloudinary:', publicIds);
+          } catch (deleteError) {
+            console.error('Failed to delete logo from Cloudinary:', deleteError);
+            // Continue with the update even if deletion fails
+          }
+        }
+        
+        // Set logo to null
+        updateData.logo = null;
+      } catch (error) {
+        console.error('Error handling logo removal:', error);
+        return errorResponseHelper(res, { message: 'Failed to process logo removal. Please try again.', code: '00500' });
+      }
+    }
+    
+    // Handle logo upload
+    if (req.files && req.files.logo && req.files.logo[0]) {
+      try {
+        // If there's an existing logo, delete it first
+        const currentBusiness = await Business.findById(businessId).select('logo');
+        const currentLogo = currentBusiness?.logo;
+        
+        if (currentLogo && currentLogo.public_id) {
+          const { deleteMultipleFiles } = await import('../../helpers/cloudinaryHelper.js');
+          const publicIds = [currentLogo.public_id];
+          
+          if (currentLogo.thumbnail && currentLogo.thumbnail.public_id) {
+            publicIds.push(currentLogo.thumbnail.public_id);
+          }
+          
+          try {
+            await deleteMultipleFiles(publicIds, 'image');
+            console.log('Successfully deleted old logo from Cloudinary:', publicIds);
+          } catch (deleteError) {
+            console.error('Failed to delete old logo from Cloudinary:', deleteError);
+            // Continue with the update even if deletion fails
+          }
+        }
+        
+        const { uploadImageWithThumbnail } = await import('../../helpers/cloudinaryHelper.js');
+        const uploadResult = await uploadImageWithThumbnail(req.files.logo[0].buffer, 'business-app/logos');
+        updateData.logo = {
+          url: uploadResult.original.url,
+          public_id: uploadResult.original.public_id,
+          thumbnail: {
+            url: uploadResult.thumbnail.url,
+            public_id: uploadResult.thumbnail.public_id
+          }
+        };
+      } catch (uploadError) {
+        console.error('Logo upload error:', uploadError);
+        return errorResponseHelper(res, { message: 'Failed to upload logo. Please try again.', code: '00500' });
+      }
+    }
+    
+    // Handle multiple images upload
+    if (req.files && req.files.images && req.files.images.length > 0) {
+      try {
+        const newImages = [];
+        for (let i = 0; i < req.files.images.length; i++) {
+          const imageFile = req.files.images[i];
+          const { uploadImageWithThumbnail } = await import('../../helpers/cloudinaryHelper.js');
+          const uploadResult = await uploadImageWithThumbnail(imageFile.buffer, 'business-app/images');
+          
+          newImages.push({
+            url: uploadResult.original.url,
+            public_id: uploadResult.original.public_id,
+            thumbnail: {
+              url: uploadResult.thumbnail.url,
+              public_id: uploadResult.thumbnail.public_id
+            },
+            caption: req.body[`imageCaption_${i}`] || null,
+            uploadedAt: new Date()
+          });
+        }
+        
+        // If we have new images, add them to existing ones
+        if (newImages.length > 0) {
+          // Get current business to see existing images
+          const currentBusiness = await Business.findById(businessId).select('images');
+          const existingImages = currentBusiness?.images || [];
+          
+          // Add new images to existing ones
+          updateData.images = [...existingImages, ...newImages];
+        }
+      } catch (uploadError) {
+        console.error('Images upload error:', uploadError);
+        return errorResponseHelper(res, { message: 'Failed to upload one or more images. Please try again.', code: '00500' });
+      }
+    }
+    
+    // Handle image removal
+    if (removeImages && Array.isArray(removeImages) && removeImages.length > 0) {
+      try {
+        // Get current business to see existing images
+        const currentBusiness = await Business.findById(businessId).select('images');
+        const existingImages = currentBusiness?.images || [];
+        
+        // Filter out images to be removed
+        const updatedImages = existingImages.filter(image => 
+          !removeImages.includes(image.public_id)
+        );
+        
+        updateData.images = updatedImages;
+        
+        // Delete removed images from Cloudinary
+        const { deleteMultipleFiles } = await import('../../helpers/cloudinaryHelper.js');
+        const imagesToDelete = existingImages.filter(image => 
+          removeImages.includes(image.public_id)
+        );
+        
+        if (imagesToDelete.length > 0) {
+          const publicIds = [];
+          imagesToDelete.forEach(image => {
+            publicIds.push(image.public_id);
+            if (image.thumbnail && image.thumbnail.public_id) {
+              publicIds.push(image.thumbnail.public_id);
+            }
+          });
+          
+          try {
+            await deleteMultipleFiles(publicIds, 'image');
+            console.log('Successfully deleted removed images from Cloudinary:', publicIds);
+          } catch (deleteError) {
+            console.error('Failed to delete some images from Cloudinary:', deleteError);
+            // Continue with the update even if deletion fails
+          }
+        }
+        
+        console.log('Images marked for removal:', removeImages);
+      } catch (error) {
+        console.error('Error handling image removal:', error);
+        return errorResponseHelper(res, { message: 'Failed to process image removal. Please try again.', code: '00500' });
+      }
+    }
     
     // Preprocess form data to handle serialized objects/arrays
     if (updateData.subcategories && typeof updateData.subcategories === 'string') {

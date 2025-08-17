@@ -13,6 +13,7 @@ import {
   searchBusinessesByOwner,
   getAllBusinessesNoFilter
 } from "../../controllers/admin/busienss.controller.js";
+import { uploadBusinessAssets, handleCloudinaryUploadError } from "../../middleware/cloudinaryUpload.js";
 
 const router = Router();
 
@@ -38,7 +39,7 @@ router.get("/:businessId", authorizedAccessAdmin, getSingleBusiness);
 router.post("/status/:businessId", authorizedAccessAdmin, changeStatusOfBusiness);
 
 // Update business information
-router.put("/:businessId", authorizedAccessAdmin, updateBusiness);
+router.put("/:businessId", uploadBusinessAssets, handleCloudinaryUploadError, authorizedAccessAdmin, updateBusiness);
 
 // Delete business
 router.delete("/:businessId", authorizedAccessAdmin, deleteBusiness);

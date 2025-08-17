@@ -92,7 +92,20 @@ const BusinessSchema = new Schema({
       url: String,
       public_id: String
     },
-    caption: String
+    caption: String,
+    uploadedAt: { type: Date, default: Date.now }
+  }],
+  
+  // Media array for multiple images (alias for images)
+  media: [{
+    url: String,
+    public_id: String,
+    thumbnail: {
+      url: String,
+      public_id: String
+    },
+    caption: String,
+    uploadedAt: { type: Date, default: Date.now }
   }],
   
   // Status and Approval

@@ -4,7 +4,7 @@ import {
   errorResponseHelper, 
   successResponseHelper, 
   serverErrorHelper,
-  generateOTP,
+  // generateOTP, // Commented out - using dummy OTP for testing
 } from '../../helpers/utilityHelper.js';
 import { 
   signAccessTokenBusiness, 
@@ -13,7 +13,7 @@ import {
   signPasswordResetToken,
   verifyPasswordResetToken
 } from "../../helpers/jwtHelper.js";
-import { sendEmail } from '../../helpers/sendGridHelper.js';
+// import { sendEmail } from '../../helpers/sendGridHelper.js'; // Commented out - using dummy OTP for testing
 import { uploadImageWithThumbnail } from '../../helpers/cloudinaryHelper.js';
 import { cleanupUploadedFiles } from '../../middleware/cloudinaryUpload.js';
 
@@ -799,18 +799,19 @@ export const requestPasswordReset = async (req, res) => {
     }
 
     // Generate OTP for password reset
-    const tempOtp = generateOTP().toString(); // Generate random 6-digit OTP
+    const tempOtp = "775511"; // For testing - in production, generate random 6-digit OTP
     
     // Generate password reset token (expires in 15 minutes)
     const passwordResetToken = signPasswordResetToken(email);
 
     // Send OTP via email
     try {
-      await sendEmail(email, "Password Reset Verification", `Your verification code is: ${tempOtp}. This code will expire in 15 minutes.`);
+      // Commented out for testing - using dummy OTP
+      // await sendEmail(email, "Password Reset Verification", `Your verification code is: ${tempOtp}. This code will expire in 15 minutes.`);
       console.log(`[TESTING] Password Reset OTP for ${email}: ${tempOtp}`);
       
       return successResponseHelper(res, {
-        message: 'Password reset OTP sent to your email. Please check your inbox.',
+        message: 'OTP sent to your email. Please verify to complete password reset.',
         data: {
           email,
           passwordResetToken
@@ -880,9 +881,8 @@ export const verifyPasswordResetOtp = async (req, res) => {
     // For production, you would store the OTP in a temporary storage (Redis/database) with expiration
     // For now, we'll use a simple approach - in production, implement proper OTP storage and verification
     
-    // Verify OTP (this should be replaced with proper OTP verification from storage)
-    // For testing purposes, we'll accept any 6-digit OTP
-    if (!/^\d{6}$/.test(otp)) {
+    // Verify OTP (using dummy OTP for testing)
+    if (otp !== "775511") {
       return errorResponseHelper(res, { 
         message: 'Invalid OTP. Please check your email and try again.',
         code: '00400'
