@@ -1,7 +1,7 @@
 import mongoose from "mongoose";
 const { Schema, model } = mongoose;
 
-const CommentSchema = new Schema({
+const ReplySchema = new Schema({
   content: { type: String, required: true },
   authorId: { type: Schema.Types.ObjectId, required: true },
   authorType: { type: String, enum: ['admin', 'business'], required: true },
@@ -9,6 +9,17 @@ const CommentSchema = new Schema({
   isEdited: { type: Boolean, default: false },
   editedAt: Date,
   createdAt: { type: Date, default: Date.now }
+});
+
+const CommentSchema = new Schema({
+  content: { type: String, required: true },
+  authorId: { type: Schema.Types.ObjectId, required: true },
+  authorType: { type: String, enum: ['admin', 'business'], required: true },
+  authorName: { type: String, required: true },
+  isEdited: { type: Boolean, default: false },
+  editedAt: Date,
+  createdAt: { type: Date, default: Date.now },
+  replies: [ReplySchema]
 });
 
 const QueryTicketSchema = new Schema({
@@ -46,14 +57,24 @@ const QueryTicketSchema = new Schema({
   
   // Assignment information
   assignedTo: { 
-    type: Schema.Types.String, 
-    // ref: 'Admin',
+    type: Schema.Types.ObjectId, 
+    refPath: 'assignedToModel',
     default: null 
+  },
+  assignedToModel: {
+    type: String,
+    enum: ['Admin', 'Business'],
+    default: null
+  },
+  assignedToType: {
+    type: String,
+    enum: ['admin', 'business'],
+    default: null
   },
   assignedAt: { type: Date },
   assignedBy: { 
-    type: Schema.Types.String, 
-    // ref: 'Admin' 
+    type: Schema.Types.ObjectId, 
+    ref: 'Admin' 
   },
   
   // Status management

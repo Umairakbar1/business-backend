@@ -126,7 +126,7 @@ export const getBusinessListings = async (req, res) => {
              {
                $match: {
                  $expr: { $in: ['$_id', '$$subcategoryIds'] },
-                 isActive: true
+                 status: 'active'
                }
              },
              {
@@ -204,8 +204,7 @@ export const getBusinessListings = async (req, res) => {
     if (sortBy === 'rating') sort.avgRating = -1;
     else if (sortBy === 'reviews') sort.reviewsCount = -1;
     else if (sortBy === 'name') sort.name = 1;
-    else if (sortBy === 'distance' && hasCoordinates) sort.distance = 1; // Sort by distance (nearest first)
-    else if (hasCoordinates) sort.distance = 1; // Default to distance sorting when coordinates are provided
+    else if (hasCoordinates) sort.distance = 1; // Sort by distance (nearest first)
     else sort._id = -1;
 
     pipeline.push({ $sort: sort });
@@ -329,7 +328,7 @@ export const getBusinessDetails = async (req, res) => {
       try {
         subcategoryData = await SubCategory.find({
           _id: { $in: business.subcategories },
-          isActive: true
+          status: 'active'
         }).select('_id title description image categoryId slug');
       } catch (error) {
         console.error('Error fetching subcategories:', error);
@@ -415,7 +414,7 @@ export const getBusinessCategoriesWithSubcategories = async (req, res) => {
         // Find subcategories for this category
         const subcategories = await SubCategory.find({
           categoryId: category._id,
-          isActive: true
+          status: 'active'
         })
         .select('_id title description image slug')
         .sort({ title: 1 });

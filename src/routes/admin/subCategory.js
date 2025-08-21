@@ -12,5 +12,5 @@ router.get('/:id', authorizedAccessAdmin, subCategoryController.getSubCategoryBy
 router.put('/:id', authorizedAccessAdmin, subCategoryController.updateSubCategory);
 router.delete('/:id', authorizedAccessAdmin, subCategoryController.deleteSubCategory);
 router.patch('/bulk-status', authorizedAccessAdmin, subCategoryController.bulkUpdateStatus);
-
+router.patch('/:id/status', authorizedAccessAdmin, subCategoryController.changeSubCategoryStatus);
 export default router;

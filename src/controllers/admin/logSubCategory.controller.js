@@ -142,10 +142,7 @@ const getAllLogSubCategories = async (req, res) => {
       itemsPerPage: parseInt(limit)
     };
 
-    return successResponseHelper(res, {message:'Log subcategories retrieved successfully', data: {
-      data:subCategories,
-      pagination
-    }});
+    return successResponseHelper(res, {message:'Log subcategories retrieved successfully', data: subCategories, pagination});
   } catch (error) {
     console.error('Error fetching log subcategories:', error);
     return errorResponseHelper(res, {message:'Internal server error', code:'00500'});
@@ -348,11 +345,56 @@ const bulkUpdateLogSubCategoryStatus = async (req, res) => {
       { status, updatedAt: Date.now(), updatedBy: req.user.id }
     );  
 
-    return successResponseHelper(res, {message:`Updated ${result.modifiedCount} log subcategories successfully`});
+    // Get updated subcategories with complete details
+    const updatedSubCategories = await LogSubCategory.find({ _id: { $in: subCategoryIds } })
+      .populate('categoryId', 'title description')
+      .populate('createdBy', 'title email')
+      .populate('updatedBy', 'title email');
+
+    return successResponseHelper(res, {
+      message: `Updated ${result.modifiedCount} log subcategories successfully`,
+      data: updatedSubCategories,
+      updatedCount: result.modifiedCount
+    });
   } catch (error) {
     console.error('Bulk update log subcategory status error:', error);
     return errorResponseHelper(res, {message:'Internal server error', code:'00500'});
   }
+};
+
+// Single status change for log subcategory
+const changeLogSubCategoryStatus = async (req, res) => {
+  try {
+    const { id, status } = req.params;
+    
+    if (!['active', 'inactive'].includes(status)) {
+      return errorResponseHelper(res, { message: 'Valid status is required (active/inactive)', code: '00400' });
+    }
+    
+    const subCategory = await LogSubCategory.findByIdAndUpdate(
+      id, 
+      { 
+        status,
+        updatedBy: req.user.id,
+        updatedAt: new Date()
+      }, 
+      { new: true }
+    ).populate('categoryId', 'title description')
+     .populate('createdBy', 'title email')
+     .populate('updatedBy', 'title email');
+    
+    if (!subCategory) {
+      return errorResponseHelper(res, { message: 'Log subcategory not found', code: '00404' });
+    }
+
+    return successResponseHelper(res, { 
+      message: 'Log subcategory status updated successfully', 
+      data: subCategory 
+    });
+  } catch (error) {
+    console.error('Change log subcategory status error:', error);
+    return errorResponseHelper(res, { message: 'Internal server error', code: '00500' });
+  } 
 };
 
 export {
@@ -362,5 +404,6 @@ export {
   updateLogSubCategory,
   deleteLogSubCategory,
   getLogSubCategoriesByCategory,
-  bulkUpdateLogSubCategoryStatus
+  bulkUpdateLogSubCategoryStatus,
+  changeLogSubCategoryStatus
 }; 

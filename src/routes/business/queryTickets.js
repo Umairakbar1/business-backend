@@ -11,7 +11,10 @@ import {
   addComment,
   editComment,
   deleteComment,
-  getTicketStats
+  getTicketStats,
+  addReply,
+  editReply,
+  deleteReply
 } from "../../controllers/business/queryTicket.controller.js";
 
 const router = Router();
@@ -45,5 +48,14 @@ router.put("/:id/comments/:commentId", verifyBusinessOwnerToken, editComment);
 
 // DELETE /business/query-tickets/:id/comments/:commentId - Delete comment
 router.delete("/:id/comments/:commentId", verifyBusinessOwnerToken, deleteComment);
+
+// POST /business/query-tickets/:id/comments/:commentId/replies - Add reply to comment
+router.post("/:id/comments/:commentId/replies", verifyBusinessOwnerToken, addReply);
+
+// PUT /business/query-tickets/:id/comments/:commentId/replies/:replyId - Edit reply
+router.put("/:id/comments/:commentId/replies/:replyId", verifyBusinessOwnerToken, editReply);
+
+// DELETE /business/query-tickets/:id/comments/:commentId/replies/:replyId - Delete reply
+router.delete("/:id/comments/:commentId/replies/:replyId", verifyBusinessOwnerToken, deleteReply);
 
 export default router; 

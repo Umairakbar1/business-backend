@@ -14,10 +14,12 @@ export const getBusinessQueryTickets = async (req, res) => {
       return errorResponseHelper(res, { message: 'Business owner not authenticated', code: '00401' });
     }
     
-    // Build filter object - only tickets created by this business owner
+    // Build filter object - business can see tickets created by them OR assigned to them
     const filter = { 
-      createdBy: businessOwnerId,
-      createdByType: 'business'
+      $or: [
+        { createdBy: businessOwnerId, createdByType: 'business' },
+        { assignedTo: businessOwnerId, assignedToType: 'business' }
+      ]
     };
     
     // Filter by specific business if provided
@@ -36,6 +38,17 @@ export const getBusinessQueryTickets = async (req, res) => {
     // Get tickets with populated business information
     const tickets = await QueryTicket.find(filter)
       .populate('businessId', 'businessName contactPerson email')
+      .populate({
+        path: 'assignedTo',
+        select: 'firstName lastName email businessName contactPerson email'
+      })
+      .populate('assignedBy', 'firstName lastName email')
+      .populate({
+        path: 'comments',
+        populate: {
+          path: 'replies'
+        }
+      })
       .sort(sort)
       .skip(skip)
       .limit(parseInt(limit));
@@ -73,9 +86,22 @@ export const getQueryTicketById = async (req, res) => {
     
     const ticket = await QueryTicket.findOne({ 
       _id: id, 
-      createdBy: businessOwnerId,
-      createdByType: 'business'
-    }).populate('businessId', 'businessName contactPerson email');
+      $or: [
+        { createdBy: businessOwnerId, createdByType: 'business' },
+        { assignedTo: businessOwnerId, assignedToType: 'business' }
+      ]
+    }).populate('businessId', 'businessName contactPerson email')
+      .populate({
+        path: 'assignedTo',
+        select: 'firstName lastName email businessName contactPerson email'
+      })
+      .populate('assignedBy', 'firstName lastName email')
+      .populate({
+        path: 'comments',
+        populate: {
+          path: 'replies'
+        }
+      });
     
     if (!ticket) {
       return errorResponseHelper(res, { message: 'Query ticket not found', code: '00404' });
@@ -94,7 +120,16 @@ export const getQueryTicketById = async (req, res) => {
 export const createQueryTicket = async (req, res) => {
   try {
     const businessOwnerId = req.businessOwner?._id;
-    const { title, businessId, description, childIssue, linkedIssue, websiteUrl, assignedTo } = req.body;
+    const { title, businessId, description, childIssue, linkedIssue, websiteUrl, assignedToType } = req.body;
+    
+    // Debug logging
+    console.log('Received request body:', {
+      title,
+      businessId,
+      description,
+      assignedToType,
+      businessOwnerId: businessOwnerId?.toString()
+    });
     
     if (!businessOwnerId) {
       return errorResponseHelper(res, { message: 'Business owner not authenticated', code: '00401' });
@@ -156,6 +191,49 @@ export const createQueryTicket = async (req, res) => {
       console.log('No file uploaded - attachment will be null');
     }
     
+    // Handle assignment logic automatically based on assignedToType
+    let finalAssignedTo = null;
+    let finalAssignedToType = null;
+    let finalAssignedToModel = null;
+    
+    console.log('Assignment logic - assignedToType:', assignedToType);
+    
+    if (assignedToType) {
+      if (assignedToType === '1') {
+        // Assign to business (use the businessId from the ticket)
+        finalAssignedTo = businessId;
+        finalAssignedToType = 'business';
+        finalAssignedToModel = 'Business';
+        console.log('Auto-assigning to business:', finalAssignedTo?.toString());
+      } else if (assignedToType === '2') {
+        // Assign to me (current business owner)
+        finalAssignedTo = businessOwnerId;
+        finalAssignedToType = 'business';
+        finalAssignedToModel = 'Business';
+        console.log('Auto-assigning to me (business):', finalAssignedTo?.toString());
+      } else {
+        return errorResponseHelper(res, { 
+          message: 'Invalid assignedToType. Must be 1 (assign to business) or 2 (assign to me)', 
+          code: '00400' 
+        });
+      }
+    }
+    
+    // Ensure assignedTo is never a string - only ObjectId or null
+    if (finalAssignedTo && typeof finalAssignedTo === 'string') {
+      console.log('ERROR: finalAssignedTo is a string:', finalAssignedTo);
+      return errorResponseHelper(res, { 
+        message: 'Invalid assignment value. assignedTo must be a valid ID or null.', 
+        code: '00400' 
+      });
+    }
+    
+    console.log('Final assignment values:', {
+      finalAssignedTo: finalAssignedTo?.toString(),
+      finalAssignedToType,
+      finalAssignedToModel
+    });
+    
     const ticketData = {
       title,
       businessName: business.businessName,
@@ -166,8 +244,17 @@ export const createQueryTicket = async (req, res) => {
       createdBy: businessOwnerId,
       createdByType: 'business',
       businessId: businessId,
-      assignedTo: assignedTo
+      assignedTo: finalAssignedTo,
+      assignedToType: finalAssignedToType,
+      assignedToModel: finalAssignedToModel
     };
+    
+    console.log('Ticket data before save:', {
+      ...ticketData,
+      assignedTo: ticketData.assignedTo?.toString(),
+      createdBy: ticketData.createdBy?.toString(),
+      businessId: ticketData.businessId?.toString()
+    });
     
     // Only add attachment if file was uploaded and processed successfully
     if (attachment && attachment.type) {
@@ -180,8 +267,25 @@ export const createQueryTicket = async (req, res) => {
     console.log('Final ticket data:', JSON.stringify(ticketData, null, 2));
     console.log('Attachment field in ticket data:', ticketData.attachment);
     
+    // Final validation - ensure all ObjectId fields are valid
+    if (ticketData.assignedTo && !mongoose.Types.ObjectId.isValid(ticketData.assignedTo)) {
+      console.log('ERROR: assignedTo is not a valid ObjectId:', ticketData.assignedTo);
+      return errorResponseHelper(res, { 
+        message: 'Invalid assignedTo value. Must be a valid ObjectId or null.', 
+        code: '00400' 
+      });
+    }
+    
     const ticket = new QueryTicket(ticketData);
     await ticket.save();
+    
+    // Populate comments and replies for response
+    await ticket.populate({
+      path: 'comments',
+      populate: {
+        path: 'replies'
+      }
+    });
     
     return successResponseHelper(res, {
       message: 'Query ticket created successfully',
@@ -197,7 +301,7 @@ export const updateQueryTicket = async (req, res) => {
   try {
     const { id } = req.params;
     const businessOwnerId = req.businessOwner?._id;
-    const { status, title, businessId, description, childIssue, linkedIssue, websiteUrl, assignedTo, attachment, comments } = req.body;
+    const { status, title, businessId, description, childIssue, linkedIssue, websiteUrl, assignedToType, attachment, comments } = req.body;
     
     if (!businessOwnerId) {
       return errorResponseHelper(res, { message: 'Business owner not authenticated', code: '00401' });
@@ -209,8 +313,10 @@ export const updateQueryTicket = async (req, res) => {
     
     const ticket = await QueryTicket.findOne({ 
       _id: id, 
-      createdBy: businessOwnerId,
-      createdByType: 'business'
+      $or: [
+        { createdBy: businessOwnerId, createdByType: 'business' },
+        { assignedTo: businessOwnerId, assignedToType: 'business' }
+      ]
     });
     
     if (!ticket) {
@@ -253,6 +359,37 @@ export const updateQueryTicket = async (req, res) => {
       }
     }
     
+    // Handle assignment logic automatically based on assignedToType
+    if (assignedToType) {
+      if (assignedToType === '1') {
+        // Assign to business (use the businessId from the ticket or request)
+        const targetBusinessId = businessId || ticket.businessId;
+        ticket.assignedTo = targetBusinessId;
+        ticket.assignedToType = 'business';
+        ticket.assignedToModel = 'Business';
+        console.log('Auto-assigning to business:', targetBusinessId?.toString());
+      } else if (assignedToType === '2') {
+        // Assign to me (current business owner)
+        ticket.assignedTo = businessOwnerId;
+        ticket.assignedToType = 'business';
+        ticket.assignedToModel = 'Business';
+        console.log('Auto-assigning to me (business):', businessOwnerId?.toString());
+      } else {
+        return errorResponseHelper(res, { 
+          message: 'Invalid assignedToType. Must be 1 (assign to business) or 2 (assign to me)', 
+          code: '00400' 
+        });
+      }
+    }
+    
+    // Ensure assignedTo is never a string - only ObjectId or null
+    if (ticket.assignedTo && typeof ticket.assignedTo === 'string') {
+      return errorResponseHelper(res, { 
+        message: 'Invalid assignment value. assignedTo must be a valid ID or null.', 
+        code: '00400' 
+      });
+    }
+    
     // Update fields
     if (title) ticket.title = title;
     if (businessId) {
@@ -271,12 +408,18 @@ export const updateQueryTicket = async (req, res) => {
     if (childIssue !== undefined) ticket.childIssue = childIssue;
     if (linkedIssue !== undefined) ticket.linkedIssue = linkedIssue;
     if (websiteUrl !== undefined) ticket.websiteUrl = websiteUrl;
-    if (assignedTo !== undefined) ticket.assignedTo = assignedTo;
-    if (status !== undefined) ticket.status = status;
     if (attachment !== undefined) ticket.attachment = attachment;
     if (comments !== undefined) ticket.comments = comments;
     ticket.updatedAt = new Date();
     await ticket.save();
+    
+    // Populate comments and replies for response
+    await ticket.populate({
+      path: 'comments',
+      populate: {
+        path: 'replies'
+      }
+    });
     
     return successResponseHelper(res, {
       message: 'Query ticket updated successfully',
@@ -308,7 +451,7 @@ export const deleteQueryTicket = async (req, res) => {
     });
     
     if (!ticket) {
-      return errorResponseHelper(res, { message: 'Query ticket not found', code: '00404' });
+      return errorResponseHelper(res, { message: 'Query ticket not found or access denied. Only the creator can delete tickets.', code: '00404' });
     }
     
     await QueryTicket.findByIdAndDelete(id);
@@ -342,21 +485,196 @@ export const updateTicketStatus = async (req, res) => {
     
     const ticket = await QueryTicket.findOne({ 
       _id: id, 
-      createdBy: businessOwnerId,
-      createdByType: 'business'
+      $or: [
+        { createdBy: businessOwnerId, createdByType: 'business' },
+        { assignedTo: businessOwnerId, assignedToType: 'business' }
+      ]
     });
     
     if (!ticket) {
       return errorResponseHelper(res, { message: 'Query ticket not found', code: '00404' });
     }
     
-    ticket.status = status;
+    // Check permissions for status update
+    const isCreator = ticket.createdBy.toString() === businessOwnerId.toString();
+    const isAssignee = ticket.assignedTo && ticket.assignedTo.toString() === businessOwnerId.toString();
+    
+    // Status update permissions:
+    // 1. If assigned to me (isAssignee), I can change status to in_progress and completed
+    // 2. If I created the ticket (isCreator), I can change status to any value
+    // 3. If assigned to someone else, only creator can change status
+    
+    if (isAssignee) {
+      // Assignee can change status to in_progress and completed
+      if (['in_progress', 'completed'].includes(status)) {
+        ticket.status = status;
+      } else {
+        return errorResponseHelper(res, { 
+          message: 'As an assignee, you can only change status to in_progress or completed', 
+          code: '00403' 
+        });
+      }
+    } else if (isCreator) {
+      // Creator can change status to any value
+      ticket.status = status;
+    } else {
+      // Neither creator nor assignee - no permission to change status
+      return errorResponseHelper(res, { 
+        message: 'You can only change status if you created the ticket or if it is assigned to you', 
+        code: '00403' 
+      });
+    }
+    
     ticket.updatedAt = new Date();
     await ticket.save();
+    
+    // Populate comments and replies for response
+    await ticket.populate({
+      path: 'comments',
+      populate: {
+        path: 'replies'
+      }
+    });
     
     return successResponseHelper(res, {
       message: 'Ticket status updated successfully',
       data: ticket
+    });
+  } catch (error) {
+    return errorResponseHelper(res, { message: error.message, code: '00500' });
+  }
+};
+
+// PUT /business/query-tickets/:id/close - Close query ticket (only creator can close)
+export const closeQueryTicket = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const businessOwnerId = req.businessOwner?._id;
+    
+    if (!businessOwnerId) {
+      return errorResponseHelper(res, { message: 'Business owner not authenticated', code: '00401' });
+    }
+    
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return errorResponseHelper(res, { message: 'Invalid ticket ID', code: '00400' });
+    }
+    
+    const ticket = await QueryTicket.findOne({ 
+      _id: id, 
+      createdBy: businessOwnerId,
+      createdByType: 'business'
+    });
+    
+    if (!ticket) {
+      return errorResponseHelper(res, { message: 'Query ticket not found or access denied. Only the creator can close tickets.', code: '00404' });
+    }
+    
+    // Close the ticket by setting status to completed
+    ticket.status = 'completed';
+    ticket.updatedAt = new Date();
+    await ticket.save();
+    
+    // Populate comments and replies for response
+    await ticket.populate({
+      path: 'comments',
+      populate: {
+        path: 'replies'
+      }
+    });
+    
+    return successResponseHelper(res, {
+      message: 'Query ticket closed successfully',
+      data: ticket
+    });
+  } catch (error) {
+    return errorResponseHelper(res, { message: error.message, code: '00500' });
+  }
+};
+
+// GET /business/query-tickets/stats - Get ticket statistics
+export const getTicketStats = async (req, res) => {
+  try {
+    const businessOwnerId = req.businessOwner?._id;
+    
+    if (!businessOwnerId) {
+      return errorResponseHelper(res, { message: 'Business owner not authenticated', code: '00401' });
+    }
+    
+    const filter = { 
+      $or: [
+        { createdBy: businessOwnerId, createdByType: 'business' },
+        { assignedTo: businessOwnerId, assignedToType: 'business' }
+      ]
+    };
+    
+    const stats = await QueryTicket.aggregate([
+      { $match: filter },
+      {
+        $group: {
+          _id: '$status',
+          count: { $sum: 1 }
+        }
+      }
+    ]);
+    
+    const total = await QueryTicket.countDocuments(filter);
+    
+    // Get stats by creator type
+    const creatorStats = await QueryTicket.aggregate([
+      { $match: filter },
+      {
+        $group: {
+          _id: '$createdByType',
+          count: { $sum: 1 }
+        }
+      }
+    ]);
+    
+    // Get stats by assignment
+    const assignmentStats = await QueryTicket.aggregate([
+      { $match: filter },
+      {
+        $group: {
+          _id: {
+            assigned: { $cond: [{ $eq: ['$assignedTo', businessOwnerId] }, 'assigned_to_me', 'created_by_me'] }
+          },
+          count: { $sum: 1 }
+        }
+      }
+    ]);
+    
+    // Convert to object format
+    const statsObj = {
+      total,
+      pending: 0,
+      in_progress: 0,
+      completed: 0,
+      not_completed: 0,
+      byCreator: {
+        admin: 0,
+        business: 0
+      },
+      byAssignment: {
+        assigned_to_me: 0,
+        created_by_me: 0
+      }
+    };
+    
+    stats.forEach(stat => {
+      statsObj[stat._id] = stat.count;
+    });
+    
+    creatorStats.forEach(stat => {
+      statsObj.byCreator[stat._id] = stat.count;
+    });
+    
+    assignmentStats.forEach(stat => {
+      statsObj.byAssignment[stat._id.assigned] = stat.count;
+    });
+    
+    return successResponseHelper(res, {
+      message: 'Ticket statistics fetched successfully',
+      data: statsObj
     });
   } catch (error) {
     return errorResponseHelper(res, { message: error.message, code: '00500' });
@@ -384,8 +702,10 @@ export const addComment = async (req, res) => {
     
     const ticket = await QueryTicket.findOne({ 
       _id: id, 
-      createdBy: businessOwnerId,
-      createdByType: 'business'
+      $or: [
+        { createdBy: businessOwnerId, createdByType: 'business' },
+        { assignedTo: businessOwnerId, assignedToType: 'business' }
+      ]
     });
     
     if (!ticket) {
@@ -438,8 +758,10 @@ export const editComment = async (req, res) => {
     
     const ticket = await QueryTicket.findOne({ 
       _id: id, 
-      createdBy: businessOwnerId,
-      createdByType: 'business'
+      $or: [
+        { createdBy: businessOwnerId, createdByType: 'business' },
+        { assignedTo: businessOwnerId, assignedToType: 'business' }
+      ]
     });
     
     if (!ticket) {
@@ -487,8 +809,10 @@ export const deleteComment = async (req, res) => {
     
     const ticket = await QueryTicket.findOne({ 
       _id: id, 
-      createdBy: businessOwnerId,
-      createdByType: 'business'
+      $or: [
+        { createdBy: businessOwnerId, createdByType: 'business' },
+        { assignedTo: businessOwnerId, assignedToType: 'business' }
+      ]
     });
     
     if (!ticket) {
@@ -517,48 +841,175 @@ export const deleteComment = async (req, res) => {
   }
 };
 
-// GET /business/query-tickets/stats - Get ticket statistics
-export const getTicketStats = async (req, res) => {
+// POST /business/query-tickets/:id/comments/:commentId/replies - Add reply to comment
+export const addReply = async (req, res) => {
   try {
+    const { id, commentId } = req.params;
+    const { content } = req.body;
     const businessOwnerId = req.businessOwner?._id;
     
     if (!businessOwnerId) {
       return errorResponseHelper(res, { message: 'Business owner not authenticated', code: '00401' });
     }
     
-    const filter = { 
-      createdBy: businessOwnerId,
-      createdByType: 'business'
-    };
+    if (!content) {
+      return errorResponseHelper(res, { message: 'Reply content is required', code: '00400' });
+    }
     
-    const stats = await QueryTicket.aggregate([
-      { $match: filter },
-      {
-        $group: {
-          _id: '$status',
-          count: { $sum: 1 }
-        }
-      }
-    ]);
+    if (!mongoose.Types.ObjectId.isValid(id) || !mongoose.Types.ObjectId.isValid(commentId)) {
+      return errorResponseHelper(res, { message: 'Invalid ticket or comment ID', code: '00400' });
+    }
     
-    const total = await QueryTicket.countDocuments(filter);
-    
-    // Convert to object format
-    const statsObj = {
-      total,
-      pending: 0,
-      in_progress: 0,
-      completed: 0,
-      not_completed: 0
-    };
-    
-    stats.forEach(stat => {
-      statsObj[stat._id] = stat.count;
+    const ticket = await QueryTicket.findOne({ 
+      _id: id, 
+      $or: [
+        { createdBy: businessOwnerId, createdByType: 'business' },
+        { assignedTo: businessOwnerId, assignedToType: 'business' }
+      ]
     });
     
+    if (!ticket) {
+      return errorResponseHelper(res, { message: 'Query ticket not found', code: '00404' });
+    }
+    
+    const comment = ticket.comments.id(commentId);
+    if (!comment) {
+      return errorResponseHelper(res, { message: 'Comment not found', code: '00404' });
+    }
+    
+    // Get business details for author name
+    const business = await Business.findById(ticket.businessId);
+    const authorName = business ? `${business.contactPerson} (${business.businessName})` : 'Business User';
+    
+    const reply = {
+      content,
+      authorId: businessOwnerId,
+      authorType: 'business',
+      authorName,
+      createdAt: new Date()
+    };
+    
+    comment.replies.push(reply);
+    ticket.updatedAt = new Date();
+    await ticket.save();
+    
     return successResponseHelper(res, {
-      message: 'Ticket statistics fetched successfully',
-      data: statsObj
+      message: 'Reply added successfully',
+      data: reply
+    });
+  } catch (error) {
+    return errorResponseHelper(res, { message: error.message, code: '00500' });
+  }
+};
+
+// PUT /business/query-tickets/:id/comments/:commentId/replies/:replyId - Edit reply
+export const editReply = async (req, res) => {
+  try {
+    const { id, commentId, replyId } = req.params;
+    const { content } = req.body;
+    const businessOwnerId = req.businessOwner?._id;
+    
+    if (!businessOwnerId) {
+      return errorResponseHelper(res, { message: 'Business owner not authenticated', code: '00401' });
+    }
+    
+    if (!content) {
+      return errorResponseHelper(res, { message: 'Reply content is required', code: '00400' });
+    }
+    
+    if (!mongoose.Types.ObjectId.isValid(id) || !mongoose.Types.ObjectId.isValid(commentId) || !mongoose.Types.ObjectId.isValid(replyId)) {
+      return errorResponseHelper(res, { message: 'Invalid ticket, comment, or reply ID', code: '00400' });
+    }
+    
+    const ticket = await QueryTicket.findOne({ 
+      _id: id, 
+      $or: [
+        { createdBy: businessOwnerId, createdByType: 'business' },
+        { assignedTo: businessOwnerId, assignedToType: 'business' }
+      ]
+    });
+    
+    if (!ticket) {
+      return errorResponseHelper(res, { message: 'Query ticket not found', code: '00404' });
+    }
+    
+    const comment = ticket.comments.id(commentId);
+    if (!comment) {
+      return errorResponseHelper(res, { message: 'Comment not found', code: '00404' });
+    }
+    
+    const reply = comment.replies.id(replyId);
+    if (!reply) {
+      return errorResponseHelper(res, { message: 'Reply not found', code: '00404' });
+    }
+    
+    // Check if reply belongs to this business owner
+    if (reply.authorId.toString() !== businessOwnerId.toString()) {
+      return errorResponseHelper(res, { message: 'You can only edit your own replies', code: '00403' });
+    }
+    
+    reply.content = content;
+    reply.isEdited = true;
+    reply.editedAt = new Date();
+    ticket.updatedAt = new Date();
+    await ticket.save();
+    
+    return successResponseHelper(res, {
+      message: 'Reply updated successfully',
+      data: reply
+    });
+  } catch (error) {
+    return errorResponseHelper(res, { message: error.message, code: '00500' });
+  }
+};
+
+// DELETE /business/query-tickets/:id/comments/:commentId/replies/:replyId - Delete reply
+export const deleteReply = async (req, res) => {
+  try {
+    const { id, commentId, replyId } = req.params;
+    const businessOwnerId = req.businessOwner?._id;
+    
+    if (!businessOwnerId) {
+      return errorResponseHelper(res, { message: 'Business owner not authenticated', code: '00401' });
+    }
+    
+    if (!mongoose.Types.ObjectId.isValid(id) || !mongoose.Types.ObjectId.isValid(commentId) || !mongoose.Types.ObjectId.isValid(replyId)) {
+      return errorResponseHelper(res, { message: 'Invalid ticket, comment, or reply ID', code: '00400' });
+    }
+    
+    const ticket = await QueryTicket.findOne({ 
+      _id: id, 
+      $or: [
+        { createdBy: businessOwnerId, createdByType: 'business' },
+        { assignedTo: businessOwnerId, assignedToType: 'business' }
+      ]
+    });
+    
+    if (!ticket) {
+      return errorResponseHelper(res, { message: 'Query ticket not found', code: '00404' });
+    }
+    
+    const comment = ticket.comments.id(commentId);
+    if (!comment) {
+      return errorResponseHelper(res, { message: 'Comment not found', code: '00404' });
+    }
+    
+    const reply = comment.replies.id(replyId);
+    if (!reply) {
+      return errorResponseHelper(res, { message: 'Reply not found', code: '00404' });
+    }
+    
+    // Check if reply belongs to this business owner
+    if (reply.authorId.toString() !== businessOwnerId.toString()) {
+      return errorResponseHelper(res, { message: 'You can only delete your own replies', code: '00403' });
+    }
+    
+    reply.remove();
+    ticket.updatedAt = new Date();
+    await ticket.save();
+    
+    return successResponseHelper(res, {
+      message: 'Reply deleted successfully'
     });
   } catch (error) {
     return errorResponseHelper(res, { message: error.message, code: '00500' });

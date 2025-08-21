@@ -13,7 +13,7 @@ const createSubCategory = async (req, res) => {
       return errorResponseHelper(res, { message: error.details[0].message, code: '00400' });
     }
 
-    const { title, description, categoryId, isActive = true } = value;
+    const { title, description, categoryId, status = 'active' } = value;
 
     // Generate slug from title if not provided
     if (!value.slug) {
@@ -85,7 +85,7 @@ const createSubCategory = async (req, res) => {
       slug: value.slug,
       description,
       categoryId,
-      isActive,
+      status,
       // image: value.image,
       createdBy: req.user.id
     });
@@ -111,18 +111,18 @@ const getAllSubCategories = async (req, res) => {
     const {
       page = 1,
       limit = 10,
-      search,
+      queryText,
       categoryId,
-      isActive,
+      status,
       sortBy = 'createdAt',
       sortOrder = 'desc'
     } = req.query;
 
     const query = {};
 
-    // Search filter
-    if (search) {
-      query.title = { $regex: search, $options: 'i' };
+    // search filter
+    if (queryText) {
+      query.title = { $regex: queryText, $options: 'i' };
     }
 
     // Category filter
@@ -130,9 +130,9 @@ const getAllSubCategories = async (req, res) => {
       query.categoryId = categoryId;
     }
 
-    // Active status filter
-    if (isActive !== undefined) {
-      query.isActive = isActive === 'true';
+    // Status filter
+    if (status) {
+      query.status = status;
     }
 
     // Sorting
@@ -207,7 +207,7 @@ const updateSubCategory = async (req, res) => {
       return errorResponseHelper(res, { message: 'Subcategory not found', code: '00404' });
     }
 
-    const { title, description, categoryId, isActive } = value;
+    const { title, description, categoryId, status } = value;
 
     // Generate slug from title if not provided or if title is being updated
     if (!value.slug && title) {
@@ -305,7 +305,7 @@ const updateSubCategory = async (req, res) => {
     if (value.slug) subCategory.slug = value.slug;
     if (description !== undefined) subCategory.description = description;
     if (categoryId) subCategory.categoryId = categoryId;
-    if (isActive !== undefined) subCategory.isActive = isActive;
+    if (status !== undefined) subCategory.status = status;
     if (value.image) subCategory.image = value.image;
     
     subCategory.updatedBy = req.user.id;
@@ -367,7 +367,7 @@ const deleteSubCategory = async (req, res) => {
 const getSubCategoriesByCategory = async (req, res) => {
   try {
     const { categoryId } = req.params;
-    const { isActive } = req.query;
+    const { status } = req.query;
 
     // Check if category exists
     const category = await Category.findById(categoryId);
@@ -377,8 +377,8 @@ const getSubCategoriesByCategory = async (req, res) => {
 
     const query = { categoryId };
 
-    if (isActive !== undefined) {
-      query.isActive = isActive === 'true';
+    if (status !== undefined) {
+      query.status = status;
     }
 
     const subCategories = await SubCategory.find(query)
@@ -404,32 +404,76 @@ const getSubCategoriesByCategory = async (req, res) => {
 
 const bulkUpdateStatus = async (req, res) => {
   try {
-    const { subCategoryIds, isActive } = req.body;
+    const { subCategoryIds, status } = req.body;
 
     if (!Array.isArray(subCategoryIds) || subCategoryIds.length === 0) {
       return errorResponseHelper(res, { message: 'Subcategory IDs array is required', code: '00400' });
     }
 
-    if (typeof isActive !== 'boolean') {
-      return errorResponseHelper(res, { message: 'isActive must be a boolean value', code: '00400' });
+    if (!['active', 'inactive'].includes(status)) {
+      return errorResponseHelper(res, { message: 'Status must be either "active" or "inactive"', code: '00400' });
     }
 
     const result = await SubCategory.updateMany(
       { _id: { $in: subCategoryIds } },
       { 
-        isActive,
+        status,
         updatedBy: req.user.id,
         updatedAt: new Date()
       }
     );
 
-      return successResponseHelper(res, {
-      message: `${result.modifiedCount} subcategories updated successfully`
+    // Get updated subcategories with category details
+    const updatedSubCategories = await SubCategory.find({ _id: { $in: subCategoryIds } })
+      .populate('categoryId', 'title description')
+      .populate('createdBy', 'name email')
+      .populate('updatedBy', 'name email');
+
+    return successResponseHelper(res, {
+      message: `${result.modifiedCount} subcategories updated successfully`,
+      data: updatedSubCategories,
+      updatedCount: result.modifiedCount
     });
   } catch (error) {
     console.error('Error bulk updating subcategories:', error);
     return errorResponseHelper(res, { message: 'Internal server error', code: '00500' });
   }
+};
+
+// Single status change for subcategory
+const changeSubCategoryStatus = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { status } = req.body;
+    
+    if (!['active', 'inactive'].includes(status)) {
+      return errorResponseHelper(res, { message: 'Status must be either "active" or "inactive"', code: '00400' });
+    }
+    
+    const subCategory = await SubCategory.findByIdAndUpdate(
+      id, 
+      { 
+        status,
+        updatedBy: req.user.id,
+        updatedAt: new Date()
+      }, 
+      { new: true }
+    ).populate('categoryId', 'title description')
+     .populate('createdBy', 'name email')
+     .populate('updatedBy', 'name email');
+    
+    if (!subCategory) {
+      return errorResponseHelper(res, { message: 'Subcategory not found', code: '00404' });
+    }
+
+    return successResponseHelper(res, { 
+      message: 'Subcategory status updated successfully', 
+      data: subCategory 
+    });
+  } catch (error) {
+    console.error('Change subcategory status error:', error);
+    return errorResponseHelper(res, { message: 'Internal server error', code: '00500' });
+  } 
 };
 
 export {
@@ -439,5 +483,6 @@ export {
   updateSubCategory,
   deleteSubCategory,
   getSubCategoriesByCategory,
-  bulkUpdateStatus
+  bulkUpdateStatus,
+  changeSubCategoryStatus
 };

@@ -40,15 +40,14 @@ export const getAllUsers = async (req, res) => {
 
     return successResponseHelper(res, {
       message: 'Users fetched successfully',
-      data: {
-        users,
-        pagination: {
+      data: users,
+      pagination: {
           page: parseInt(page),
           limit: parseInt(limit),
           total,
           totalPages: Math.ceil(total / parseInt(limit))
         }
-      }
+      
     });
   } catch (error) {
     console.error('Get users error:', error);

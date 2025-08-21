@@ -80,36 +80,41 @@ const categoryValidator = Joi.object({
       'string.max': 'Meta description cannot exceed 160 characters'
     }),
   
-  subcategories: Joi.array()
-    .items(Joi.object({
-      title: Joi.string()
-        .min(2)
-        .max(100)
-        .required()
-        .trim()
-        .messages({
-          'string.empty': 'Sub-category name is required',
-          'string.min': 'Sub-category name must be at least 2 characters long',
-          'string.max': 'Sub-category name cannot exceed 100 characters',
-          'any.required': 'Sub-category name is required'
-        }),
-      description: Joi.string()
-        .max(300)
-        .optional()
-        .trim()
-        .messages({
-          'string.max': 'Sub-category description cannot exceed 300 characters'
-        }),
-      isActive: Joi.boolean()
-        .default(true)
-        .messages({
-          'boolean.base': 'isActive must be a boolean value'
-        })
-    }))
-    .optional()
-    .messages({
-      'array.base': 'Subcategories must be an array'
-    }),
+  subcategories: Joi.alternatives().try(
+    Joi.array()
+      .items(Joi.object({
+        title: Joi.string()
+          .min(2)
+          .max(100)
+          .required()
+          .trim()
+          .messages({
+            'string.empty': 'Sub-category name is required',
+            'string.min': 'Sub-category name must be at least 2 characters long',
+            'string.max': 'Sub-category name cannot exceed 100 characters',
+            'any.required': 'Sub-category name is required'
+          }),
+        description: Joi.string()
+          .max(300)
+          .optional()
+          .trim()
+          .messages({
+            'string.max': 'Sub-category description cannot exceed 300 characters'
+          }),
+        isActive: Joi.boolean()
+          .default(true)
+          .messages({
+            'boolean.base': 'isActive must be a boolean value'
+          })
+      })),
+    Joi.string()
+      .messages({
+        'string.base': 'Subcategories must be a valid JSON string or array'
+      })
+  ).optional()
+  .messages({
+    'alternatives.any': 'Subcategories must be either an array or a valid JSON string'
+  }),
   
   parentCategory: Joi.string()
     .pattern(/^[0-9a-fA-F]{24}$/)

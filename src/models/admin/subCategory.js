@@ -29,9 +29,10 @@ const SubCategorySchema = new mongoose.Schema({
         ref: 'Category',
         required: true
     },
-    isActive: {
-        type: Boolean,
-        default: true
+    status: {
+        type: String,
+        enum: ['active', 'inactive'],
+        default: 'active'
     },
     createdBy: {
         type: mongoose.Schema.Types.ObjectId,

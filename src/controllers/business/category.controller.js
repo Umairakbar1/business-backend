@@ -111,12 +111,12 @@ export const getCategoryWithSubcategories = async (req, res) => {
     // Build query for subcategories
     const subcategoryQuery = { categoryId: id };
     if (!includeInactive) {
-      subcategoryQuery.isActive = true;
+      subcategoryQuery.status = 'active';
     }
     
     const subcategories = await SubCategory.find(subcategoryQuery)
       .sort({ title: 1 })
-      .select('title slug description image isActive createdAt');
+      .select('title slug description image status createdAt');
     
     return successResponseHelper(res, {
       message: 'Category with subcategories retrieved successfully',
@@ -166,7 +166,7 @@ export const getAllSubcategories = async (req, res) => {
       .sort(sort)
       .skip(skip)
       .limit(parseInt(limit))
-      .select('title slug description image isActive categoryId createdAt');
+      .select('title slug description image status categoryId createdAt');
     
     // Get total count for pagination
     const total = await SubCategory.countDocuments(query);
@@ -192,9 +192,9 @@ export const getSubcategoryById = async (req, res) => {
   try {
     const { id } = req.params;
     
-    const subcategory = await SubCategory.findOne({ _id: id, isActive: true })
-      .populate('categoryId', 'title slug')
-      .select('title slug description image isActive categoryId createdAt');
+    const subcategory = await SubCategory.findOne({ _id: id, status: 'active' })
+      .populate('categoryId', 'title slug description')
+      .select('title slug description image status categoryId createdAt');
     
     if (!subcategory) {
       return errorResponseHelper(res, { message: 'Subcategory not found', code: '00404' });
@@ -224,17 +224,19 @@ export const getSubcategoriesByCategory = async (req, res) => {
     
     // Build query for subcategories
     const query = { categoryId };
-    if (!includeInactive) {
-      query.isActive = true;
+
+    if (includeInactive !== 'true') {
+      query.status = 'active';
     }
-    
-    const subcategories = await SubCategory.find(query)
+
+    const subCategories = await SubCategory.find(query)
+      .populate('categoryId', 'title')
       .sort({ title: 1 })
-      .select('title slug description image isActive createdAt');
+      .select('title slug description image status createdAt');
     
     return successResponseHelper(res, {
       message: 'Subcategories retrieved successfully',
-      data:subcategories,
+      data:subCategories,
       category
     });
   } catch (error) { 
@@ -258,12 +260,12 @@ export const getCategoriesHierarchy = async (req, res) => {
     const categoryIds = categories.map(cat => cat._id);
     const subcategoryQuery = { categoryId: { $in: categoryIds } };
     if (!includeInactive) {
-      subcategoryQuery.isActive = true;
+      subcategoryQuery.status = 'active';
     }
     
     const subcategories = await SubCategory.find(subcategoryQuery)
       .sort({ title: 1 })
-      .select('title slug description image isActive categoryId createdAt');
+      .select('title slug description image status categoryId createdAt');
     
     // Group subcategories by category
     const subcategoriesByCategory = {};

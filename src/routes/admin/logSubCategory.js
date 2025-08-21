@@ -13,5 +13,5 @@ router.get('/:id', authorizedAccessAdmin, logSubCategoryController.getLogSubCate
 router.put('/:id', authorizedAccessAdmin, uploadSingleImageToCloudinary, handleCloudinaryUploadError, logSubCategoryController.updateLogSubCategory);
 router.delete('/:id', authorizedAccessAdmin, logSubCategoryController.deleteLogSubCategory);
 router.patch('/bulk-status', authorizedAccessAdmin, logSubCategoryController.bulkUpdateLogSubCategoryStatus);
-
+router.patch('/:id/status', authorizedAccessAdmin, logSubCategoryController.changeLogSubCategoryStatus);
 export default router; 

@@ -5,7 +5,7 @@ import { errorResponseHelper, successResponseHelper } from '../../helpers/utilit
 import { uploadImage, uploadVideo } from '../../helpers/cloudinaryHelper.js';
 import mongoose from 'mongoose';
 
-// GET /admin/query-tickets - Get all query tickets (admin can see all)
+// GET /admin/query-tickets - Get all query tickets (admin can see only assigned or created by them)
 export const getAllQueryTickets = async (req, res) => {
   try {
     const adminId = req.user?._id;
@@ -15,8 +15,14 @@ export const getAllQueryTickets = async (req, res) => {
       return errorResponseHelper(res, { message: 'Admin not authenticated', code: '00401' });
     }
     
-    // Build filter object
-    const filter = {};
+    // Build filter object - admin can only see tickets assigned to them or created by them
+    const filter = {
+      $or: [
+        { assignedTo: adminId, assignedToType: 'admin' },
+        { createdBy: adminId, createdByType: 'admin' }
+      ]
+    };
+    
     if (status) filter.status = status;
     if (createdByType) filter.createdByType = createdByType;
     if (assignedTo) filter.assignedTo = assignedTo;
@@ -31,8 +37,17 @@ export const getAllQueryTickets = async (req, res) => {
     const tickets = await QueryTicket.find(filter)
       .populate('businessId', 'businessId contactPerson email')
       .populate('createdBy', 'firstName lastName email')
-      .populate('assignedTo', 'firstName lastName email')
+      .populate({
+        path: 'assignedTo',
+        select: 'firstName lastName email businessName contactPerson email'
+      })
       .populate('assignedBy', 'firstName lastName email')
+      .populate({
+        path: 'comments',
+        populate: {
+          path: 'replies'
+        }
+      })
       .sort(sort)
       .skip(skip)
       .limit(parseInt(limit));
@@ -68,11 +83,26 @@ export const getQueryTicketById = async (req, res) => {
       return errorResponseHelper(res, { message: 'Invalid ticket ID', code: '00400' });
     }
     
-    const ticket = await QueryTicket.findById(id)
+    const ticket = await QueryTicket.findOne({
+      _id: id,
+      $or: [
+        { assignedTo: adminId, assignedToType: 'admin' },
+        { createdBy: adminId, createdByType: 'admin' }
+      ]
+    })
       .populate('businessId', 'businessId contactPerson email')
       .populate('createdBy', 'firstName lastName email')
-      .populate('assignedTo', 'firstName lastName email')
-      .populate('assignedBy', 'firstName lastName email');
+      .populate({
+        path: 'assignedTo',
+        select: 'firstName lastName email businessName contactPerson email'
+      })
+      .populate('assignedBy', 'firstName lastName email')
+      .populate({
+        path: 'comments',
+        populate: {
+          path: 'replies'
+        }
+      });
     
     if (!ticket) {
       return errorResponseHelper(res, { message: 'Query ticket not found', code: '00404' });
@@ -91,7 +121,7 @@ export const getQueryTicketById = async (req, res) => {
 export const createQueryTicket = async (req, res) => {
   try {
     const adminId = req.user?._id;
-    const { title, businessId, description, childIssue, linkedIssue, websiteUrl, assignedTo } = req.body;
+    const { title, businessId, description, childIssue, linkedIssue, websiteUrl, assignedToType } = req.body;
     
     if (!adminId) {
       return errorResponseHelper(res, { message: 'Admin not authenticated', code: '00401' });
@@ -155,6 +185,32 @@ export const createQueryTicket = async (req, res) => {
       console.log('No file uploaded - attachment will be null');
     }
     
+    // Handle assignment logic automatically based on assignedToType
+    let finalAssignedTo = null;
+    let finalAssignedToType = null;
+    let finalAssignedToModel = null;
+    
+    if (assignedToType) {
+      if (assignedToType === '1') {
+        // Assign to business (use the businessId from the ticket)
+        finalAssignedTo = businessId;
+        finalAssignedToType = 'business';
+        finalAssignedToModel = 'Business';
+        console.log('Auto-assigning to business:', finalAssignedTo?.toString());
+      } else if (assignedToType === '2') {
+        // Assign to me (current admin)
+        finalAssignedTo = adminId;
+        finalAssignedToType = 'admin';
+        finalAssignedToModel = 'Admin';
+        console.log('Auto-assigning to admin (me):', finalAssignedTo?.toString());
+      } else {
+        return errorResponseHelper(res, { 
+          message: 'Invalid assignedToType. Must be 1 (assign to business) or 2 (assign to me)', 
+          code: '00400' 
+        });
+      }
+    }
+    
     const ticketData = {
       title,
       businessId: businessId,
@@ -165,7 +221,9 @@ export const createQueryTicket = async (req, res) => {
       websiteUrl,
       createdBy: adminId,
       createdByType: 'admin',
-      assignedTo: assignedTo
+      assignedTo: finalAssignedTo,
+      assignedToType: finalAssignedToType,
+      assignedToModel: finalAssignedToModel
     };
     
     // Only add attachment if file was uploaded and processed successfully
@@ -182,6 +240,14 @@ export const createQueryTicket = async (req, res) => {
     const ticket = new QueryTicket(ticketData);
     await ticket.save();
     
+    // Populate comments and replies for response
+    await ticket.populate({
+      path: 'comments',
+      populate: {
+        path: 'replies'
+      }
+    });
+    
     return successResponseHelper(res, {
       message: 'Query ticket created successfully',
       data: ticket
@@ -196,7 +262,7 @@ export const updateQueryTicket = async (req, res) => {
   try {
     const { id } = req.params;
     const adminId = req.user?._id;
-    const { status,title, businessId, description, childIssue, linkedIssue, websiteUrl, assignedTo, attachment, comments } = req.body;
+    const { status, title, businessId, description, childIssue, linkedIssue, websiteUrl, assignedToType, attachment, comments } = req.body;
     
     if (!adminId) {
       return errorResponseHelper(res, { message: 'Admin not authenticated', code: '00401' });
@@ -253,6 +319,29 @@ export const updateQueryTicket = async (req, res) => {
       }
     }
     
+    // Handle assignment logic automatically based on assignedToType
+    if (assignedToType) {
+      if (assignedToType === '1') {
+        // Assign to business (use the businessId from the ticket or request)
+        const targetBusinessId = businessId || ticket.businessId;
+        ticket.assignedTo = targetBusinessId;
+        ticket.assignedToType = 'business';
+        ticket.assignedToModel = 'Business';
+        console.log('Auto-assigning to business:', targetBusinessId?.toString());
+      } else if (assignedToType === '2') {
+        // Assign to me (current admin)
+        ticket.assignedTo = adminId;
+        ticket.assignedToType = 'admin';
+        ticket.assignedToModel = 'Admin';
+        console.log('Auto-assigning to admin (me):', adminId?.toString());
+      } else {
+        return errorResponseHelper(res, { 
+          message: 'Invalid assignedToType. Must be 1 (assign to business) or 2 (assign to me)', 
+          code: '00400' 
+        });
+      }
+    }
+    
     // Update fields
     if (title) ticket.title = title;
     if (businessId) {
@@ -268,12 +357,18 @@ export const updateQueryTicket = async (req, res) => {
     if (childIssue !== undefined) ticket.childIssue = childIssue;
     if (linkedIssue !== undefined) ticket.linkedIssue = linkedIssue;
     if (websiteUrl !== undefined) ticket.websiteUrl = websiteUrl;
-    if (assignedTo !== undefined) ticket.assignedTo = assignedTo;
     if (attachment !== undefined) ticket.attachment = attachment;
     if (comments !== undefined) ticket.comments = comments;
-    if (status !== undefined) ticket.status = status;
     ticket.updatedAt = new Date();
     await ticket.save();
+    
+    // Populate comments and replies for response
+    await ticket.populate({
+      path: 'comments',
+      populate: {
+        path: 'replies'
+      }
+    });
     
     return successResponseHelper(res, {
       message: 'Query ticket updated successfully',
@@ -319,6 +414,52 @@ export const deleteQueryTicket = async (req, res) => {
   }
 };
 
+// PUT /admin/query-tickets/:id/close - Close query ticket (only creator can close)
+export const closeQueryTicket = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const adminId = req.user?._id;
+    
+    if (!adminId) {
+      return errorResponseHelper(res, { message: 'Admin not authenticated', code: '00401' });
+    }
+    
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return errorResponseHelper(res, { message: 'Invalid ticket ID', code: '00400' });
+    }
+    
+    const ticket = await QueryTicket.findOne({ 
+      _id: id, 
+      createdBy: adminId,
+      createdByType: 'admin'
+    });
+    
+    if (!ticket) {
+      return errorResponseHelper(res, { message: 'Query ticket not found or access denied. Only the creator can close tickets.', code: '00404' });
+    }
+    
+    // Close the ticket by setting status to completed
+    ticket.status = 'completed';
+    ticket.updatedAt = new Date();
+    await ticket.save();
+    
+    // Populate comments and replies for response
+    await ticket.populate({
+      path: 'comments',
+      populate: {
+        path: 'replies'
+      }
+    });
+    
+    return successResponseHelper(res, {
+      message: 'Query ticket closed successfully',
+      data: ticket
+    });
+  } catch (error) {
+    return errorResponseHelper(res, { message: error.message, code: '00500' });
+  }
+};
+
 // PUT /admin/query-tickets/:id/status - Update ticket status (admin can update any ticket)
 export const updateTicketStatus = async (req, res) => {
   try {
@@ -344,155 +485,50 @@ export const updateTicketStatus = async (req, res) => {
       return errorResponseHelper(res, { message: 'Query ticket not found', code: '00404' });
     }
     
-    ticket.status = status;
+    // Check permissions for status update
+    const isCreator = ticket.createdBy.toString() === adminId.toString();
+    const isAssignee = ticket.assignedTo && ticket.assignedTo.toString() === adminId.toString();
+    
+    // Status update permissions:
+    // 1. If assigned to me (isAssignee), I can change status to in_progress and completed
+    // 2. If I created the ticket (isCreator), I can change status to any value
+    // 3. If assigned to someone else, only creator can change status
+    
+    if (isAssignee) {
+      // Assignee can change status to in_progress and completed
+      if (['in_progress', 'completed'].includes(status)) {
+        ticket.status = status;
+      } else {
+        return errorResponseHelper(res, { 
+          message: 'As an assignee, you can only change status to in_progress or completed', 
+          code: '00403' 
+        });
+      }
+    } else if (isCreator) {
+      // Creator can change status to any value
+      ticket.status = status;
+    } else {
+      // Neither creator nor assignee - no permission to change status
+      return errorResponseHelper(res, { 
+        message: 'You can only change status if you created the ticket or if it is assigned to you', 
+        code: '00403' 
+      });
+    }
+    
     ticket.updatedAt = new Date();
     await ticket.save();
+    
+    // Populate comments and replies for response
+    await ticket.populate({
+      path: 'comments',
+      populate: {
+        path: 'replies'
+      }
+    });
     
     return successResponseHelper(res, {
       message: 'Ticket status updated successfully',
       data: ticket
-    });
-  } catch (error) {
-    return errorResponseHelper(res, { message: error.message, code: '00500' });
-  }
-};
-
-// POST /admin/query-tickets/:id/comments - Add comment to ticket
-export const addComment = async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { content } = req.body;
-    const adminId = req.user?._id;
-    
-    if (!adminId) {
-      return errorResponseHelper(res, { message: 'Admin not authenticated', code: '00401' });
-    }
-    
-    if (!content) {
-      return errorResponseHelper(res, { message: 'Comment content is required', code: '00400' });
-    }
-    
-    if (!mongoose.Types.ObjectId.isValid(id)) {
-      return errorResponseHelper(res, { message: 'Invalid ticket ID', code: '00400' });
-    }
-    
-    const ticket = await QueryTicket.findById(id);
-    
-    if (!ticket) {
-      return errorResponseHelper(res, { message: 'Query ticket not found', code: '00404' });
-    }
-    
-    // Get admin details for author name
-    const admin = await Admin.findById(adminId);
-    const authorName = admin ? `${admin.firstName} ${admin.lastName} (Admin)` : 'Admin User';
-    
-    const comment = {
-      content,
-      authorId: adminId,
-      authorType: 'admin',
-      authorName,
-      createdAt: new Date()
-    };
-    
-    ticket.comments.push(comment);
-    ticket.updatedAt = new Date();
-    await ticket.save();
-    
-    return successResponseHelper(res, {
-      message: 'Comment added successfully',
-      data: comment
-    });
-  } catch (error) {
-    return errorResponseHelper(res, { message: error.message, code: '00500' });
-  }
-};
-
-// PUT /admin/query-tickets/:id/comments/:commentId - Edit comment
-export const editComment = async (req, res) => {
-  try {
-    const { id, commentId } = req.params;
-    const { content } = req.body;
-    const adminId = req.user?._id;
-    
-    if (!adminId) {
-      return errorResponseHelper(res, { message: 'Admin not authenticated', code: '00401' });
-    }
-    
-    if (!content) {
-      return errorResponseHelper(res, { message: 'Comment content is required', code: '00400' });
-    }
-    
-    if (!mongoose.Types.ObjectId.isValid(id) || !mongoose.Types.ObjectId.isValid(commentId)) {
-      return errorResponseHelper(res, { message: 'Invalid ticket or comment ID', code: '00400' });
-    }
-    
-    const ticket = await QueryTicket.findById(id);
-    
-    if (!ticket) {
-      return errorResponseHelper(res, { message: 'Query ticket not found', code: '00404' });
-    }
-    
-    const comment = ticket.comments.id(commentId);
-    if (!comment) {
-      return errorResponseHelper(res, { message: 'Comment not found', code: '00404' });
-    }
-    
-    // Check if comment belongs to this admin
-    if (comment.authorId.toString() !== adminId.toString()) {
-      return errorResponseHelper(res, { message: 'You can only edit your own comments', code: '00403' });
-    }
-    
-    comment.content = content;
-    comment.isEdited = true;
-    comment.editedAt = new Date();
-    ticket.updatedAt = new Date();
-    await ticket.save();
-    
-    return successResponseHelper(res, {
-      message: 'Comment updated successfully',
-      data: comment
-    });
-  } catch (error) {
-    return errorResponseHelper(res, { message: error.message, code: '00500' });
-  }
-};
-
-// DELETE /admin/query-tickets/:id/comments/:commentId - Delete comment
-export const deleteComment = async (req, res) => {
-  try {
-    const { id, commentId } = req.params;
-    const adminId = req.user?._id;
-    
-    if (!adminId) {
-      return errorResponseHelper(res, { message: 'Admin not authenticated', code: '00401' });
-    }
-    
-    if (!mongoose.Types.ObjectId.isValid(id) || !mongoose.Types.ObjectId.isValid(commentId)) {
-      return errorResponseHelper(res, { message: 'Invalid ticket or comment ID', code: '00400' });
-    }
-    
-    const ticket = await QueryTicket.findById(id);
-    
-    if (!ticket) {
-      return errorResponseHelper(res, { message: 'Query ticket not found', code: '00404' });
-    }
-    
-    const comment = ticket.comments.id(commentId);
-    if (!comment) {
-      return errorResponseHelper(res, { message: 'Comment not found', code: '00404' });
-    }
-    
-    // Check if comment belongs to this admin
-    if (comment.authorId.toString() !== adminId.toString()) {
-      return errorResponseHelper(res, { message: 'You can only delete your own comments', code: '00403' });
-    }
-    
-    comment.remove();
-    ticket.updatedAt = new Date();
-    await ticket.save();
-    
-    return successResponseHelper(res, {
-      message: 'Comment deleted successfully'
     });
   } catch (error) {
     return errorResponseHelper(res, { message: error.message, code: '00500' });
@@ -619,11 +655,11 @@ export const getTicketStats = async (req, res) => {
   }
 }; 
 
-// PATCH /admin/query-tickets/:id/assign - Assign ticket to admin
+// PATCH /admin/query-tickets/:id/assign - Assign ticket to admin or business
 export const assignTicket = async (req, res) => {
   try {
     const { id } = req.params;
-    const { assignedTo } = req.body;
+    const { assignedToType } = req.body;
     const adminId = req.user?._id;
     
     if (!adminId) {
@@ -634,12 +670,8 @@ export const assignTicket = async (req, res) => {
       return errorResponseHelper(res, { message: 'Invalid ticket ID', code: '00400' });
     }
     
-    if (!assignedTo) {
-      return errorResponseHelper(res, { message: 'Assigned admin ID is required', code: '00400' });
-    }
-    
-    if (!mongoose.Types.ObjectId.isValid(assignedTo)) {
-      return errorResponseHelper(res, { message: 'Invalid assigned admin ID', code: '00400' });
+    if (!assignedToType) {
+      return errorResponseHelper(res, { message: 'AssignedToType is required', code: '00400' });
     }
     
     // Check if ticket exists
@@ -648,19 +680,50 @@ export const assignTicket = async (req, res) => {
       return errorResponseHelper(res, { message: 'Query ticket not found', code: '00404' });
     }
     
-    // Check if assigned admin exists
-    const assignedAdmin = await Admin.findById(assignedTo);
-    if (!assignedAdmin) {
-      return errorResponseHelper(res, { message: 'Assigned admin not found', code: '00404' });
+    let assignedUserId = null;
+    let assignedUserName = '';
+    let assignedUserType = '';
+    let assignedUserModel = '';
+    
+    if (assignedToType === '1') {
+      // Assign to business (use the businessId from the ticket)
+      assignedUserId = ticket.businessId;
+      assignedUserType = 'business';
+      assignedUserModel = 'Business';
+      
+      // Get business details for name
+      const assignedBusiness = await Business.findById(assignedUserId);
+      if (!assignedBusiness) {
+        return errorResponseHelper(res, { message: 'Business not found', code: '00404' });
+      }
+      assignedUserName = assignedBusiness.businessName;
+      
+    } else if (assignedToType === '2') {
+      // Assign to me (current admin)
+      assignedUserId = adminId;
+      assignedUserType = 'admin';
+      assignedUserModel = 'Admin';
+      
+      // Get admin details for name
+      const assignedAdmin = await Admin.findById(assignedUserId);
+      if (!assignedAdmin) {
+        return errorResponseHelper(res, { message: 'Admin not found', code: '00404' });
+      }
+      assignedUserName = `${assignedAdmin.firstName} ${assignedAdmin.lastName}`;
+      
+    } else {
+      return errorResponseHelper(res, { message: 'Invalid assignment type. Must be 1 (business) or 2 (admin)', code: '00400' });
     }
     
-    // Check if ticket is already assigned to the same admin
-    if (ticket.assignedTo && ticket.assignedTo.toString() === assignedTo) {
-      return errorResponseHelper(res, { message: 'Ticket is already assigned to this admin', code: '00400' });
+    // Check if ticket is already assigned to the same user
+    if (ticket.assignedTo && ticket.assignedTo.toString() === assignedUserId.toString()) {
+      return errorResponseHelper(res, { message: 'Ticket is already assigned to this user', code: '00400' });
     }
     
     // Update ticket assignment
-    ticket.assignedTo = assignedTo;
+    ticket.assignedTo = assignedUserId;
+    ticket.assignedToType = assignedUserType;
+    ticket.assignedToModel = assignedUserModel;
     ticket.assignedAt = new Date();
     ticket.assignedBy = adminId;
     ticket.updatedAt = new Date();
@@ -672,19 +735,28 @@ export const assignTicket = async (req, res) => {
     
     await ticket.save();
     
-    // Populate assigned admin details for response
-    await ticket.populate('assignedTo', 'firstName lastName email');
+    // Populate assigned user details for response
+    if (assignedUserType === 'admin') {
+      await ticket.populate('assignedTo', 'firstName lastName email');
+    } else {
+      await ticket.populate('assignedTo', 'businessName contactPerson email');
+    }
     await ticket.populate('assignedBy', 'firstName lastName email');
+    await ticket.populate({
+      path: 'comments',
+      populate: {
+        path: 'replies'
+      }
+    });
     
     return successResponseHelper(res, {
       message: 'Ticket assigned successfully',
       data: {
         ticket,
         assignedTo: {
-          _id: assignedAdmin._id,
-          firstName: assignedAdmin.firstName,
-          lastName: assignedAdmin.lastName,
-          email: assignedAdmin.email
+          _id: assignedUserId,
+          name: assignedUserName,
+          type: assignedUserType
         },
         assignedBy: {
           _id: req.user._id,
@@ -744,5 +816,346 @@ export const bulkUpdateStatus = async (req, res) => {
   } catch (error) {
     console.error('Bulk update status error:', error);
     return errorResponseHelper(res, { message: 'Internal server error', code: '00500' });
+  }
+}; 
+
+// POST /admin/query-tickets/:id/comments - Add comment to ticket
+export const addComment = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { content } = req.body;
+    const adminId = req.user?._id;
+    
+    if (!adminId) {
+      return errorResponseHelper(res, { message: 'Admin not authenticated', code: '00401' });
+    }
+    
+    if (!content) {
+      return errorResponseHelper(res, { message: 'Comment content is required', code: '00400' });
+    }
+    
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return errorResponseHelper(res, { message: 'Invalid ticket ID', code: '00400' });
+    }
+    
+    // Admin can comment on tickets assigned to them or created by them
+    const ticket = await QueryTicket.findOne({
+      _id: id,
+      $or: [
+        { assignedTo: adminId, assignedToType: 'admin' },
+        { createdBy: adminId, createdByType: 'admin' }
+      ]
+    });
+    
+    if (!ticket) {
+      return errorResponseHelper(res, { message: 'Query ticket not found or access denied', code: '00404' });
+    }
+    
+    // Get admin details for author name
+    const admin = await Admin.findById(adminId);
+    const authorName = admin ? `${admin.firstName} ${admin.lastName} (Admin)` : 'Admin User';
+    
+    const comment = {
+      content,
+      authorId: adminId,
+      authorType: 'admin',
+      authorName,
+      createdAt: new Date()
+    };
+    
+    ticket.comments.push(comment);
+    ticket.updatedAt = new Date();
+    await ticket.save();
+    
+    return successResponseHelper(res, {
+      message: 'Comment added successfully',
+      data: comment
+    });
+  } catch (error) {
+    return errorResponseHelper(res, { message: error.message, code: '00500' });
+  }
+};
+
+// PUT /admin/query-tickets/:id/comments/:commentId - Edit comment
+export const editComment = async (req, res) => {
+  try {
+    const { id, commentId } = req.params;
+    const { content } = req.body;
+    const adminId = req.user?._id;
+    
+    if (!adminId) {
+      return errorResponseHelper(res, { message: 'Admin not authenticated', code: '00401' });
+    }
+    
+    if (!content) {
+      return errorResponseHelper(res, { message: 'Comment content is required', code: '00400' });
+    }
+    
+    if (!mongoose.Types.ObjectId.isValid(id) || !mongoose.Types.ObjectId.isValid(commentId)) {
+      return errorResponseHelper(res, { message: 'Invalid ticket or comment ID', code: '00400' });
+    }
+    
+    // Admin can edit comments on tickets assigned to them or created by them
+    const ticket = await QueryTicket.findOne({
+      _id: id,
+      $or: [
+        { assignedTo: adminId, assignedToType: 'admin' },
+        { createdBy: adminId, createdByType: 'admin' }
+      ]
+    });
+    
+    if (!ticket) {
+      return errorResponseHelper(res, { message: 'Query ticket not found or access denied', code: '00404' });
+    }
+    
+    const comment = ticket.comments.id(commentId);
+    if (!comment) {
+      return errorResponseHelper(res, { message: 'Comment not found', code: '00404' });
+    }
+    
+    // Check if comment belongs to this admin
+    if (comment.authorId.toString() !== adminId.toString()) {
+      return errorResponseHelper(res, { message: 'You can only edit your own comments', code: '00403' });
+    }
+    
+    comment.content = content;
+    comment.isEdited = true;
+    comment.editedAt = new Date();
+    ticket.updatedAt = new Date();
+    await ticket.save();
+    
+    return successResponseHelper(res, {
+      message: 'Comment updated successfully',
+      data: comment
+    });
+  } catch (error) {
+    return errorResponseHelper(res, { message: error.message, code: '00500' });
+  }
+};
+
+// DELETE /admin/query-tickets/:id/comments/:commentId - Delete comment
+export const deleteComment = async (req, res) => {
+  try {
+    const { id, commentId } = req.params;
+    const adminId = req.user?._id;
+    
+    if (!adminId) {
+      return errorResponseHelper(res, { message: 'Admin not authenticated', code: '00401' });
+    }
+    
+    if (!mongoose.Types.ObjectId.isValid(id) || !mongoose.Types.ObjectId.isValid(commentId)) {
+      return errorResponseHelper(res, { message: 'Invalid ticket or comment ID', code: '00400' });
+    }
+    
+    // Admin can delete comments on tickets assigned to them or created by them
+    const ticket = await QueryTicket.findOne({
+      _id: id,
+      $or: [
+        { assignedTo: adminId, assignedToType: 'admin' },
+        { createdBy: adminId, createdByType: 'admin' }
+      ]
+    });
+    
+    if (!ticket) {
+      return errorResponseHelper(res, { message: 'Query ticket not found or access denied', code: '00404' });
+    }
+    
+    const comment = ticket.comments.id(commentId);
+    if (!comment) {
+      return errorResponseHelper(res, { message: 'Comment not found', code: '00404' });
+    }
+    
+    // Check if comment belongs to this admin
+    if (comment.authorId.toString() !== adminId.toString()) {
+      return errorResponseHelper(res, { message: 'You can only delete your own comments', code: '00403' });
+    }
+    
+    comment.remove();
+    ticket.updatedAt = new Date();
+    await ticket.save();
+    
+    return successResponseHelper(res, {
+      message: 'Comment deleted successfully'
+    });
+  } catch (error) {
+    return errorResponseHelper(res, { message: error.message, code: '00500' });
+  }
+};
+
+// POST /admin/query-tickets/:id/comments/:commentId/replies - Add reply to comment
+export const addReply = async (req, res) => {
+  try {
+    const { id, commentId } = req.params;
+    const { content } = req.body;
+    const adminId = req.user?._id;
+    
+    if (!adminId) {
+      return errorResponseHelper(res, { message: 'Admin not authenticated', code: '00401' });
+    }
+    
+    if (!content) {
+      return errorResponseHelper(res, { message: 'Reply content is required', code: '00400' });
+    }
+    
+    if (!mongoose.Types.ObjectId.isValid(id) || !mongoose.Types.ObjectId.isValid(commentId)) {
+      return errorResponseHelper(res, { message: 'Invalid ticket or comment ID', code: '00400' });
+    }
+    
+    // Admin can reply to comments on tickets assigned to them or created by them
+    const ticket = await QueryTicket.findOne({
+      _id: id,
+      $or: [
+        { assignedTo: adminId, assignedToType: 'admin' },
+        { createdBy: adminId, createdByType: 'admin' }
+      ]
+    });
+    
+    if (!ticket) {
+      return errorResponseHelper(res, { message: 'Query ticket not found or access denied', code: '00404' });
+    }
+    
+    const comment = ticket.comments.id(commentId);
+    if (!comment) {
+      return errorResponseHelper(res, { message: 'Comment not found', code: '00404' });
+    }
+    
+    // Get admin details for author name
+    const admin = await Admin.findById(adminId);
+    const authorName = admin ? `${admin.firstName} ${admin.lastName} (Admin)` : 'Admin User';
+    
+    const reply = {
+      content,
+      authorId: adminId,
+      authorType: 'admin',
+      authorName,
+      createdAt: new Date()
+    };
+    
+    comment.replies.push(reply);
+    ticket.updatedAt = new Date();
+    await ticket.save();
+    
+    return successResponseHelper(res, {
+      message: 'Reply added successfully',
+      data: reply
+    });
+  } catch (error) {
+    return errorResponseHelper(res, { message: error.message, code: '00500' });
+  }
+};
+
+// PUT /admin/query-tickets/:id/comments/:commentId/replies/:replyId - Edit reply
+export const editReply = async (req, res) => {
+  try {
+    const { id, commentId, replyId } = req.params;
+    const { content } = req.body;
+    const adminId = req.user?._id;
+    
+    if (!adminId) {
+      return errorResponseHelper(res, { message: 'Admin not authenticated', code: '00401' });
+    }
+    
+    if (!content) {
+      return errorResponseHelper(res, { message: 'Reply content is required', code: '00400' });
+    }
+    
+    if (!mongoose.Types.ObjectId.isValid(id) || !mongoose.Types.ObjectId.isValid(commentId) || !mongoose.Types.ObjectId.isValid(replyId)) {
+      return errorResponseHelper(res, { message: 'Invalid ticket, comment, or reply ID', code: '00400' });
+    }
+    
+    // Admin can edit replies on tickets assigned to them or created by them
+    const ticket = await QueryTicket.findOne({
+      _id: id,
+      $or: [
+        { assignedTo: adminId, assignedToType: 'admin' },
+        { createdBy: adminId, createdByType: 'admin' }
+      ]
+    });
+    
+    if (!ticket) {
+      return errorResponseHelper(res, { message: 'Query ticket not found or access denied', code: '00404' });
+    }
+    
+    const comment = ticket.comments.id(commentId);
+    if (!comment) {
+      return errorResponseHelper(res, { message: 'Comment not found', code: '00404' });
+    }
+    
+    const reply = comment.replies.id(replyId);
+    if (!reply) {
+      return errorResponseHelper(res, { message: 'Reply not found', code: '00404' });
+    }
+    
+    // Check if reply belongs to this admin
+    if (reply.authorId.toString() !== adminId.toString()) {
+      return errorResponseHelper(res, { message: 'You can only edit your own replies', code: '00403' });
+    }
+    
+    reply.content = content;
+    reply.isEdited = true;
+    reply.editedAt = new Date();
+    ticket.updatedAt = new Date();
+    await ticket.save();
+    
+    return successResponseHelper(res, {
+      message: 'Reply updated successfully',
+      data: reply
+    });
+  } catch (error) {
+    return errorResponseHelper(res, { message: error.message, code: '00500' });
+  }
+};
+
+// DELETE /admin/query-tickets/:id/comments/:commentId/replies/:replyId - Delete reply
+export const deleteReply = async (req, res) => {
+  try {
+    const { id, commentId, replyId } = req.params;
+    const adminId = req.user?._id;
+    
+    if (!adminId) {
+      return errorResponseHelper(res, { message: 'Admin not authenticated', code: '00401' });
+    }
+    
+    if (!mongoose.Types.ObjectId.isValid(id) || !mongoose.Types.ObjectId.isValid(commentId) || !mongoose.Types.ObjectId.isValid(replyId)) {
+      return errorResponseHelper(res, { message: 'Invalid ticket, comment, or reply ID', code: '00400' });
+    }
+    
+    // Admin can delete replies on tickets assigned to them or created by them
+    const ticket = await QueryTicket.findOne({
+      _id: id,
+      $or: [
+        { assignedTo: adminId, assignedToType: 'admin' },
+        { createdBy: adminId, createdByType: 'admin' }
+      ]
+    });
+    
+    if (!ticket) {
+      return errorResponseHelper(res, { message: 'Query ticket not found or access denied', code: '00404' });
+    }
+    
+    const comment = ticket.comments.id(commentId);
+    if (!comment) {
+      return errorResponseHelper(res, { message: 'Comment not found', code: '00404' });
+    }
+    
+    const reply = comment.replies.id(replyId);
+    if (!reply) {
+      return errorResponseHelper(res, { message: 'Reply not found', code: '00404' });
+    }
+    
+    // Check if reply belongs to this admin
+    if (reply.authorId.toString() !== adminId.toString()) {
+      return errorResponseHelper(res, { message: 'You can only delete your own replies', code: '00403' });
+    }
+    
+    reply.remove();
+    ticket.updatedAt = new Date();
+    await ticket.save();
+    
+    return successResponseHelper(res, {
+      message: 'Reply deleted successfully'
+    });
+  } catch (error) {
+    return errorResponseHelper(res, { message: error.message, code: '00500' });
   }
 }; 

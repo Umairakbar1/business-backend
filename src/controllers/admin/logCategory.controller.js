@@ -119,12 +119,35 @@ const getAllLogCategories = async (req, res) => {
       .limit(parseInt(limit))
       .populate('parent', 'title');
 
+    // Get subcategories for all categories
+    const categoryIds = categories.map(cat => cat._id);
+    const subcategories = await LogSubCategory.find({ 
+      categoryId: { $in: categoryIds },
+      status: 'active'
+    }).select('title description status categoryId createdAt');
+
+    // Group subcategories by category
+    const subcategoriesByCategory = {};
+    subcategories.forEach(sub => {
+      const categoryId = sub.categoryId.toString();
+      if (!subcategoriesByCategory[categoryId]) {
+        subcategoriesByCategory[categoryId] = [];
+      }
+      subcategoriesByCategory[categoryId].push(sub);
+    });
+
+    // Attach subcategories to each category
+    const categoriesWithSubcategories = categories.map(category => ({
+      ...category.toObject(),
+      subcategories: subcategoriesByCategory[category._id.toString()] || []
+    }));
+
     const total = await LogCategory.countDocuments(filter);
     const totalPages = Math.ceil(total / parseInt(limit));
 
     return successResponseHelper(res,{
       message:'Log categories retrieved successfully',
-      data:categories,
+      data: categoriesWithSubcategories,
       pagination: {
         currentPage: parseInt(page),
         totalPages,
@@ -148,7 +171,19 @@ const getLogCategoryById = async (req, res) => {
       return errorResponseHelper(res, {message:'Log category not found', code:'00404'});
     }
 
-    return successResponseHelper(res, {message:'Log category retrieved successfully', data:category});
+    // Get subcategories for this category
+    const subcategories = await LogSubCategory.find({ 
+      categoryId: id,
+      status: 'active'
+    }).select('title description status categoryId createdAt');
+
+    // Attach subcategories to the category
+    const categoryWithSubcategories = {
+      ...category.toObject(),
+      subcategories: subcategories
+    };
+
+    return successResponseHelper(res, {message:'Log category retrieved successfully', data: categoryWithSubcategories});
   } catch (error) {
     console.error('Get log category by ID error:', error);
     if (error.kind === 'ObjectId') {
@@ -308,16 +343,37 @@ const deleteLogCategory = async (req, res) => {
 
 const getLogCategoryHierarchy = async (req, res) => {
   try {
+    const categories = await LogCategory.find({ status: 'active' }).sort('title');
+    
+    // Get all subcategories for active categories
+    const categoryIds = categories.map(cat => cat._id);
+    const subcategories = await LogSubCategory.find({ 
+      categoryId: { $in: categoryIds },
+      status: 'active'
+    }).select('title description status categoryId createdAt');
+
+    // Group subcategories by category
+    const subcategoriesByCategory = {};
+    subcategories.forEach(sub => {
+      const categoryId = sub.categoryId.toString();
+      if (!subcategoriesByCategory[categoryId]) {
+        subcategoriesByCategory[categoryId] = [];
+      }
+      subcategoriesByCategory[categoryId].push(sub);
+    });
+
     const buildHierarchy = (parentId = null) => {
-      return LogCategory.find({ parent: parentId, status: 'active' })
-        .populate({
-          path: 'children',
-          populate: { path: 'children' }
-        });
+      return categories
+        .filter(cat => String(cat.parent) === String(parentId))
+        .map(cat => ({
+          ...cat.toObject(),
+          subcategories: subcategoriesByCategory[cat._id.toString()] || [],
+          children: buildHierarchy(cat._id)
+        }));
     };
 
-    const hierarchy = await buildHierarchy();
-    return successResponseHelper(res, {message:'Log category hierarchy retrieved successfully', data:hierarchy});
+    const hierarchy = buildHierarchy();
+    return successResponseHelper(res, {message:'Log category hierarchy retrieved successfully', data: hierarchy});
   } catch (error) {
     console.error('Get log category hierarchy error:', error);
     return errorResponseHelper(res, {message:'Internal server error', code:'00500'});
@@ -336,16 +392,94 @@ const bulkUpdateLogCategoryStatus = async (req, res) => {
       return errorResponseHelper(res, {message:'Valid status is required (active/inactive)', code:'00400'});
     }
 
+    // Update categories status
     const result = await LogCategory.updateMany(
       { _id: { $in: categoryIds } },
       { status, updatedAt: Date.now() }
     );
 
-    return successResponseHelper(res, {message:`Updated ${result.modifiedCount} log categories successfully`});
+    // Update subcategories status based on category status
+    if (status === 'active') {
+      await LogSubCategory.updateMany({ categoryId: { $in: categoryIds } }, { status: 'active' });
+    } else {
+      await LogSubCategory.updateMany({ categoryId: { $in: categoryIds } }, { status: 'inactive' });
+    }
+
+    // Get updated categories with subcategories
+    const updatedCategories = await LogCategory.find({ _id: { $in: categoryIds } })
+      .populate('parent', 'title');
+
+    // Get subcategories for all updated categories
+    const subcategories = await LogSubCategory.find({ 
+      categoryId: { $in: categoryIds },
+      status: status === 'active' ? 'active' : 'inactive'
+    }).select('title description status categoryId createdAt');
+
+    // Group subcategories by category
+    const subcategoriesByCategory = {};
+    subcategories.forEach(sub => {
+      const categoryId = sub.categoryId.toString();
+      if (!subcategoriesByCategory[categoryId]) {
+        subcategoriesByCategory[categoryId] = [];
+      }
+      subcategoriesByCategory[categoryId].push(sub);
+    });
+
+    // Attach subcategories to each category
+    const categoriesWithSubcategories = updatedCategories.map(category => ({
+      ...category.toObject(),
+      subcategories: subcategoriesByCategory[category._id.toString()] || []
+    }));
+
+    return successResponseHelper(res, {
+      message: `Updated ${result.modifiedCount} log categories successfully`,
+      data: categoriesWithSubcategories,
+      updatedCount: result.modifiedCount
+    });
   } catch (error) {
     console.error('Bulk update log category status error:', error);
     return errorResponseHelper(res, {message:'Internal server error', code:'00500'});
   }
+};
+
+// Single status change for log category
+const changeLogCategoryStatus = async (req, res) => {
+  try {
+    const { id, status } = req.params;
+    const category = await LogCategory.findByIdAndUpdate(id, { status }, { new: true })
+      .populate('parent', 'title');
+    
+    if (!category) {
+      return errorResponseHelper(res, { message: 'Log category not found', code: '00404' });
+    }
+
+    // Update subcategories status based on category status
+    if (status === 'active') {
+      await LogSubCategory.updateMany({ categoryId: id }, { status: 'active' });
+    } else {
+      await LogSubCategory.updateMany({ categoryId: id }, { status: 'inactive' });
+    }
+
+    // Get subcategories for this category
+    const subcategories = await LogSubCategory.find({ 
+      categoryId: id,
+      status: status === 'active' ? 'active' : 'inactive'
+    }).select('title description status categoryId createdAt');
+
+    // Attach subcategories to the category
+    const categoryWithSubcategories = {
+      ...category.toObject(),
+      subcategories: subcategories
+    };
+
+    return successResponseHelper(res, { 
+      message: 'Log category status updated successfully', 
+      data: categoryWithSubcategories 
+    });
+  } catch (error) {
+    console.error('Change log category status error:', error);
+    return errorResponseHelper(res, { message: 'Internal server error', code: '00500' });
+  } 
 };
 
 export {
@@ -355,5 +489,6 @@ export {
   updateLogCategory,
   deleteLogCategory,
   getLogCategoryHierarchy,
-  bulkUpdateLogCategoryStatus
+  bulkUpdateLogCategoryStatus,
+  changeLogCategoryStatus
 }; 

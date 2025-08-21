@@ -73,22 +73,37 @@ const createCategory = async (req, res) => {
     await category.save();
 
     // Handle subcategories if provided
-    if (req.body.subcategories && Array.isArray(req.body.subcategories)) {
-      const subcategoryPromises = req.body.subcategories.map(subcat => {
-        // Generate slug for subcategory
-        const subCategorySlug = generateSlug(subcat.title || subcat.subCategoryName);
-        
-        return new SubCategory({
-          title: subcat.title || subcat.subCategoryName,
-          slug: subCategorySlug,
-          description: subcat.description,
-          categoryId: category._id,
-          isActive: subcat.isActive !== undefined ? subcat.isActive : (subcat.status === 'active'),
-          createdBy: req.user.id
-        }).save();
-      });
+    if (req.body.subcategories) {
+      let subcategoriesArray = req.body.subcategories;
+      
+      // If subcategories is a JSON string (from FormData), parse it
+      if (typeof subcategoriesArray === 'string') {
+        try {
+          subcategoriesArray = JSON.parse(subcategoriesArray);
+        } catch (parseError) {
+          console.error('Error parsing subcategories JSON:', parseError);
+          return errorResponseHelper(res, { message: 'Invalid subcategories format', code: '00400' });
+        }
+      }
+      
+      // Check if it's an array
+      if (Array.isArray(subcategoriesArray)) {
+        const subcategoryPromises = subcategoriesArray.map(subcat => {
+          // Generate slug for subcategory
+          const subCategorySlug = generateSlug(subcat.title || subcat.subCategoryName);
+          
+          return new SubCategory({
+            title: subcat.title || subcat.subCategoryName,
+            slug: subCategorySlug,
+            description: subcat.description,
+            categoryId: category._id,
+            status: subcat.status || 'active',
+            createdBy: req.user.id
+          }).save();
+        });
 
-      await Promise.all(subcategoryPromises);
+        await Promise.all(subcategoryPromises);
+      }
     }
 
     return successResponseHelper(res, {
@@ -126,12 +141,34 @@ const getAllCategories = async (req, res) => {
       .limit(parseInt(limit))
       .populate('parentCategory', 'title');
 
+    // Get subcategories for all categories
+    const categoryIds = categories.map(cat => cat._id);
+    const subcategories = await SubCategory.find({ 
+      categoryId: { $in: categoryIds }
+    }).select('title slug description image status categoryId');
+    
+    // Group subcategories by category
+    const subcategoriesByCategory = {};
+    subcategories.forEach(sub => {
+      const categoryId = sub.categoryId.toString();
+      if (!subcategoriesByCategory[categoryId]) {
+        subcategoriesByCategory[categoryId] = [];
+      }
+      subcategoriesByCategory[categoryId].push(sub);
+    });
+
+    // Attach subcategories to each category
+    const categoriesWithSubcategories = categories.map(category => ({
+      ...category.toObject(),
+      subcategories: subcategoriesByCategory[category._id.toString()] || []
+    }));
+
     const total = await Category.countDocuments(filter);
     const totalPages = Math.ceil(total / parseInt(limit));
 
     return successResponseHelper(res, {
       message: 'Categories retrieved successfully',
-      data:categories,
+      data: categoriesWithSubcategories,
       pagination: {
         currentPage: parseInt(page),
         totalPages,
@@ -155,9 +192,20 @@ const getCategoryById = async (req, res) => {
       return errorResponseHelper(res, { message: 'Category not found', code: '00404' });
     }
 
+    // Get subcategories for this category
+    const subcategories = await SubCategory.find({ 
+      categoryId: id
+    }).select('title slug description image status createdAt');
+
+    // Attach subcategories to the category
+    const categoryWithSubcategories = {
+      ...category.toObject(),
+      subcategories: subcategories
+    };
+
     return successResponseHelper(res, {
       message: 'Category retrieved successfully',
-      data: category
+      data: categoryWithSubcategories
     });
   } catch (error) {
     console.error('Get category by ID error:', error);
@@ -335,9 +383,66 @@ const deleteCategory = async (req, res) => {
   }
 };
 
+// single status change
+const changeStatus = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { status } = req.body; // Get status from request body instead of params
+    
+    if (!status || !['active', 'inactive'].includes(status)) {
+      return errorResponseHelper(res, { message: 'Status must be either "active" or "inactive"', code: '00400' });
+    }
+    
+    const category = await Category.findByIdAndUpdate(id, { status }, { new: true })
+      .populate('parentCategory', 'title');
+     
+    if (!category) {
+      return errorResponseHelper(res, { message: 'Category not found', code: '00404' });
+    }
+
+    // Update subcategories status to match category status
+    await SubCategory.updateMany({ categoryId: id }, { status });
+
+    // Get subcategories for this category (return all regardless of status)
+    const subcategories = await SubCategory.find({ 
+      categoryId: id
+    }).select('title slug description image status categoryId');
+
+    // Attach subcategories to the category (complete object like getAllCategories)
+    const categoryWithSubcategories = {
+      ...category.toObject(),
+      subcategories: subcategories
+    };
+
+    return successResponseHelper(res, { 
+      message: 'Category status updated successfully', 
+      data: categoryWithSubcategories 
+    });
+  } catch (error) {
+    console.error('Change status error:', error);
+    return errorResponseHelper(res, { message: 'Internal server error', code: '00500' });
+  } 
+};
+
 const getCategoryHierarchy = async (req, res) => {
   try {
     const categories = await Category.find({ status: 'active' }).sort('title');
+    
+    // Get all subcategories for active categories
+    const categoryIds = categories.map(cat => cat._id);
+    const subcategories = await SubCategory.find({ 
+      categoryId: { $in: categoryIds }
+    }).select('title slug description image status categoryId');
+
+    // Group subcategories by category
+    const subcategoriesByCategory = {};
+    subcategories.forEach(sub => {
+      const categoryId = sub.categoryId.toString();
+      if (!subcategoriesByCategory[categoryId]) {
+        subcategoriesByCategory[categoryId] = [];
+      }
+      subcategoriesByCategory[categoryId].push(sub);
+    });
     
     // Build hierarchy
     const buildHierarchy = (parentId = null) => {
@@ -345,6 +450,7 @@ const getCategoryHierarchy = async (req, res) => {
         .filter(cat => String(cat.parentCategory) === String(parentId))
         .map(cat => ({
           ...cat.toObject(),
+          subcategories: subcategoriesByCategory[cat._id.toString()] || [],
           children: buildHierarchy(cat._id)
         }));
     };
@@ -373,13 +479,44 @@ const bulkUpdateStatus = async (req, res) => {
       return errorResponseHelper(res, { message: 'Status must be either "active" or "inactive"', code: '00400' });
     }
 
+    // Update categories status
     const result = await Category.updateMany(
       { _id: { $in: categoryIds } },
       { status, updatedAt: Date.now() }
     );
 
+    // Update subcategories status to match category status
+    await SubCategory.updateMany({ categoryId: { $in: categoryIds } }, { status });
+
+    // Get updated categories with subcategories
+    const updatedCategories = await Category.find({ _id: { $in: categoryIds } })
+      .populate('parentCategory', 'title');
+
+    // Get subcategories for all updated categories (return all regardless of status)
+    const subcategories = await SubCategory.find({ 
+      categoryId: { $in: categoryIds }
+    }).select('title slug description image status categoryId');
+
+    // Group subcategories by category
+    const subcategoriesByCategory = {};
+    subcategories.forEach(sub => {
+      const categoryId = sub.categoryId.toString();
+      if (!subcategoriesByCategory[categoryId]) {
+        subcategoriesByCategory[categoryId] = [];
+      }
+      subcategoriesByCategory[categoryId].push(sub);
+    });
+
+    // Attach subcategories to each category
+    const categoriesWithSubcategories = updatedCategories.map(category => ({
+      ...category.toObject(),
+      subcategories: subcategoriesByCategory[category._id.toString()] || []
+    }));
+
     return successResponseHelper(res, {
-      message: `Status updated for ${result.modifiedCount} categories`
+      message: `Status updated for ${result.modifiedCount} categories`,
+      data: categoriesWithSubcategories,
+      updatedCount: result.modifiedCount
     });
   } catch (error) {
     console.error('Bulk update status error:', error);
@@ -393,6 +530,7 @@ export {
   getCategoryById,
   updateCategory,
   deleteCategory,
+  changeStatus,
   getCategoryHierarchy,
   bulkUpdateStatus
 };
