@@ -9,10 +9,12 @@ import {
 const router = Router();
 
 router.get("/", getBusinessListings);
+
+// Business categories with nested subcategories - MUST come BEFORE :id routes
+router.get("/categories", getBusinessCategoriesWithSubcategories);
+
+// Parameterized routes - MUST come AFTER specific routes
 router.get("/:id", getBusinessDetails);
 router.get("/:id/reviews", getBusinessReviews);
-
-// Business categories with nested subcategories
-router.get("/categories", getBusinessCategoriesWithSubcategories);
 
 export default router;

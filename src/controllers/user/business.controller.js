@@ -394,6 +394,10 @@ export const getBusinessReviews = async (req, res) => {
 // 4. Get all business categories with nested subcategories
 export const getBusinessCategoriesWithSubcategories = async (req, res) => {
   try {
+    console.log('🔍 getBusinessCategoriesWithSubcategories called');
+    console.log('📝 Request params:', req.params);
+    console.log('📝 Request query:', req.query);
+    
     const { status = 'active' } = req.query;
     
     const filter = {};
@@ -401,10 +405,14 @@ export const getBusinessCategoriesWithSubcategories = async (req, res) => {
       filter.status = status;
     }
 
+    console.log('🔍 Filter applied:', filter);
+
     // Get all categories
     const categories = await Category.find(filter)
       .select('_id title description image slug color sortOrder')
       .sort({ sortOrder: 1, title: 1 });
+
+    console.log('📊 Found categories:', categories.length);
 
     // Get subcategories for each category
     const categoriesWithSubcategories = await Promise.all(
@@ -419,11 +427,15 @@ export const getBusinessCategoriesWithSubcategories = async (req, res) => {
         .select('_id title description image slug')
         .sort({ title: 1 });
         
+        console.log(`📊 Category "${category.title}" has ${subcategories.length} subcategories`);
+        
         // Add subcategories array to category object
         categoryObj.subcategories = subcategories;
         return categoryObj;
       })
     );
+
+    console.log('✅ Successfully fetched categories with subcategories');
 
     res.json({
       success: true,
@@ -431,7 +443,8 @@ export const getBusinessCategoriesWithSubcategories = async (req, res) => {
       total: categoriesWithSubcategories.length
     });
   } catch (error) {
-    console.error('Error fetching business categories with subcategories:', error);
+    console.error('❌ Error fetching business categories with subcategories:', error);
+    console.error('❌ Error stack:', error.stack);
     res.status(500).json({ 
       success: false, 
       message: 'Failed to fetch business categories', 

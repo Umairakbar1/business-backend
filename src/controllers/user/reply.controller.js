@@ -7,7 +7,7 @@ import { errorResponseHelper, successResponseHelper } from '../../helpers/utilit
 const createReply = async (req, res) => {
     try {
         const { commentId, content, parentReplyId } = req.body;
-        const userId = req.user.id;
+        const userId = req.user._id; // Fixed: changed from req.user.id
 
         if (!commentId || !content) {
             return errorResponseHelper(res, { 
@@ -63,7 +63,7 @@ const createReply = async (req, res) => {
         const replyData = {
             content: content.trim(),
             author: userId,
-            authorName: `${req.user.firstName} ${req.user.lastName}`.trim(),
+            authorName: req.user.name, // Fixed: changed from firstName lastName
             authorEmail: req.user.email,
             comment: commentId,
             blogId: comment.blogId,
@@ -78,7 +78,7 @@ const createReply = async (req, res) => {
         await comment.save();
 
         // Populate author information for response
-        await reply.populate('author', 'firstName lastName email');
+        await reply.populate('author', 'name email'); // Fixed: changed from firstName lastName
 
         return successResponseHelper(res, { 
             message: "Reply created successfully", 
@@ -135,13 +135,13 @@ const getCommentReplies = async (req, res) => {
             status: 'active',
             parentReply: null // Only top-level replies
         })
-        .populate('author', 'firstName lastName email')
+        .populate('author', 'name email') // Fixed: changed from firstName lastName
         .populate({
             path: 'parentReply',
             match: { status: 'active' },
             populate: {
                 path: 'author',
-                select: 'firstName lastName email'
+                select: 'name email' // Fixed: changed from firstName lastName
             }
         })
         .sort(sortObj)
@@ -178,7 +178,7 @@ const updateReply = async (req, res) => {
     try {
         const { replyId } = req.params;
         const { content } = req.body;
-        const userId = req.user.id;
+        const userId = req.user._id; // Fixed: changed from req.user.id
 
         if (!content || content.trim().length === 0) {
             return errorResponseHelper(res, { 
@@ -234,7 +234,7 @@ const updateReply = async (req, res) => {
 const deleteReply = async (req, res) => {
     try {
         const { replyId } = req.params;
-        const userId = req.user.id;
+        const userId = req.user._id; // Fixed: changed from req.user.id
 
         const reply = await Reply.findById(replyId);
         if (!reply) {
@@ -279,7 +279,7 @@ const deleteReply = async (req, res) => {
 const toggleReplyLike = async (req, res) => {
     try {
         const { replyId } = req.params;
-        const userId = req.user.id;
+        const userId = req.user._id; // Fixed: changed from req.user.id
 
         const reply = await Reply.findById(replyId);
         if (!reply) {

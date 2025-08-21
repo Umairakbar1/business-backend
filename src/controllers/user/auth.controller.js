@@ -9,23 +9,68 @@ import {
 import { signAccessToken } from "../../helpers/jwtHelper.js";
 import { sendEmail } from "../../helpers/sendGridHelper.js";
 
+// Generate unique username from name
+const generateUniqueUsername = async (name) => {
+  // Convert name to lowercase and replace spaces with underscores
+  let baseUsername = name.toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '');
+  
+  // Ensure base username is at least 3 characters
+  if (baseUsername.length < 3) {
+    baseUsername = baseUsername + 'user';
+  }
+  
+  // Truncate if too long (max 25 chars to leave room for numbers)
+  if (baseUsername.length > 25) {
+    baseUsername = baseUsername.substring(0, 25);
+  }
+  
+  let username = baseUsername;
+  let counter = 1;
+  
+  // Keep trying until we find a unique username
+  while (true) {
+    const existingUser = await User.findOne({ userName: username });
+    if (!existingUser) {
+      return username;
+    }
+    
+    // Add 1-2 digit number to make it unique
+    username = `${baseUsername}${counter}`;
+    counter++;
+    
+    // Prevent infinite loop (max 99 attempts)
+    if (counter > 99) {
+      // Fallback: add timestamp
+      const timestamp = Date.now().toString().slice(-4);
+      username = `${baseUsername}${timestamp}`;
+      break;
+    }
+  }
+  
+  return username;
+};
+
 // Register user with email and password
 const registerUser = async (req, res) => {
-  const { name, email, password, phoneNumber } = req.body;
+  const { name, email, password } = req.body;
 
-  // Check if user already exists
-  const [existingUser, existingUserError] = await asyncWrapper(() =>
-    User.findOne({ $or: [{ email }, { phoneNumber }] })
+  // Check if user already exists by email
+  const [existingUserByEmail, existingUserByEmailError] = await asyncWrapper(() =>
+    User.findOne({ email })
   );
-  if (existingUserError) return serverErrorHelper(req, res, 500, existingUserError);
-  if (existingUser) return errorResponseHelper(res, { message: "User already exists with this email or phone number" });
+  if (existingUserByEmailError) return serverErrorHelper(req, res, 500, existingUserByEmailError);
+  if (existingUserByEmail) return errorResponseHelper(res, { message: "User already exists with this email" });
+
+  // Generate unique username
+  const [username, usernameError] = await asyncWrapper(() => generateUniqueUsername(name));
+  if (usernameError) return serverErrorHelper(req, res, 500, usernameError);
 
   // Create new user
   const newUser = new User({
     name,
     email,
     password,
-    phoneNumber
+    userName: username,
   });
 
   const [user, error] = await asyncWrapper(() => newUser.save());
@@ -39,6 +84,7 @@ const registerUser = async (req, res) => {
     user: {
       _id: user._id,
       name: user.name,
+      userName: user.userName,
       email: user.email,
       phoneNumber: user.phoneNumber,
       profilePhoto: user.profilePhoto,
@@ -77,6 +123,7 @@ const loginUser = async (req, res) => {
     user: {
       _id: user._id,
       name: user.name,
+      userName: user.userName,
       email: user.email,
       phoneNumber: user.phoneNumber,
       profilePhoto: user.profilePhoto,
@@ -176,6 +223,7 @@ const updateProfile = async (req, res) => {
     user: {
       _id: user._id,
       name: user.name,
+      userName: user.userName,
       email: user.email,
       phoneNumber: user.phoneNumber,
       profilePhoto: user.profilePhoto,
@@ -214,6 +262,7 @@ const googleAuth = async (req, res) => {
       user: {
         _id: user._id,
         name: user.name,
+        userName: user.userName,
         email: user.email,
         phoneNumber: user.phoneNumber,
         profilePhoto: user.profilePhoto,
@@ -240,6 +289,7 @@ const googleAuth = async (req, res) => {
       user: {
         _id: user._id,
         name: user.name,
+        userName: user.userName,
         email: user.email,
         phoneNumber: user.phoneNumber,
         profilePhoto: user.profilePhoto,
@@ -250,12 +300,17 @@ const googleAuth = async (req, res) => {
     });
   }
 
+  // Generate unique username for new Google user
+  const [username, usernameError] = await asyncWrapper(() => generateUniqueUsername(name));
+  if (usernameError) return serverErrorHelper(req, res, 500, usernameError);
+
   // Create new user with Google data
   const newUser = new User({
     googleId,
     name,
     email,
     profilePhoto,
+    userName: username,
     isEmailVerified: true // Google accounts are pre-verified
   });
 
@@ -268,6 +323,7 @@ const googleAuth = async (req, res) => {
     user: {
       _id: createdUser._id,
       name: createdUser.name,
+      userName: createdUser.userName,
       email: createdUser.email,
       phoneNumber: createdUser.phoneNumber,
       profilePhoto: createdUser.profilePhoto,

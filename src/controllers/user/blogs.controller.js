@@ -123,7 +123,7 @@ const getAllBlogs = async (req, res) => {
             .populate('subCategory', '_id title description')
             .populate({
                 path: 'author',
-                select: 'firstName lastName email'
+                select: 'name email' // Fixed: changed from firstName lastName to name for User model
             })
             .sort({ createdAt: -1 })
             .skip(skip)
@@ -193,7 +193,7 @@ const getBlogById = async (req, res) => {
         })
         .populate({
             path: 'author',
-            select: 'firstName lastName email'
+            select: 'name email' // Fixed: changed from firstName lastName to name for User model
         })
         .select('-__v');
 
@@ -259,7 +259,7 @@ const getBlogById = async (req, res) => {
                 // status: 'active'
                 // parentComment: null // Only top-level comments - temporarily removed for debugging
             })
-            .populate('author', 'firstName lastName email')
+            .populate('author', 'name email') // Fixed: changed from firstName lastName to name for User model
             .sort(sortObj)
             .skip(skip)
             .limit(parseInt(commentLimit))
@@ -283,7 +283,7 @@ const getBlogById = async (req, res) => {
                         comment: comment._id,
                         // status: 'active'
                     })
-                    .populate('author', 'firstName lastName email')
+                    .populate('author', 'name email') // Fixed: changed from firstName lastName to name for User model
                     .sort({ createdAt: 1 })
                     .select('-__v');
                     

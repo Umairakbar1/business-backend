@@ -20,15 +20,28 @@ const authorizedAccessUser = async (req, res, next) => {
     token = req.header("Authorization").replace("Bearer ", "");
 
   try {
-    req.user = verify(token, GLOBAL_ENV.jwtSecretKeyUser, { expiresIn: GLOBAL_ENV.jwtExpiresInUser });
-    if (!mongoose.Types.ObjectId.isValid(req.user._id))
+    const decoded = verify(token, GLOBAL_ENV.jwtSecretKeyUser, { expiresIn: GLOBAL_ENV.jwtExpiresInUser });
+    if (!mongoose.Types.ObjectId.isValid(decoded._id))
       return errorResponseHelper(res, {message:GLOBAL_MESSAGES.invalidData,code:"00401"});
 
-      const userExists = await User.findById(req.user._id);
+    const userExists = await User.findById(decoded._id);
     if (!userExists)
       return errorResponseHelper(res, {message:GLOBAL_MESSAGES.dataNotFound,code:"00401"});
-    if (userExists.status == GLOBAL_ENV.userStatus.Blocked)
+    
+    // Check if user is blocked
+    if (userExists.status === 'blocked') {
         return errorResponseHelper(res, {message:"Access restricted by administrator. Please contact support for assistance.",code:"00401"});
+    }
+    
+    // Set req.user with the full user data from database
+    req.user = {
+      _id: userExists._id,
+      name: userExists.name,
+      email: userExists.email,
+      userName: userExists.userName,
+      status: userExists.status
+    };
+    
     next();
   } catch (error) {
     return serverErrorHelper(req, res, 500, error);

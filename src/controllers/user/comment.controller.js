@@ -7,7 +7,7 @@ import { errorResponseHelper, successResponseHelper } from '../../helpers/utilit
 const createComment = async (req, res) => {
     try {
         const { blogId, content, parentCommentId } = req.body;
-        const userId = req.user.id;
+        const userId = req.user._id; // Changed from req.user.id to req.user._id
 
         if (!blogId || !content) {
             return errorResponseHelper(res, { 
@@ -53,16 +53,16 @@ const createComment = async (req, res) => {
         const commentData = {
             content: content.trim(),
             author: userId,
-            authorName: `${req.user.firstName} ${req.user.lastName}`.trim(),
-            authorEmail: req.user.email,
-            blogId: blogId,
+            authorName: req.user.name, // Changed from template literal to direct access
+            authorEmail: req.user.email, // Direct access to email
+            blogId: blogId, 
             parentComment: parentCommentId || null
         };
 
         const comment = await Comment.create(commentData);
 
         // Populate author information for response
-        await comment.populate('author', 'firstName lastName email');
+        await comment.populate('author', 'name email'); // Changed from firstName lastName to name
 
         return successResponseHelper(res, { 
             message: "Comment created successfully", 
@@ -122,13 +122,13 @@ const getBlogComments = async (req, res) => {
             status: 'active',
             parentComment: null // Only top-level comments
         })
-        .populate('author', 'firstName lastName email')
+        .populate('author', 'name email')
         .populate({
             path: 'replies',
             match: { status: 'active' },
             populate: {
                 path: 'author',
-                select: 'firstName lastName email'
+                select: 'name email'
             },
             options: { sort: { createdAt: 1 } }
         })
@@ -166,7 +166,7 @@ const updateComment = async (req, res) => {
     try {
         const { commentId } = req.params;
         const { content } = req.body;
-        const userId = req.user.id;
+        const userId = req.user._id;
 
         if (!content || content.trim().length === 0) {
             return errorResponseHelper(res, { 
@@ -222,7 +222,7 @@ const updateComment = async (req, res) => {
 const deleteComment = async (req, res) => {
     try {
         const { commentId } = req.params;
-        const userId = req.user.id;
+        const userId = req.user._id;
 
         const comment = await Comment.findById(commentId);
         if (!comment) {
@@ -260,7 +260,7 @@ const deleteComment = async (req, res) => {
 const toggleCommentLike = async (req, res) => {
     try {
         const { commentId } = req.params;
-        const userId = req.user.id;
+        const userId = req.user._id;
 
         const comment = await Comment.findById(commentId);
         if (!comment) {
