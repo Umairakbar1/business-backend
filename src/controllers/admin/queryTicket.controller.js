@@ -2,7 +2,7 @@ import QueryTicket from '../../models/admin/queryTicket.js';
 import Admin from '../../models/admin/admin.js';
 import Business from '../../models/business/business.js';
 import { errorResponseHelper, successResponseHelper } from '../../helpers/utilityHelper.js';
-import { uploadImage, uploadVideo } from '../../helpers/cloudinaryHelper.js';
+import { uploadImage, uploadVideo, deleteMultipleFiles } from '../../helpers/cloudinaryHelper.js';
 import mongoose from 'mongoose';
 
 // GET /admin/query-tickets - Get all query tickets (admin can see only assigned or created by them)
@@ -15,11 +15,12 @@ export const getAllQueryTickets = async (req, res) => {
       return errorResponseHelper(res, { message: 'Admin not authenticated', code: '00401' });
     }
     
-    // Build filter object - admin can only see tickets assigned to them or created by them
+    // Build filter object - admin can see tickets assigned to them, created by them, OR assigned to any admin
     const filter = {
       $or: [
         { assignedTo: adminId, assignedToType: 'admin' },
-        { createdBy: adminId, createdByType: 'admin' }
+        { createdBy: adminId, createdByType: 'admin' },
+        { assignedToType: 'admin' } // Show all tickets assigned to any admin
       ]
     };
     
@@ -35,7 +36,7 @@ export const getAllQueryTickets = async (req, res) => {
     
     // Get tickets with populated information
     const tickets = await QueryTicket.find(filter)
-      .populate('businessId', 'businessId contactPerson email')
+      .populate('businessId', 'businessId contactPerson email businessOwner')
       .populate('createdBy', 'firstName lastName email')
       .populate({
         path: 'assignedTo',
@@ -87,10 +88,11 @@ export const getQueryTicketById = async (req, res) => {
       _id: id,
       $or: [
         { assignedTo: adminId, assignedToType: 'admin' },
-        { createdBy: adminId, createdByType: 'admin' }
+        { createdBy: adminId, createdByType: 'admin' },
+        { assignedToType: 'admin' } // Show all tickets assigned to any admin
       ]
     })
-      .populate('businessId', 'businessId contactPerson email')
+      .populate('businessId', 'businessId contactPerson email businessOwner')
       .populate('createdBy', 'firstName lastName email')
       .populate({
         path: 'assignedTo',
@@ -139,16 +141,66 @@ export const createQueryTicket = async (req, res) => {
     }
     
     // Get business details and verify it exists
-    const business = await Business.findById(businessId);
+    const business = await Business.findById(businessId).populate('businessOwner');
     if (!business) {
       return errorResponseHelper(res, { message: 'Business not found', code: '00404' });
     }
     
     // Handle file upload if present
-    let attachment = null;
-    if (req.file) {
+    let attachments = [];
+    if (req.files && req.files.length > 0) {
       try {
-        console.log('File received:', req.file.originalname, req.file.mimetype);
+        console.log(`${req.files.length} files received`);
+        
+        for (const file of req.files) {
+          console.log('Processing file:', file.originalname, file.mimetype);
+          
+    let attachment = null;
+          if (file.mimetype.startsWith('video/')) {
+            // Upload video to Cloudinary
+            const videoResult = await uploadVideo(file.buffer, 'admin-app/tickets/videos');
+            attachment = {
+              url: videoResult.url,
+              public_id: videoResult.public_id,
+              originalName: file.originalname,
+              type: 'video',
+              duration: videoResult.duration,
+              format: videoResult.format,
+              bytes: videoResult.bytes
+            };
+          } else {
+            // Upload image/document to Cloudinary
+            const imageResult = await uploadImage(file.buffer, 'admin-app/tickets/documents');
+            attachment = {
+              url: imageResult.url,
+              public_id: imageResult.public_id,
+              originalName: file.originalname,
+              type: 'image',
+              format: imageResult.format,
+              bytes: imageResult.bytes
+            };
+          }
+          
+          if (attachment) {
+            attachments.push(attachment);
+            console.log('Attachment created:', attachment);
+          }
+        }
+        
+        console.log(`Total attachments created: ${attachments.length}`);
+      } catch (uploadError) {
+        console.error('File upload error:', uploadError);
+        return errorResponseHelper(res, { 
+          message: 'Failed to upload attachment. Please try again.', 
+          code: '00500' 
+        });
+      }
+    } else if (req.file) {
+      // Handle single file for backward compatibility
+      try {
+        console.log('Single file received:', req.file.originalname, req.file.mimetype);
+        
+        let attachment = null;
         if (req.file.mimetype.startsWith('video/')) {
           // Upload video to Cloudinary
           const videoResult = await uploadVideo(req.file.buffer, 'admin-app/tickets/videos');
@@ -168,12 +220,16 @@ export const createQueryTicket = async (req, res) => {
             url: imageResult.url,
             public_id: imageResult.public_id,
             originalName: req.file.originalname,
-            type: 'document',
+            type: 'image',
             format: imageResult.format,
             bytes: imageResult.bytes
           };
         }
-        console.log('Attachment created:', attachment);
+        
+        if (attachment) {
+          attachments.push(attachment);
+          console.log('Single attachment created:', attachment);
+        }
       } catch (uploadError) {
         console.error('File upload error:', uploadError);
         return errorResponseHelper(res, { 
@@ -182,7 +238,7 @@ export const createQueryTicket = async (req, res) => {
         });
       }
     } else {
-      console.log('No file uploaded - attachment will be null');
+      console.log('No files uploaded - attachments will be empty array');
     }
     
     // Handle assignment logic automatically based on assignedToType
@@ -192,11 +248,18 @@ export const createQueryTicket = async (req, res) => {
     
     if (assignedToType) {
       if (assignedToType === '1') {
-        // Assign to business (use the businessId from the ticket)
-        finalAssignedTo = businessId;
+        // Assign to business owner (use the businessOwner from the business)
+        finalAssignedTo = business.businessOwner;
         finalAssignedToType = 'business';
         finalAssignedToModel = 'Business';
-        console.log('Auto-assigning to business:', finalAssignedTo?.toString());
+        console.log('Auto-assigning to business owner:', finalAssignedTo?.toString());
+        console.log('Business owner ID type:', typeof business.businessOwner);
+        console.log('Business owner ID value:', business.businessOwner);
+        console.log('Business object:', {
+          _id: business._id?.toString(),
+          businessName: business.businessName,
+          businessOwner: business.businessOwner?.toString()
+        });
       } else if (assignedToType === '2') {
         // Assign to me (current admin)
         finalAssignedTo = adminId;
@@ -226,19 +289,37 @@ export const createQueryTicket = async (req, res) => {
       assignedToModel: finalAssignedToModel
     };
     
-    // Only add attachment if file was uploaded and processed successfully
-    if (attachment && attachment.type) {
-      ticketData.attachment = attachment;
-      console.log('Adding attachment to ticket data:', attachment);
+    // Only add attachments if files were uploaded and processed successfully
+    if (attachments.length > 0) {
+      ticketData.attachment = attachments;
+      console.log('Adding attachments to ticket data:', attachments);
     } else {
-      console.log('No valid attachment to add - attachment:', attachment);
+      console.log('No valid attachments to add - attachments:', attachments);
     }
     
     console.log('Final ticket data:', JSON.stringify(ticketData, null, 2));
-    console.log('Attachment field in ticket data:', ticketData.attachment);
+    console.log('Attachments field in ticket data:', ticketData.attachment);
+    console.log('Assignment details:', {
+      assignedTo: ticketData.assignedTo?.toString(),
+      assignedToType: ticketData.assignedToType,
+      assignedToModel: ticketData.assignedToModel,
+      createdBy: ticketData.createdBy?.toString(),
+      createdByType: ticketData.createdByType
+    });
     
     const ticket = new QueryTicket(ticketData);
     await ticket.save();
+    
+    // Debug logging after save
+    console.log('Ticket saved successfully. Database values:', {
+      _id: ticket._id?.toString(),
+      assignedTo: ticket.assignedTo?.toString(),
+      assignedToType: ticket.assignedToType,
+      assignedToModel: ticket.assignedToModel,
+      createdBy: ticket.createdBy?.toString(),
+      createdByType: ticket.createdByType,
+      businessId: ticket.businessId?.toString()
+    });
     
     // Populate comments and replies for response
     await ticket.populate({
@@ -258,6 +339,11 @@ export const createQueryTicket = async (req, res) => {
 };
 
 // PUT /admin/query-tickets/:id - Update query ticket
+// Attachment handling:
+// - If removeAttachmentIds array is provided, those attachments are removed from Cloudinary and ticket
+// - If new files are uploaded (req.files or req.file), they are added to existing attachments
+// - If keepExistingAttachment is true and no new files, existing attachments are preserved
+// - If no changes requested, existing attachments remain unchanged
 export const updateQueryTicket = async (req, res) => {
   try {
     const { id } = req.params;
@@ -283,13 +369,100 @@ export const updateQueryTicket = async (req, res) => {
       return errorResponseHelper(res, { message: 'You can only update tickets you created', code: '00403' });
     }
     
-    // Handle file upload if present
-    if (req.file) {
+    // Handle attachment updates based on frontend input
+    const { removeAttachmentIds, keepExistingAttachment } = req.body;
+    let finalAttachments = [...(ticket.attachment || [])]; // Start with existing attachments
+    
+    // Step 1: Handle specific attachment removal by public IDs
+    if (removeAttachmentIds && Array.isArray(removeAttachmentIds) && removeAttachmentIds.length > 0) {
+      console.log('Removing attachments with public IDs:', removeAttachmentIds);
+      
+      // Find attachments to remove
+      const attachmentsToRemove = finalAttachments.filter(att => 
+        removeAttachmentIds.includes(att.public_id)
+      );
+      
+      // Delete from Cloudinary
+      const publicIdsToDelete = attachmentsToRemove.map(att => att.public_id).filter(Boolean);
+      if (publicIdsToDelete.length > 0) {
+        try {
+          await deleteMultipleFiles(publicIdsToDelete);
+          console.log('Attachments deleted from Cloudinary:', publicIdsToDelete);
+        } catch (deleteError) {
+          console.error('Failed to delete attachments from Cloudinary:', deleteError);
+          // Continue with the update even if deletion fails
+        }
+      }
+      
+      // Remove from local array
+      finalAttachments = finalAttachments.filter(att => 
+        !removeAttachmentIds.includes(att.public_id)
+      );
+      
+      console.log(`Removed ${attachmentsToRemove.length} attachments. Remaining: ${finalAttachments.length}`);
+    }
+    
+    // Step 2: Handle new file uploads
+    if (req.files && req.files.length > 0) {
       try {
+        console.log(`${req.files.length} new files received for update`);
+        
+        // Upload new files
+        const newAttachments = [];
+        for (const file of req.files) {
+          let attachment = null;
+          if (file.mimetype.startsWith('video/')) {
+            // Upload video to Cloudinary
+            const videoResult = await uploadVideo(file.buffer, 'admin-app/tickets/videos');
+            attachment = {
+              url: videoResult.url,
+              public_id: videoResult.public_id,
+              originalName: file.originalname,
+              type: 'video',
+              duration: videoResult.duration,
+              format: videoResult.format,
+              bytes: videoResult.bytes
+            };
+          } else {
+            // Upload image/document to Cloudinary
+            const imageResult = await uploadImage(file.buffer, 'admin-app/tickets/documents');
+            attachment = {
+              url: imageResult.url,
+              public_id: imageResult.public_id,
+              originalName: file.originalname,
+              type: 'image',
+              format: imageResult.format,
+              bytes: imageResult.bytes
+            };
+          }
+          
+          if (attachment) {
+            newAttachments.push(attachment);
+            console.log('New attachment created:', attachment);
+          }
+        }
+        
+        // Add new attachments to existing ones
+        finalAttachments = [...finalAttachments, ...newAttachments];
+        console.log(`Total attachments after adding new ones: ${finalAttachments.length}`);
+        
+      } catch (uploadError) {
+        console.error('File upload error:', uploadError);
+        return errorResponseHelper(res, { 
+          message: 'Failed to upload attachment. Please try again.', 
+          code: '00500' 
+        });
+      }
+    } else if (req.file) {
+      // Handle single file for backward compatibility
+      try {
+        console.log('Single new file received for update:', req.file.originalname, req.file.mimetype);
+        
+        let attachment = null;
         if (req.file.mimetype.startsWith('video/')) {
           // Upload video to Cloudinary
           const videoResult = await uploadVideo(req.file.buffer, 'admin-app/tickets/videos');
-          ticket.attachment = {
+          attachment = {
             url: videoResult.url,
             public_id: videoResult.public_id,
             originalName: req.file.originalname,
@@ -301,14 +474,20 @@ export const updateQueryTicket = async (req, res) => {
         } else {
           // Upload image/document to Cloudinary
           const imageResult = await uploadImage(req.file.buffer, 'admin-app/tickets/documents');
-          ticket.attachment = {
+          attachment = {
             url: imageResult.url,
             public_id: imageResult.public_id,
             originalName: req.file.originalname,
-            type: 'document',
+            type: 'image',
             format: imageResult.format,
             bytes: imageResult.bytes
           };
+        }
+        
+        if (attachment) {
+          // Add new attachment to existing ones
+          finalAttachments.push(attachment);
+          console.log('Single attachment added. Total attachments:', finalAttachments.length);
         }
       } catch (uploadError) {
         console.error('File upload error:', uploadError);
@@ -319,15 +498,38 @@ export const updateQueryTicket = async (req, res) => {
       }
     }
     
+    // Step 3: Update ticket attachments
+    // If keepExistingAttachment is true and no new files were uploaded, preserve existing
+    if (keepExistingAttachment === true && !req.files && !req.file) {
+      console.log('Keeping existing attachments unchanged');
+      // finalAttachments already contains existing attachments, no change needed
+    } else {
+      // Update with the final attachment array
+      ticket.attachment = finalAttachments;
+      console.log(`Final attachment count: ${finalAttachments.length}`);
+    }
+    
     // Handle assignment logic automatically based on assignedToType
     if (assignedToType) {
       if (assignedToType === '1') {
-        // Assign to business (use the businessId from the ticket or request)
+        // Assign to business owner (use the businessOwner from the business)
         const targetBusinessId = businessId || ticket.businessId;
-        ticket.assignedTo = targetBusinessId;
+        // Get business to access businessOwner
+        const targetBusiness = await Business.findById(targetBusinessId).populate('businessOwner');
+        if (!targetBusiness) {
+          return errorResponseHelper(res, { message: 'Business not found', code: '00404' });
+        }
+        ticket.assignedTo = targetBusiness.businessOwner;
         ticket.assignedToType = 'business';
         ticket.assignedToModel = 'Business';
-        console.log('Auto-assigning to business:', targetBusinessId?.toString());
+        console.log('Auto-assigning to business owner:', targetBusiness.businessOwner?.toString());
+        console.log('Target business owner ID type:', typeof targetBusiness.businessOwner);
+        console.log('Target business owner ID value:', targetBusiness.businessOwner);
+        console.log('Target business object:', {
+          _id: targetBusiness._id?.toString(),
+          businessName: targetBusiness.businessName,
+          businessOwner: targetBusiness.businessOwner?.toString()
+        });
       } else if (assignedToType === '2') {
         // Assign to me (current admin)
         ticket.assignedTo = adminId;
@@ -357,10 +559,22 @@ export const updateQueryTicket = async (req, res) => {
     if (childIssue !== undefined) ticket.childIssue = childIssue;
     if (linkedIssue !== undefined) ticket.linkedIssue = linkedIssue;
     if (websiteUrl !== undefined) ticket.websiteUrl = websiteUrl;
-    if (attachment !== undefined) ticket.attachment = attachment;
+    // Note: attachment field is now handled above in the new attachment logic
+    // The attachment field from request body is ignored to prevent validation errors
     if (comments !== undefined) ticket.comments = comments;
     ticket.updatedAt = new Date();
     await ticket.save();
+    
+    // Debug logging after update
+    console.log('Ticket updated successfully. Database values:', {
+      _id: ticket._id?.toString(),
+      assignedTo: ticket.assignedTo?.toString(),
+      assignedToType: ticket.assignedToType,
+      assignedToModel: ticket.assignedToModel,
+      createdBy: ticket.createdBy?.toString(),
+      createdByType: ticket.createdByType,
+      businessId: ticket.businessId?.toString()
+    });
     
     // Populate comments and replies for response
     await ticket.populate({
@@ -686,17 +900,23 @@ export const assignTicket = async (req, res) => {
     let assignedUserModel = '';
     
     if (assignedToType === '1') {
-      // Assign to business (use the businessId from the ticket)
-      assignedUserId = ticket.businessId;
-      assignedUserType = 'business';
-      assignedUserModel = 'Business';
-      
-      // Get business details for name
-      const assignedBusiness = await Business.findById(assignedUserId);
-      if (!assignedBusiness) {
-        return errorResponseHelper(res, { message: 'Business not found', code: '00404' });
-      }
-      assignedUserName = assignedBusiness.businessName;
+              // Assign to business owner (use the businessOwner from the business)
+        // Get business to access businessOwner
+        const assignedBusiness = await Business.findById(ticket.businessId).populate('businessOwner');
+        if (!assignedBusiness) {
+          return errorResponseHelper(res, { message: 'Business not found', code: '00404' });
+        }
+        assignedUserId = assignedBusiness.businessOwner;
+        assignedUserType = 'business';
+        assignedUserModel = 'Business';
+        assignedUserName = assignedBusiness.businessName;
+        
+        console.log('Assigning to business owner:', {
+          businessId: ticket.businessId?.toString(),
+          businessName: assignedBusiness.businessName,
+          businessOwner: assignedBusiness.businessOwner?.toString(),
+          businessOwnerType: typeof assignedBusiness.businessOwner
+        });
       
     } else if (assignedToType === '2') {
       // Assign to me (current admin)
@@ -734,6 +954,17 @@ export const assignTicket = async (req, res) => {
     }
     
     await ticket.save();
+    
+    // Debug logging after assignment
+    console.log('Ticket assigned successfully. Database values:', {
+      _id: ticket._id?.toString(),
+      assignedTo: ticket.assignedTo?.toString(),
+      assignedToType: ticket.assignedToType,
+      assignedToModel: ticket.assignedToModel,
+      createdBy: ticket.createdBy?.toString(),
+      createdByType: ticket.createdByType,
+      businessId: ticket.businessId?.toString()
+    });
     
     // Populate assigned user details for response
     if (assignedUserType === 'admin') {
@@ -838,12 +1069,13 @@ export const addComment = async (req, res) => {
       return errorResponseHelper(res, { message: 'Invalid ticket ID', code: '00400' });
     }
     
-    // Admin can comment on tickets assigned to them or created by them
+    // Admin can comment on tickets assigned to them, created by them, or assigned to any admin
     const ticket = await QueryTicket.findOne({
       _id: id,
       $or: [
         { assignedTo: adminId, assignedToType: 'admin' },
-        { createdBy: adminId, createdByType: 'admin' }
+        { createdBy: adminId, createdByType: 'admin' },
+        { assignedToType: 'admin' } // Show all tickets assigned to any admin
       ]
     });
     
@@ -895,12 +1127,13 @@ export const editComment = async (req, res) => {
       return errorResponseHelper(res, { message: 'Invalid ticket or comment ID', code: '00400' });
     }
     
-    // Admin can edit comments on tickets assigned to them or created by them
+    // Admin can edit comments on tickets assigned to them, created by them, or assigned to any admin
     const ticket = await QueryTicket.findOne({
       _id: id,
       $or: [
         { assignedTo: adminId, assignedToType: 'admin' },
-        { createdBy: adminId, createdByType: 'admin' }
+        { createdBy: adminId, createdByType: 'admin' },
+        { assignedToType: 'admin' } // Show all tickets assigned to any admin
       ]
     });
     
@@ -947,12 +1180,13 @@ export const deleteComment = async (req, res) => {
       return errorResponseHelper(res, { message: 'Invalid ticket or comment ID', code: '00400' });
     }
     
-    // Admin can delete comments on tickets assigned to them or created by them
+    // Admin can delete comments on tickets assigned to them, created by them, or assigned to any admin
     const ticket = await QueryTicket.findOne({
       _id: id,
       $or: [
         { assignedTo: adminId, assignedToType: 'admin' },
-        { createdBy: adminId, createdByType: 'admin' }
+        { createdBy: adminId, createdByType: 'admin' },
+        { assignedToType: 'admin' } // Show all tickets assigned to any admin
       ]
     });
     
@@ -1001,12 +1235,13 @@ export const addReply = async (req, res) => {
       return errorResponseHelper(res, { message: 'Invalid ticket or comment ID', code: '00400' });
     }
     
-    // Admin can reply to comments on tickets assigned to them or created by them
+    // Admin can reply to comments on tickets assigned to them, created by them, or assigned to any admin
     const ticket = await QueryTicket.findOne({
       _id: id,
       $or: [
         { assignedTo: adminId, assignedToType: 'admin' },
-        { createdBy: adminId, createdByType: 'admin' }
+        { createdBy: adminId, createdByType: 'admin' },
+        { assignedToType: 'admin' } // Show all tickets assigned to any admin
       ]
     });
     
@@ -1063,12 +1298,13 @@ export const editReply = async (req, res) => {
       return errorResponseHelper(res, { message: 'Invalid ticket, comment, or reply ID', code: '00400' });
     }
     
-    // Admin can edit replies on tickets assigned to them or created by them
+    // Admin can edit replies on tickets assigned to them, created by them, or assigned to any admin
     const ticket = await QueryTicket.findOne({
       _id: id,
       $or: [
         { assignedTo: adminId, assignedToType: 'admin' },
-        { createdBy: adminId, createdByType: 'admin' }
+        { createdBy: adminId, createdByType: 'admin' },
+        { assignedToType: 'admin' } // Show all tickets assigned to any admin
       ]
     });
     
@@ -1120,12 +1356,13 @@ export const deleteReply = async (req, res) => {
       return errorResponseHelper(res, { message: 'Invalid ticket, comment, or reply ID', code: '00400' });
     }
     
-    // Admin can delete replies on tickets assigned to them or created by them
+    // Admin can delete replies on tickets assigned to them, created by them, or assigned to any admin
     const ticket = await QueryTicket.findOne({
       _id: id,
       $or: [
         { assignedTo: adminId, assignedToType: 'admin' },
-        { createdBy: adminId, createdByType: 'admin' }
+        { createdBy: adminId, createdByType: 'admin' },
+        { assignedToType: 'admin' } // Show all tickets assigned to any admin
       ]
     });
     

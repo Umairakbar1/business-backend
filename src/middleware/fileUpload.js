@@ -55,6 +55,9 @@ export const uploadSingleImage = upload.single('image');
 // Multiple files upload middleware
 export const uploadMultipleImages = upload.array('images', 10);
 
+// Multiple documents upload middleware
+export const uploadMultipleDocuments = upload.array('document', 10);
+
 // Error handling middleware
 export const handleUploadError = (error, req, res, next) => {
   if (error instanceof multer.MulterError) {

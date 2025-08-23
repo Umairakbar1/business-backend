@@ -209,7 +209,7 @@ export const uploadMultipleImagesToCloudinary = cloudinaryImageUpload.array('ima
 export const uploadMultipleMediaToCloudinary = cloudinaryMediaUpload.array('media', 10);
 
 // Multiple documents upload middleware for Cloudinary
-export const uploadMultipleDocumentsToCloudinary = cloudinaryDocumentUpload.array('documents', 5);
+export const uploadMultipleDocumentsToCloudinary = cloudinaryDocumentUpload.array('document', 5);
 
 // Error handling middleware for Cloudinary uploads
 export const handleCloudinaryUploadError = (error, req, res, next) => {

@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { verifyBusinessOwnerToken } from "../../middleware/authorization.js";
-import { uploadSingleDocumentToCloudinary, handleCloudinaryUploadError } from "../../middleware/cloudinaryUpload.js";
+import { uploadMultipleDocumentsToCloudinary, handleCloudinaryUploadError } from "../../middleware/cloudinaryUpload.js";
 import {
   getBusinessQueryTickets,
   getQueryTicketById,
@@ -29,10 +29,10 @@ router.get("/stats", verifyBusinessOwnerToken, getTicketStats);
 router.get("/:id", verifyBusinessOwnerToken, getQueryTicketById);
 
 // POST /business/query-tickets - Create new query ticket with file upload
-router.post("/", verifyBusinessOwnerToken, uploadSingleDocumentToCloudinary, handleCloudinaryUploadError, createQueryTicket);
+router.post("/", verifyBusinessOwnerToken, uploadMultipleDocumentsToCloudinary, handleCloudinaryUploadError, createQueryTicket);
 
 // PUT /business/query-tickets/:id - Update query ticket with file upload
-router.put("/:id", verifyBusinessOwnerToken, uploadSingleDocumentToCloudinary, handleCloudinaryUploadError, updateQueryTicket);
+router.put("/:id", verifyBusinessOwnerToken, uploadMultipleDocumentsToCloudinary, handleCloudinaryUploadError, updateQueryTicket);
 
 // DELETE /business/query-tickets/:id - Delete query ticket
 router.delete("/:id", verifyBusinessOwnerToken, deleteQueryTicket);

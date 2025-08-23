@@ -31,22 +31,20 @@ const QueryTicketSchema = new Schema({
   childIssue: { type: String },
   linkedIssue: { type: String },
   websiteUrl: { type: String },
-  attachment: {
+  attachment: [{
+    url: String,
+    public_id: String,
+    originalName: String,
     type: {
-      url: String,
-      public_id: String,
-      originalName: String,
-      type: {
-        type: String,
-        enum: ['document', 'video'],
-      },
-      // For documents
-      format: String,
-      bytes: Number,
-      // For videos
-      duration: Number
+      type: String,
+      enum: ['document', 'video','image'],
     },
-  },
+    // For documents
+    format: String,
+    bytes: Number,
+    // For videos
+    duration: Number
+  }],
   
   // Creator information
   createdBy: { type: Schema.Types.ObjectId, required: true },
