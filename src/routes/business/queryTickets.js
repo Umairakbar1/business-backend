@@ -49,13 +49,13 @@ router.put("/:id/comments/:commentId", verifyBusinessOwnerToken, editComment);
 // DELETE /business/query-tickets/:id/comments/:commentId - Delete comment
 router.delete("/:id/comments/:commentId", verifyBusinessOwnerToken, deleteComment);
 
-// POST /business/query-tickets/:id/comments/:commentId/replies - Add reply to comment
-router.post("/:id/comments/:commentId/replies", verifyBusinessOwnerToken, addReply);
+// POST /business/query-tickets/comments/:commentId/replies - Add reply to comment
+router.post("/comments/:commentId/replies", verifyBusinessOwnerToken, addReply);
 
-// PUT /business/query-tickets/:id/comments/:commentId/replies/:replyId - Edit reply
-router.put("/:id/comments/:commentId/replies/:replyId", verifyBusinessOwnerToken, editReply);
+// PUT /business/query-tickets/comments/:commentId/replies/:replyId - Edit reply
+router.put("/comments/:commentId/replies/:replyId", verifyBusinessOwnerToken, editReply);
 
-// DELETE /business/query-tickets/:id/comments/:commentId/replies/:replyId - Delete reply
-router.delete("/:id/comments/:commentId/replies/:replyId", verifyBusinessOwnerToken, deleteReply);
+// DELETE /business/query-tickets/comments/:commentId/replies/:replyId - Delete reply
+router.delete("/comments/:commentId/replies/:replyId", verifyBusinessOwnerToken, deleteReply);
 
 export default router; 

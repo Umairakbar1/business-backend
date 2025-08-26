@@ -89,9 +89,37 @@ export const getBusinessQueryTickets = async (req, res) => {
       businessId: t.businessId?.toString()
     })));
     
+    // Process tickets to have consistent author structure
+    const processedTickets = tickets.map(ticket => {
+      const processedTicket = ticket.toObject();
+      processedTicket.comments = processedTicket.comments.map(comment => ({
+        ...comment,
+        author: {
+          _id: comment.authorId,
+          name: comment.authorName,
+          type: comment.authorType
+        }
+      }));
+      
+      processedTicket.comments.forEach(comment => {
+        if (comment.replies && comment.replies.length > 0) {
+          comment.replies = comment.replies.map(reply => ({
+            ...reply,
+            author: {
+              _id: reply.authorId,
+              name: reply.authorName,
+              type: reply.authorType
+            }
+          }));
+        }
+      });
+      
+      return processedTicket;
+    });
+    
     return successResponseHelper(res, {
       message: 'Business query tickets fetched successfully',
-      data: tickets,
+      data: processedTickets,
       pagination: {
         page: parseInt(page),
         limit: parseInt(limit),
@@ -124,7 +152,7 @@ export const getQueryTicketById = async (req, res) => {
         { createdBy: businessOwnerId, createdByType: 'business' },
         { assignedTo: businessOwnerId, assignedToType: 'business' }
       ]
-    }).populate('businessId', 'businessName contactPerson email')
+    }).populate('businessId', 'businessName contactPerson email businessOwner')
       .populate({
         path: 'assignedTo',
         select: 'firstName lastName email businessName contactPerson email'
@@ -141,9 +169,33 @@ export const getQueryTicketById = async (req, res) => {
       return errorResponseHelper(res, { message: 'Query ticket not found', code: '00404' });
     }
     
+    // Process ticket to have consistent author structure
+    const processedTicket = ticket.toObject();
+    processedTicket.comments = processedTicket.comments.map(comment => ({
+      ...comment,
+      author: {
+        _id: comment.authorId,
+        name: comment.authorName,
+        type: comment.authorType
+      }
+    }));
+    
+    processedTicket.comments.forEach(comment => {
+      if (comment.replies && comment.replies.length > 0) {
+        comment.replies = comment.replies.map(reply => ({
+          ...reply,
+          author: {
+            _id: reply.authorId,
+            name: reply.authorName,
+            type: reply.authorType
+          }
+        }));
+      }
+    });
+    
     return successResponseHelper(res, {
       message: 'Query ticket fetched successfully',
-      data: ticket
+      data: processedTicket
     });
   } catch (error) {
     return errorResponseHelper(res, { message: error.message, code: '00500' });
@@ -968,8 +1020,14 @@ export const getTicketStats = async (req, res) => {
 export const addComment = async (req, res) => {
   try {
     const { id } = req.params;
-    const { content } = req.body;
+    let { content } = req.body;
     const businessOwnerId = req.businessOwner?._id;
+    
+    // Debug logging to understand the issue
+    console.log('Request body:', req.body);
+    console.log('Content from body:', content);
+    console.log('Content type:', typeof content);
+    console.log('Content value:', content);
     
     if (!businessOwnerId) {
       return errorResponseHelper(res, { message: 'Business owner not authenticated', code: '00401' });
@@ -977,6 +1035,45 @@ export const addComment = async (req, res) => {
     
     if (!content) {
       return errorResponseHelper(res, { message: 'Comment content is required', code: '00400' });
+    }
+    
+    // Ensure content is a string
+    if (typeof content !== 'string') {
+      console.log('Content is not a string, attempting to extract string value');
+      
+      // Handle different possible content formats
+      let extractedContent = null;
+      
+      if (content && typeof content === 'object') {
+        // Try different possible property names
+        if (content.content) {
+          extractedContent = content.content;
+        } else if (content.text) {
+          extractedContent = content.text;
+        } else if (content.message) {
+          extractedContent = content.message;
+        } else if (content.value) {
+          extractedContent = content.value;
+        }
+        
+        console.log('Extracted content from object:', extractedContent);
+        
+        if (extractedContent && typeof extractedContent === 'string') {
+          content = extractedContent;
+        } else {
+          console.log('Could not extract valid string content from object');
+          return errorResponseHelper(res, { 
+            message: 'Comment content must be a string. Received: ' + JSON.stringify(content), 
+            code: '00400' 
+          });
+        }
+      } else {
+        console.log('Content is not an object, cannot extract string value');
+        return errorResponseHelper(res, { 
+          message: 'Comment content must be a string. Received: ' + JSON.stringify(content), 
+          code: '00400' 
+        });
+      }
     }
     
     if (!mongoose.Types.ObjectId.isValid(id)) {
@@ -997,23 +1094,71 @@ export const addComment = async (req, res) => {
     
     // Get business details for author name
     const business = await Business.findById(ticket.businessId);
-    const authorName = business ? `${business.contactPerson} (${business.businessName})` : 'Business User';
+    let authorName = 'Business User';
+    
+    if (business) {
+      if (business.contactPerson && business.businessName) {
+        authorName = `${business.contactPerson} (${business.businessName})`;
+      } else if (business.businessName) {
+        authorName = business.businessName;
+      } else if (business.contactPerson) {
+        authorName = business.contactPerson;
+      }
+    }
     
     const comment = {
       content,
       authorId: businessOwnerId,
       authorType: 'business',
       authorName,
+      businessOwner: businessOwnerId, // Store businessOwner instead of businessId
       createdAt: new Date()
     };
+    
+    console.log('Comment object to be added:', comment);
+    console.log('Comment content type:', typeof comment.content);
+    console.log('Comment content value:', comment.content);
     
     ticket.comments.push(comment);
     ticket.updatedAt = new Date();
     await ticket.save();
     
+    // Populate and return the complete ticket object with processed author information
+    await ticket.populate('businessId', 'businessName contactPerson email businessOwner');
+    await ticket.populate('createdBy', 'firstName lastName email');
+    await ticket.populate({
+      path: 'assignedTo',
+      select: 'firstName lastName email businessName contactPerson email'
+    });
+    await ticket.populate('assignedBy', 'firstName lastName email');
+    
+    // Process comments and replies to have consistent author structure
+    const processedTicket = ticket.toObject();
+    processedTicket.comments = processedTicket.comments.map(comment => ({
+      ...comment,
+      author: {
+        _id: comment.authorId,
+        name: comment.authorName,
+        type: comment.authorType
+      }
+    }));
+    
+    processedTicket.comments.forEach(comment => {
+      if (comment.replies && comment.replies.length > 0) {
+        comment.replies = comment.replies.map(reply => ({
+          ...reply,
+          author: {
+            _id: reply.authorId,
+            name: reply.authorName,
+            type: reply.authorType
+          }
+        }));
+      }
+    });
+    
     return successResponseHelper(res, {
       message: 'Comment added successfully',
-      data: comment
+      data: processedTicket
     });
   } catch (error) {
     return errorResponseHelper(res, { message: error.message, code: '00500' });
@@ -1024,8 +1169,14 @@ export const addComment = async (req, res) => {
 export const editComment = async (req, res) => {
   try {
     const { id, commentId } = req.params;
-    const { content } = req.body;
+    let { content } = req.body;
     const businessOwnerId = req.businessOwner?._id;
+    
+    // Debug logging to understand the issue
+    console.log('Request body for edit comment:', req.body);
+    console.log('Content from body for edit comment:', content);
+    console.log('Content type for edit comment:', typeof content);
+    console.log('Content value for edit comment:', content);
     
     if (!businessOwnerId) {
       return errorResponseHelper(res, { message: 'Business owner not authenticated', code: '00401' });
@@ -1033,6 +1184,45 @@ export const editComment = async (req, res) => {
     
     if (!content) {
       return errorResponseHelper(res, { message: 'Comment content is required', code: '00400' });
+    }
+    
+    // Ensure content is a string
+    if (typeof content !== 'string') {
+      console.log('Edit comment content is not a string, attempting to extract string value');
+      
+      // Handle different possible content formats
+      let extractedContent = null;
+      
+      if (content && typeof content === 'object') {
+        // Try different possible property names
+        if (content.content) {
+          extractedContent = content.content;
+        } else if (content.text) {
+          extractedContent = content.text;
+        } else if (content.message) {
+          extractedContent = content.message;
+        } else if (content.value) {
+          extractedContent = content.value;
+        }
+        
+        console.log('Extracted edit comment content from object:', extractedContent);
+        
+        if (extractedContent && typeof extractedContent === 'string') {
+          content = extractedContent;
+        } else {
+          console.log('Could not extract valid string content from object');
+          return errorResponseHelper(res, { 
+            message: 'Comment content must be a string. Received: ' + JSON.stringify(content), 
+            code: '00400' 
+          });
+        }
+      } else {
+        console.log('Edit comment content is not an object, cannot extract string value');
+        return errorResponseHelper(res, { 
+          message: 'Comment content must be a string. Received: ' + JSON.stringify(content), 
+          code: '00400' 
+        });
+      }
     }
     
     if (!mongoose.Types.ObjectId.isValid(id) || !mongoose.Types.ObjectId.isValid(commentId)) {
@@ -1067,9 +1257,42 @@ export const editComment = async (req, res) => {
     ticket.updatedAt = new Date();
     await ticket.save();
     
+    // Populate and return the complete ticket object with processed author information
+    await ticket.populate('businessId', 'businessName contactPerson email businessOwner');
+    await ticket.populate('createdBy', 'firstName lastName email');
+    await ticket.populate({
+      path: 'assignedTo',
+      select: 'firstName lastName email businessName contactPerson email'
+    });
+    await ticket.populate('assignedBy', 'firstName lastName email');
+    
+    // Process comments and replies to have consistent author structure
+    const processedTicket = ticket.toObject();
+    processedTicket.comments = processedTicket.comments.map(comment => ({
+      ...comment,
+      author: {
+        _id: comment.authorId,
+        name: comment.authorName,
+        type: comment.authorType
+      }
+    }));
+    
+    processedTicket.comments.forEach(comment => {
+      if (comment.replies && comment.replies.length > 0) {
+        comment.replies = comment.replies.map(reply => ({
+          ...reply,
+          author: {
+            _id: reply.authorId,
+            name: reply.authorName,
+            type: reply.authorType
+          }
+        }));
+      }
+    });
+    
     return successResponseHelper(res, {
       message: 'Comment updated successfully',
-      data: comment
+      data: processedTicket
     });
   } catch (error) {
     return errorResponseHelper(res, { message: error.message, code: '00500' });
@@ -1112,24 +1335,65 @@ export const deleteComment = async (req, res) => {
       return errorResponseHelper(res, { message: 'You can only delete your own comments', code: '00403' });
     }
     
-    comment.remove();
+    // Remove comment using array filter approach (modern Mongoose method)
+    ticket.comments = ticket.comments.filter(c => c._id.toString() !== commentId);
     ticket.updatedAt = new Date();
     await ticket.save();
     
+    // Populate and return the complete ticket object with processed author information
+    await ticket.populate('businessId', 'businessName contactPerson email businessOwner');
+    await ticket.populate('createdBy', 'firstName lastName email');
+    await ticket.populate({
+      path: 'assignedTo',
+      select: 'firstName lastName email businessName contactPerson email'
+    });
+    await ticket.populate('assignedBy', 'firstName lastName email');
+    
+    // Process comments and replies to have consistent author structure
+    const processedTicket = ticket.toObject();
+    processedTicket.comments = processedTicket.comments.map(comment => ({
+      ...comment,
+      author: {
+        _id: comment.authorId,
+        name: comment.authorName,
+        type: comment.authorType
+      }
+    }));
+    
+    processedTicket.comments.forEach(comment => {
+      if (comment.replies && comment.replies.length > 0) {
+        comment.replies = comment.replies.map(reply => ({
+          ...reply,
+          author: {
+            _id: reply.authorId,
+            name: reply.authorName,
+            type: reply.authorType
+          }
+        }));
+      }
+    });
+    
     return successResponseHelper(res, {
-      message: 'Comment deleted successfully'
+      message: 'Comment deleted successfully',
+      data: processedTicket
     });
   } catch (error) {
     return errorResponseHelper(res, { message: error.message, code: '00500' });
   }
 };
 
-// POST /business/query-tickets/:id/comments/:commentId/replies - Add reply to comment
+// POST /business/query-tickets/comments/:commentId/replies - Add reply to comment
 export const addReply = async (req, res) => {
   try {
-    const { id, commentId } = req.params;
-    const { content } = req.body;
+    const { commentId } = req.params;
+    let { content } = req.body;
     const businessOwnerId = req.businessOwner?._id;
+    
+    // Debug logging to understand the issue
+    console.log('Request body for reply:', req.body);
+    console.log('Content from body for reply:', content);
+    console.log('Content type for reply:', typeof content);
+    console.log('Content value for reply:', content);
     
     if (!businessOwnerId) {
       return errorResponseHelper(res, { message: 'Business owner not authenticated', code: '00401' });
@@ -1139,12 +1403,52 @@ export const addReply = async (req, res) => {
       return errorResponseHelper(res, { message: 'Reply content is required', code: '00400' });
     }
     
-    if (!mongoose.Types.ObjectId.isValid(id) || !mongoose.Types.ObjectId.isValid(commentId)) {
-      return errorResponseHelper(res, { message: 'Invalid ticket or comment ID', code: '00400' });
+    // Ensure content is a string
+    if (typeof content !== 'string') {
+      console.log('Reply content is not a string, attempting to extract string value');
+      
+      // Handle different possible content formats
+      let extractedContent = null;
+      
+      if (content && typeof content === 'object') {
+        // Try different possible property names
+        if (content.content) {
+          extractedContent = content.content;
+        } else if (content.text) {
+          extractedContent = content.text;
+        } else if (content.message) {
+          extractedContent = content.message;
+        } else if (content.value) {
+          extractedContent = content.value;
+        }
+        
+        console.log('Extracted reply content from object:', extractedContent);
+        
+        if (extractedContent && typeof extractedContent === 'string') {
+          content = extractedContent;
+        } else {
+          console.log('Could not extract valid string content from object');
+          return errorResponseHelper(res, { 
+            message: 'Reply content must be a string. Received: ' + JSON.stringify(content), 
+            code: '00400' 
+          });
+        }
+      } else {
+        console.log('Reply content is not an object, cannot extract string value');
+        return errorResponseHelper(res, { 
+          message: 'Reply content must be a string. Received: ' + JSON.stringify(content), 
+          code: '00400' 
+        });
+      }
     }
     
-    const ticket = await QueryTicket.findOne({ 
-      _id: id, 
+    if (!mongoose.Types.ObjectId.isValid(commentId)) {
+      return errorResponseHelper(res, { message: 'Invalid comment ID', code: '00400' });
+    }
+    
+    // Find the comment and its parent ticket
+    const ticket = await QueryTicket.findOne({
+      'comments._id': commentId,
       $or: [
         { createdBy: businessOwnerId, createdByType: 'business' },
         { assignedTo: businessOwnerId, assignedToType: 'business' }
@@ -1162,35 +1466,89 @@ export const addReply = async (req, res) => {
     
     // Get business details for author name
     const business = await Business.findById(ticket.businessId);
-    const authorName = business ? `${business.contactPerson} (${business.businessName})` : 'Business User';
+    let authorName = 'Business User';
+    
+    if (business) {
+      if (business.contactPerson && business.businessName) {
+        authorName = `${business.contactPerson} (${business.businessName})`;
+      } else if (business.businessName) {
+        authorName = business.businessName;
+      } else if (business.contactPerson) {
+        authorName = business.contactPerson;
+      }
+    }
     
     const reply = {
       content,
       authorId: businessOwnerId,
       authorType: 'business',
       authorName,
+      businessOwner: businessOwnerId, // Store businessOwner instead of businessId
       createdAt: new Date()
     };
+    
+    console.log('Reply object to be added:', reply);
+    console.log('Reply content type:', typeof reply.content);
+    console.log('Reply content value:', reply.content);
     
     comment.replies.push(reply);
     ticket.updatedAt = new Date();
     await ticket.save();
     
+    // Populate and return the complete ticket object with processed author information
+    await ticket.populate('businessId', 'businessName contactPerson email businessOwner');
+    await ticket.populate('createdBy', 'firstName lastName email');
+    await ticket.populate({
+      path: 'assignedTo',
+      select: 'firstName lastName email businessName contactPerson email'
+    });
+    await ticket.populate('assignedBy', 'firstName lastName email');
+    
+    // Process comments and replies to have consistent author structure
+    const processedTicket = ticket.toObject();
+    processedTicket.comments = processedTicket.comments.map(comment => ({
+      ...comment,
+      author: {
+        _id: comment.authorId,
+        name: comment.authorName,
+        type: comment.authorType
+      }
+    }));
+    
+    processedTicket.comments.forEach(comment => {
+      if (comment.replies && comment.replies.length > 0) {
+        comment.replies = comment.replies.map(reply => ({
+          ...reply,
+          author: {
+            _id: reply.authorId,
+            name: reply.authorName,
+            type: reply.authorType
+          }
+        }));
+      }
+    });
+    
     return successResponseHelper(res, {
       message: 'Reply added successfully',
-      data: reply
+      data: processedTicket
     });
   } catch (error) {
     return errorResponseHelper(res, { message: error.message, code: '00500' });
   }
 };
 
-// PUT /business/query-tickets/:id/comments/:commentId/replies/:replyId - Edit reply
+// PUT /business/query-tickets/comments/:commentId/replies/:replyId - Edit reply
 export const editReply = async (req, res) => {
   try {
-    const { id, commentId, replyId } = req.params;
-    const { content } = req.body;
+    const { commentId, replyId } = req.params;
+    let { content } = req.body;
     const businessOwnerId = req.businessOwner?._id;
+    
+    // Debug logging to understand the issue
+    console.log('Request body for edit reply:', req.body);
+    console.log('Content from body for edit reply:', content);
+    console.log('Content type for edit reply:', typeof content);
+    console.log('Content value for edit reply:', content);
     
     if (!businessOwnerId) {
       return errorResponseHelper(res, { message: 'Business owner not authenticated', code: '00401' });
@@ -1200,12 +1558,52 @@ export const editReply = async (req, res) => {
       return errorResponseHelper(res, { message: 'Reply content is required', code: '00400' });
     }
     
-    if (!mongoose.Types.ObjectId.isValid(id) || !mongoose.Types.ObjectId.isValid(commentId) || !mongoose.Types.ObjectId.isValid(replyId)) {
-      return errorResponseHelper(res, { message: 'Invalid ticket, comment, or reply ID', code: '00400' });
+    // Ensure content is a string
+    if (typeof content !== 'string') {
+      console.log('Edit reply content is not a string, attempting to extract string value');
+      
+      // Handle different possible content formats
+      let extractedContent = null;
+      
+      if (content && typeof content === 'object') {
+        // Try different possible property names
+        if (content.content) {
+          extractedContent = content.content;
+        } else if (content.text) {
+          extractedContent = content.text;
+        } else if (content.message) {
+          extractedContent = content.message;
+        } else if (content.value) {
+          extractedContent = content.value;
+        }
+        
+        console.log('Extracted edit reply content from object:', extractedContent);
+        
+        if (extractedContent && typeof extractedContent === 'string') {
+          content = extractedContent;
+        } else {
+          console.log('Could not extract valid string content from object');
+          return errorResponseHelper(res, { 
+            message: 'Reply content must be a string. Received: ' + JSON.stringify(content), 
+            code: '00400' 
+          });
+        }
+      } else {
+        console.log('Edit reply content is not an object, cannot extract string value');
+        return errorResponseHelper(res, { 
+          message: 'Reply content must be a string. Received: ' + JSON.stringify(content), 
+          code: '00400' 
+        });
+      }
     }
     
-    const ticket = await QueryTicket.findOne({ 
-      _id: id, 
+    if (!mongoose.Types.ObjectId.isValid(commentId) || !mongoose.Types.ObjectId.isValid(replyId)) {
+      return errorResponseHelper(res, { message: 'Invalid comment or reply ID', code: '00400' });
+    }
+    
+    // Find the comment and its parent ticket
+    const ticket = await QueryTicket.findOne({
+      'comments._id': commentId,
       $or: [
         { createdBy: businessOwnerId, createdByType: 'business' },
         { assignedTo: businessOwnerId, assignedToType: 'business' }
@@ -1237,31 +1635,65 @@ export const editReply = async (req, res) => {
     ticket.updatedAt = new Date();
     await ticket.save();
     
+    // Populate and return the complete ticket object with processed author information
+    await ticket.populate('businessId', 'businessName contactPerson email businessOwner');
+    await ticket.populate('createdBy', 'firstName lastName email');
+    await ticket.populate({
+      path: 'assignedTo',
+      select: 'firstName lastName email businessName contactPerson email'
+    });
+    await ticket.populate('assignedBy', 'firstName lastName email');
+    
+    // Process comments and replies to have consistent author structure
+    const processedTicket = ticket.toObject();
+    processedTicket.comments = processedTicket.comments.map(comment => ({
+      ...comment,
+      author: {
+        _id: comment.authorId,
+        name: comment.authorName,
+        type: comment.authorType
+      }
+    }));
+    
+    processedTicket.comments.forEach(comment => {
+      if (comment.replies && comment.replies.length > 0) {
+        comment.replies = comment.replies.map(reply => ({
+          ...reply,
+          author: {
+            _id: reply.authorId,
+            name: reply.authorName,
+            type: reply.authorType
+          }
+        }));
+      }
+    });
+    
     return successResponseHelper(res, {
       message: 'Reply updated successfully',
-      data: reply
+      data: processedTicket
     });
   } catch (error) {
     return errorResponseHelper(res, { message: error.message, code: '00500' });
   }
 };
 
-// DELETE /business/query-tickets/:id/comments/:commentId/replies/:replyId - Delete reply
+// DELETE /business/query-tickets/comments/:commentId/replies/:replyId - Delete reply
 export const deleteReply = async (req, res) => {
   try {
-    const { id, commentId, replyId } = req.params;
+    const { commentId, replyId } = req.params;
     const businessOwnerId = req.businessOwner?._id;
     
     if (!businessOwnerId) {
       return errorResponseHelper(res, { message: 'Business owner not authenticated', code: '00401' });
     }
     
-    if (!mongoose.Types.ObjectId.isValid(id) || !mongoose.Types.ObjectId.isValid(commentId) || !mongoose.Types.ObjectId.isValid(replyId)) {
-      return errorResponseHelper(res, { message: 'Invalid ticket, comment, or reply ID', code: '00400' });
+    if (!mongoose.Types.ObjectId.isValid(commentId) || !mongoose.Types.ObjectId.isValid(replyId)) {
+      return errorResponseHelper(res, { message: 'Invalid comment or reply ID', code: '00400' });
     }
     
-    const ticket = await QueryTicket.findOne({ 
-      _id: id, 
+    // Find the comment and its parent ticket
+    const ticket = await QueryTicket.findOne({
+      'comments._id': commentId,
       $or: [
         { createdBy: businessOwnerId, createdByType: 'business' },
         { assignedTo: businessOwnerId, assignedToType: 'business' }
@@ -1287,12 +1719,47 @@ export const deleteReply = async (req, res) => {
       return errorResponseHelper(res, { message: 'You can only delete your own replies', code: '00403' });
     }
     
-    reply.remove();
+    // Remove reply using array filter approach (modern Mongoose method)
+    comment.replies = comment.replies.filter(r => r._id.toString() !== replyId);
     ticket.updatedAt = new Date();
     await ticket.save();
     
+    // Populate and return the complete ticket object with processed author information
+    await ticket.populate('businessId', 'businessName contactPerson email businessOwner');
+    await ticket.populate('createdBy', 'firstName lastName email');
+    await ticket.populate({
+      path: 'assignedTo',
+      select: 'firstName lastName email businessName contactPerson email'
+    });
+    await ticket.populate('assignedBy', 'firstName lastName email');
+    
+    // Process comments and replies to have consistent author structure
+    const processedTicket = ticket.toObject();
+    processedTicket.comments = processedTicket.comments.map(comment => ({
+      ...comment,
+      author: {
+        _id: comment.authorId,
+        name: comment.authorName,
+        type: comment.authorType
+      }
+    }));
+    
+    processedTicket.comments.forEach(comment => {
+      if (comment.replies && comment.replies.length > 0) {
+        comment.replies = comment.replies.map(reply => ({
+          ...reply,
+          author: {
+            _id: reply.authorId,
+            name: reply.authorName,
+            type: reply.authorType
+          }
+        }));
+      }
+    });
+    
     return successResponseHelper(res, {
-      message: 'Reply deleted successfully'
+      message: 'Reply deleted successfully',
+      data: processedTicket
     });
   } catch (error) {
     return errorResponseHelper(res, { message: error.message, code: '00500' });
