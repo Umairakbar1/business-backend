@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { 
-  registerUser,
+  sendRegistrationOtp,
+  verifyRegistrationOtp,
   loginUser,
   verifyOtp,
   updatePassword,
@@ -14,7 +15,8 @@ import { authorizedAccessUser } from "../../middleware/authorization.js";
 const router = Router();
 
 // Public routes (no authentication required)
-router.post("/register", registerUser);
+router.post("/send-registration-otp", sendRegistrationOtp);
+router.post("/verify-registration-otp", verifyRegistrationOtp);
 router.post("/login", loginUser);
 router.post("/send-otp", sendOtp);
 router.post("/verify-otp", verifyOtp);

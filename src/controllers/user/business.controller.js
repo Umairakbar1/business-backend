@@ -15,7 +15,9 @@ export const getBusinessListings = async (req, res) => {
       claimed,
       status,
       page = 1,
-      limit = 10
+      limit = 10,
+      categoryId,
+      subcategoryId,
     } = req.query;
 
     const lat = location?.lat;
@@ -24,7 +26,17 @@ export const getBusinessListings = async (req, res) => {
     const filter = {};
     if (typeof claimed !== 'undefined') filter.claimed = claimed === 'true';
     if (status) filter.status = status;
+    if (categoryId) filter.category = categoryId;
     
+    // Handle subcategoryId - can be comma-separated string or single ID
+    if (subcategoryId) {
+      const subcategoryIds = subcategoryId.split(',').filter(Boolean);
+      if (subcategoryIds.length === 1) {
+        filter.subcategories = subcategoryIds[0];
+      } else {
+        filter.subcategories = { $in: subcategoryIds };
+      }
+    }
     // Handle location filtering
     if (location) {
       // Text-based location search (city, address, etc.)
@@ -270,6 +282,7 @@ export const getBusinessListings = async (req, res) => {
 export const getBusinessDetails = async (req, res) => {
   try {
     const { id } = req.params;
+    const {userId} = req.query;
     if (!mongoose.Types.ObjectId.isValid(id)) return res.status(400).json({ success: false, message: 'Invalid business ID' });
 
     const business = await Business.findById(id).lean();
@@ -335,6 +348,33 @@ export const getBusinessDetails = async (req, res) => {
       }
     }
 
+    // Get approved reviews with user details
+    const reviews = await Review.find({
+      businessId: id,
+      status: 'approved'
+    })
+      .populate('userId', 'name email profilePhoto')
+      .populate('businessId', 'businessName _id')
+      .populate('approvedBy', 'name email')
+      .sort({ createdAt: -1 })
+      .limit(10); // Limit to latest 10 reviews for performance
+
+    // Get current user's review if user is authenticated
+    let currentUserReview = null;
+    if (userId) {
+      try {
+        currentUserReview = await Review.findOne({
+          businessId: id,
+          userId: userId
+        })
+          .populate('userId', 'name email profilePhoto')
+          .populate('businessId', 'businessName _id')
+          .populate('approvedBy', 'name email');
+      } catch (error) {
+        console.error('Error fetching current user review:', error);
+      }
+    }
+
     res.json({
       success: true,
       data: {
@@ -345,6 +385,8 @@ export const getBusinessDetails = async (req, res) => {
         avgRating,
         totalReviews,
         reviewBreakdown: breakdown,
+        reviews,
+        currentUserReview,
       },
     });
   } catch (error) {
@@ -448,6 +490,79 @@ export const getBusinessCategoriesWithSubcategories = async (req, res) => {
     res.status(500).json({ 
       success: false, 
       message: 'Failed to fetch business categories', 
+      error: error.message 
+    });
+  }
+};
+
+// 5. Get single category with its subcategories
+export const getSingleCategoryWithSubcategories = async (req, res) => {
+  try {
+    const { categoryId } = req.params;
+    const { status = 'active' } = req.query;
+    
+    // Validate category ID
+    if (!mongoose.Types.ObjectId.isValid(categoryId)) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Invalid category ID' 
+      });
+    }
+
+    console.log('🔍 getSingleCategoryWithSubcategories called');
+    console.log('📝 Category ID:', categoryId);
+    console.log('📝 Status filter:', status);
+
+    // Build filter for category
+    const categoryFilter = { _id: categoryId };
+    if (status) {
+      categoryFilter.status = status;
+    }
+
+    // Get the category
+    const category = await Category.findOne(categoryFilter)
+      .select('_id title description image slug color sortOrder status createdAt updatedAt');
+
+    if (!category) {
+      return res.status(404).json({ 
+        success: false, 
+        message: 'Category not found' 
+      });
+    }
+
+    console.log('📊 Found category:', category.title);
+
+    // Get subcategories for this category
+    const subcategories = await SubCategory.find({
+      categoryId: category._id,
+      status: 'active'
+    })
+    .select('_id title description image slug categoryId status createdAt updatedAt')
+    .sort({ title: 1 });
+
+    console.log(`📊 Category "${category.title}" has ${subcategories.length} subcategories`);
+
+    // Convert category to object and add subcategories
+    const categoryWithSubcategories = {
+      ...category.toObject(),
+      subcategories: subcategories
+    };
+
+    console.log('✅ Successfully fetched category with subcategories');
+
+    res.json({
+      success: true,
+      data: categoryWithSubcategories,
+      meta: {
+        subcategoriesCount: subcategories.length
+      }
+    });
+  } catch (error) {
+    console.error('❌ Error fetching single category with subcategories:', error);
+    console.error('❌ Error stack:', error.stack);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Failed to fetch category details', 
       error: error.message 
     });
   }

@@ -172,20 +172,39 @@ const getAllSubCategories = async (req, res) => {
 const getSubCategoryById = async (req, res) => {
   try {
     const { id } = req.params;
-
+    const {queryText, status} = req.query;
+    const query = {};
+    if (queryText) {
+      query.title = { $regex: queryText, $options: 'i' };
+    }
+    if (status) {
+      query.status = status;
+    }
     const subCategory = await SubCategory.findById(id)
       .populate('categoryId', 'title description')
       .populate('createdBy', 'name email')
       .populate('updatedBy', 'name email');
-
+      subCategory.filter(query);  
+      const total = await SubCategory.countDocuments(query);
+      const page = parseInt(req.query.page) || 1;
+      const limit = parseInt(req.query.limit) || 10;
+      const pagination = {
+        currentPage: parseInt(page),
+        totalPages: Math.ceil(total / parseInt(limit)),
+        totalItems: total,
+        itemsPerPage: parseInt(limit)
+      };
+      
     if (!subCategory) {
       return errorResponseHelper(res, { message: 'Subcategory not found', code: '00404' });
     }
 
     return successResponseHelper(res, {
       message: 'Subcategory retrieved successfully',
-      data:subCategory
+      data:subCategory,
+      pagination
     });
+    
   } catch (error) {
     console.error('Error fetching subcategory:', error);
     return errorResponseHelper(res, { message: 'Internal server error', code: '00500' });

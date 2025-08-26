@@ -5,7 +5,6 @@ import morgan from "morgan";
 import helmet from "helmet";
 import routes from "../routes/index.js";
 import bodyParser from "body-parser";
-import multer from "multer";
 import { logHelper, serverErrorHelper } from "../helpers/utilityHelper.js";
 import { GLOBAL_MESSAGES } from "../config/globalConfig.js";
 // import swaggerJson from "../../swagger-output.json" assert { type: "json" };
@@ -30,33 +29,6 @@ export default (app) => {
   
   // Raw body parsing for Stripe webhooks
   app.use('/api/business/webhook/stripe', express.raw({ type: 'application/json' }));
-  
-  // Configure multer for multipart/form-data
-  const upload = multer({
-    storage: multer.memoryStorage(),
-    limits: {
-      fileSize: 10 * 1024 * 1024, // 10MB limit
-    },
-  });
-  
-  // Use multer for multipart/form-data requests, but exclude routes with their own multer
-  app.use((req, res, next) => {
-    // Skip global multer for routes that have their own multer middleware
-    if (req.path.includes('/query-tickets') || 
-        req.path.includes('/business') || 
-        req.path.includes('/admin/business') ||
-        req.path.includes('/admin/category') ||
-        req.path.includes('/admin/logCategory') ||
-        req.path.includes('/admin/logSubCategory') ||
-        req.path.includes('/admin/subCategory') ||
-        req.path.includes('/media') ||
-        req.path.includes('/upload')) {
-      return next();
-    }
-    
-    // Apply global multer for other routes
-    upload.any()(req, res, next);
-  });
   
   app.use(
     bodyParser.urlencoded({

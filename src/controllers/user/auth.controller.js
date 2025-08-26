@@ -1,4 +1,5 @@
 import { User } from "../../models/index.js";
+import EmailVerification from "../../models/user/emailVerification.js";
 import { GLOBAL_MESSAGES } from "../../config/globalConfig.js";
 import {
   serverErrorHelper,
@@ -50,8 +51,8 @@ const generateUniqueUsername = async (name) => {
   return username;
 };
 
-// Register user with email and password
-const registerUser = async (req, res) => {
+// Send OTP for email verification before registration
+const sendRegistrationOtp = async (req, res) => {
   const { name, email, password } = req.body;
 
   // Check if user already exists by email
@@ -61,20 +62,90 @@ const registerUser = async (req, res) => {
   if (existingUserByEmailError) return serverErrorHelper(req, res, 500, existingUserByEmailError);
   if (existingUserByEmail) return errorResponseHelper(res, { message: "User already exists with this email" });
 
+  // Check if there's already a pending verification for this email
+  const [existingVerification, existingVerificationError] = await asyncWrapper(() =>
+    EmailVerification.findOne({ email })
+  );
+  if (existingVerificationError) return serverErrorHelper(req, res, 500, existingVerificationError);
+
+  let emailVerification;
+  
+  if (existingVerification) {
+    // Update existing verification with new data
+    existingVerification.name = name;
+    existingVerification.password = password;
+    existingVerification.status = "pending";
+    existingVerification.attempts = 0;
+    emailVerification = existingVerification;
+  } else {
+    // Create new email verification record
+    emailVerification = new EmailVerification({
+      name,
+      email,
+      password
+    });
+  }
+
+  // Generate OTP
+  const otp = emailVerification.generateOTP();
+  await emailVerification.save();
+
+  // Send OTP via email
+  try {
+    // Commented out for testing - using dummy OTP
+    // await sendEmail(email, "Email Verification for Registration", `Your OTP is: ${otp}`);
+    console.log(`[TESTING] Registration OTP for ${email}: ${otp}`);
+    return successResponseHelper(res, { 
+      message: "OTP sent to your email for verification",
+      email: email
+    });
+  } catch (error) {
+    return serverErrorHelper(req, res, 500, error);
+  }
+};
+
+// Verify OTP and complete registration
+const verifyRegistrationOtp = async (req, res) => {
+  const { email, otp } = req.body;
+
+  // Find email verification record
+  const [emailVerification, verificationError] = await asyncWrapper(() =>
+    EmailVerification.findOne({ email })
+  );
+  if (verificationError) return serverErrorHelper(req, res, 500, verificationError);
+  if (!emailVerification) return errorResponseHelper(res, { message: "No verification found for this email" });
+
+  // Verify OTP
+  if (!emailVerification.verifyOTP(otp)) {
+    await emailVerification.save(); // Save the updated attempts
+    return errorResponseHelper(res, { message: "Invalid or expired OTP" });
+  }
+
+  // Check if user already exists (double check)
+  const [existingUser, existingUserError] = await asyncWrapper(() =>
+    User.findOne({ email })
+  );
+  if (existingUserError) return serverErrorHelper(req, res, 500, existingUserError);
+  if (existingUser) return errorResponseHelper(res, { message: "User already exists with this email" });
+
   // Generate unique username
-  const [username, usernameError] = await asyncWrapper(() => generateUniqueUsername(name));
+  const [username, usernameError] = await asyncWrapper(() => generateUniqueUsername(emailVerification.name));
   if (usernameError) return serverErrorHelper(req, res, 500, usernameError);
 
   // Create new user
   const newUser = new User({
-    name,
-    email,
-    password,
+    name: emailVerification.name,
+    email: emailVerification.email,
+    password: emailVerification.password,
     userName: username,
+    isEmailVerified: true // Email is verified through OTP
   });
 
   const [user, error] = await asyncWrapper(() => newUser.save());
   if (error) return serverErrorHelper(req, res, 500, error);
+
+  // Delete the email verification record
+  await EmailVerification.findByIdAndDelete(emailVerification._id);
 
   // Generate JWT token
   const token = signAccessToken(user._id);
@@ -335,7 +406,8 @@ const googleAuth = async (req, res) => {
 };
 
 export {
-  registerUser,
+  sendRegistrationOtp,
+  verifyRegistrationOtp,
   loginUser,
   verifyOtp,
   updatePassword,

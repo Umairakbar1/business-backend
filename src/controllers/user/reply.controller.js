@@ -3,6 +3,32 @@ import Comment from '../../models/user/comment.js';
 import Blog from '../../models/admin/blog.js';
 import { errorResponseHelper, successResponseHelper } from '../../helpers/utilityHelper.js';
 
+// Helper function to get all comments with replies for a blog
+const getCommentsWithReplies = async (blogId) => {
+    try {
+        const comments = await Comment.find({ 
+            blogId: blogId, 
+            status: 'active' 
+        })
+        .populate({
+            path: 'replies',
+            match: { status: 'active' },
+            populate: {
+                path: 'author',
+                select: 'name email'
+            }
+        })
+        .populate('author', 'name email')
+        .sort({ createdAt: -1 })
+        .select('-__v');
+
+        return comments;
+    } catch (error) {
+        console.error('Error fetching comments with replies:', error);
+        return [];
+    }
+};
+
 // Create a new reply to a comment
 const createReply = async (req, res) => {
     try {
@@ -63,7 +89,7 @@ const createReply = async (req, res) => {
         const replyData = {
             content: content.trim(),
             author: userId,
-            authorName: req.user.name, // Fixed: changed from firstName lastName
+            authorName: req.user.name, // Fixed: changed from req.user.id
             authorEmail: req.user.email,
             comment: commentId,
             blogId: comment.blogId,
@@ -80,9 +106,15 @@ const createReply = async (req, res) => {
         // Populate author information for response
         await reply.populate('author', 'name email'); // Fixed: changed from firstName lastName
 
+        // Get all comments with replies for the blog
+        const allComments = await getCommentsWithReplies(comment.blogId);
+
         return successResponseHelper(res, { 
             message: "Reply created successfully", 
-            data: reply 
+            data: {
+                reply: reply,
+                comments: allComments
+            }
         });
     } catch (error) {
         console.error('Create reply error:', error);
@@ -196,7 +228,7 @@ const updateReply = async (req, res) => {
         }
 
         // Check if user owns the reply
-        if (reply.author.toString() !== userId) {
+        if (!reply.author.equals(userId)) {
             return errorResponseHelper(res, { 
                 message: "You can only edit your own replies", 
                 code: '00403' 
@@ -217,9 +249,15 @@ const updateReply = async (req, res) => {
 
         await reply.save();
 
+        // Get all comments with replies for the blog
+        const allComments = await getCommentsWithReplies(reply.blogId);
+
         return successResponseHelper(res, { 
             message: "Reply updated successfully", 
-            data: reply 
+            data: {
+                reply: reply,
+                comments: allComments
+            }
         });
     } catch (error) {
         console.error('Update reply error:', error);
@@ -235,7 +273,8 @@ const deleteReply = async (req, res) => {
     try {
         const { replyId } = req.params;
         const userId = req.user._id; // Fixed: changed from req.user.id
-
+        console.log('@userId', userId);
+        console.log('@replyId', replyId);
         const reply = await Reply.findById(replyId);
         if (!reply) {
             return errorResponseHelper(res, { 
@@ -245,26 +284,33 @@ const deleteReply = async (req, res) => {
         }
 
         // Check if user owns the reply
-        if (reply.author.toString() !== userId) {
+        if (!reply.author.equals(userId)) {
             return errorResponseHelper(res, { 
                 message: "You can only delete your own replies", 
                 code: '00403' 
             });
         }
 
-        // Soft delete - mark as deleted instead of removing
-        reply.status = 'deleted';
-        await reply.save();
+        // Hard delete - actually remove the reply from database
+        await Reply.findByIdAndDelete(replyId);
 
-        // Update comment reply count
+        // Update comment reply count and remove reply from comment's replies array
         const comment = await Comment.findById(reply.comment);
         if (comment) {
             comment.replyCount = Math.max(0, comment.replyCount - 1);
+            // Remove the reply ID from the replies array
+            comment.replies = comment.replies.filter(replyRefId => replyRefId.toString() !== replyId);
             await comment.save();
         }
 
+        // Get all comments with replies for the blog
+        const allComments = await getCommentsWithReplies(reply.blogId);
+
         return successResponseHelper(res, { 
-            message: "Reply deleted successfully" 
+            message: "Reply deleted successfully",
+            data: {
+                comments: allComments
+            }
         });
     } catch (error) {
         console.error('Delete reply error:', error);

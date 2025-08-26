@@ -1219,7 +1219,7 @@ export const deleteComment = async (req, res) => {
 // POST /admin/query-tickets/:id/comments/:commentId/replies - Add reply to comment
 export const addReply = async (req, res) => {
   try {
-    const { id, commentId } = req.params;
+    const { commentId } = req.params;
     const { content } = req.body;
     const adminId = req.user?._id;
     
@@ -1231,13 +1231,13 @@ export const addReply = async (req, res) => {
       return errorResponseHelper(res, { message: 'Reply content is required', code: '00400' });
     }
     
-    if (!mongoose.Types.ObjectId.isValid(id) || !mongoose.Types.ObjectId.isValid(commentId)) {
-      return errorResponseHelper(res, { message: 'Invalid ticket or comment ID', code: '00400' });
+    if (!mongoose.Types.ObjectId.isValid(commentId)) {
+      return errorResponseHelper(res, { message: 'Invalid comment ID', code: '00400' });
     }
     
-    // Admin can reply to comments on tickets assigned to them, created by them, or assigned to any admin
+    // Find the comment and its parent ticket
     const ticket = await QueryTicket.findOne({
-      _id: id,
+      'comments._id': commentId,
       $or: [
         { assignedTo: adminId, assignedToType: 'admin' },
         { createdBy: adminId, createdByType: 'admin' },
@@ -1246,7 +1246,7 @@ export const addReply = async (req, res) => {
     });
     
     if (!ticket) {
-      return errorResponseHelper(res, { message: 'Query ticket not found or access denied', code: '00404' });
+      return errorResponseHelper(res, { message: 'Comment not found or access denied', code: '00404' });
     }
     
     const comment = ticket.comments.id(commentId);
@@ -1279,10 +1279,10 @@ export const addReply = async (req, res) => {
   }
 };
 
-// PUT /admin/query-tickets/:id/comments/:commentId/replies/:replyId - Edit reply
+// PUT /admin/query-tickets/comments/:commentId/replies/:replyId - Edit reply
 export const editReply = async (req, res) => {
   try {
-    const { id, commentId, replyId } = req.params;
+    const { commentId, replyId } = req.params;
     const { content } = req.body;
     const adminId = req.user?._id;
     
@@ -1294,13 +1294,13 @@ export const editReply = async (req, res) => {
       return errorResponseHelper(res, { message: 'Reply content is required', code: '00400' });
     }
     
-    if (!mongoose.Types.ObjectId.isValid(id) || !mongoose.Types.ObjectId.isValid(commentId) || !mongoose.Types.ObjectId.isValid(replyId)) {
-      return errorResponseHelper(res, { message: 'Invalid ticket, comment, or reply ID', code: '00400' });
+    if (!mongoose.Types.ObjectId.isValid(commentId) || !mongoose.Types.ObjectId.isValid(replyId)) {
+      return errorResponseHelper(res, { message: 'Invalid comment or reply ID', code: '00400' });
     }
     
-    // Admin can edit replies on tickets assigned to them, created by them, or assigned to any admin
+    // Find the comment and its parent ticket
     const ticket = await QueryTicket.findOne({
-      _id: id,
+      'comments._id': commentId,
       $or: [
         { assignedTo: adminId, assignedToType: 'admin' },
         { createdBy: adminId, createdByType: 'admin' },
@@ -1309,7 +1309,7 @@ export const editReply = async (req, res) => {
     });
     
     if (!ticket) {
-      return errorResponseHelper(res, { message: 'Query ticket not found or access denied', code: '00404' });
+      return errorResponseHelper(res, { message: 'Comment not found or access denied', code: '00404' });
     }
     
     const comment = ticket.comments.id(commentId);
@@ -1342,23 +1342,23 @@ export const editReply = async (req, res) => {
   }
 };
 
-// DELETE /admin/query-tickets/:id/comments/:commentId/replies/:replyId - Delete reply
+// DELETE /admin/query-tickets/comments/:commentId/replies/:replyId - Delete reply
 export const deleteReply = async (req, res) => {
   try {
-    const { id, commentId, replyId } = req.params;
+    const { commentId, replyId } = req.params;
     const adminId = req.user?._id;
     
     if (!adminId) {
       return errorResponseHelper(res, { message: 'Admin not authenticated', code: '00401' });
     }
     
-    if (!mongoose.Types.ObjectId.isValid(id) || !mongoose.Types.ObjectId.isValid(commentId) || !mongoose.Types.ObjectId.isValid(replyId)) {
-      return errorResponseHelper(res, { message: 'Invalid ticket, comment, or reply ID', code: '00400' });
+    if (!mongoose.Types.ObjectId.isValid(commentId) || !mongoose.Types.ObjectId.isValid(replyId)) {
+      return errorResponseHelper(res, { message: 'Invalid comment or reply ID', code: '00400' });
     }
     
-    // Admin can delete replies on tickets assigned to them, created by them, or assigned to any admin
+    // Find the comment and its parent ticket
     const ticket = await QueryTicket.findOne({
-      _id: id,
+      'comments._id': commentId,
       $or: [
         { assignedTo: adminId, assignedToType: 'admin' },
         { createdBy: adminId, createdByType: 'admin' },
@@ -1367,7 +1367,7 @@ export const deleteReply = async (req, res) => {
     });
     
     if (!ticket) {
-      return errorResponseHelper(res, { message: 'Query ticket not found or access denied', code: '00404' });
+      return errorResponseHelper(res, { message: 'Comment not found or access denied', code: '00404' });
     }
     
     const comment = ticket.comments.id(commentId);

@@ -7,9 +7,11 @@ const createLogCategory = async (req, res) => {
   try {
     const { title, description, status = 'active', parent } = req.body;
 
-    console.log(title,"@title")
-    console.log(req.body, "@req.body")
-    console.log(req.file, "@req.file")
+    console.log('=== CREATE LOG CATEGORY START ===');
+    console.log('Title:', title);
+    console.log('Request body:', req.body);
+    console.log('Request file:', req.file);
+    console.log('User:', req.user);
     
     if (!title) {
       return errorResponseHelper(res, {message:'Category is required', code:'00400'});
@@ -31,10 +33,15 @@ const createLogCategory = async (req, res) => {
         console.log('Starting image upload for log category:', {
           fileName: req.file.originalname,
           fileSize: req.file.size,
-          mimeType: req.file.mimetype
+          mimeType: req.file.mimetype,
+          bufferLength: req.file.buffer ? req.file.buffer.length : 'No buffer'
         });
         
+        // Use a simpler folder structure to avoid potential Cloudinary folder issues
         const uploadResult = await uploadImageWithThumbnail(req.file.buffer, 'business-app/log-categories');
+        
+        console.log('Upload result:', uploadResult);
+        
         imageData = {
           url: uploadResult.original.url,
           public_id: uploadResult.original.public_id
@@ -46,7 +53,8 @@ const createLogCategory = async (req, res) => {
           message: uploadError.message,
           stack: uploadError.stack,
           fileName: req.file?.originalname,
-          fileSize: req.file?.size
+          fileSize: req.file?.size,
+          bufferLength: req.file?.buffer?.length
         });
         
         // Provide more specific error message based on the error
@@ -61,7 +69,17 @@ const createLogCategory = async (req, res) => {
         
         return errorResponseHelper(res, {message: errorMessage, code:'00500'});
       }
+    } else {
+      console.log('No image file provided');
     }
+
+    console.log('Creating category with data:', {
+      title,
+      description,
+      image: imageData,
+      status,
+      parent
+    });
 
     const category = new LogCategory({
       title,
@@ -70,10 +88,14 @@ const createLogCategory = async (req, res) => {
       status,
       parent
     });
+    
+    console.log('Category object created, saving to database...');
     await category.save();
+    console.log('Category saved successfully:', category._id);
 
     // Handle subcategories if provided
     if (req.body.subcategories && Array.isArray(req.body.subcategories)) {
+      console.log('Processing subcategories:', req.body.subcategories.length);
       const subcategoryPromises = req.body.subcategories.map(subcat => {
         return new LogSubCategory({
           title: subcat.title,
@@ -85,11 +107,18 @@ const createLogCategory = async (req, res) => {
       });
 
       await Promise.all(subcategoryPromises);
+      console.log('Subcategories saved successfully');
     }
 
+    console.log('=== CREATE LOG CATEGORY SUCCESS ===');
     return successResponseHelper(res, {message:'Log category created successfully', data:category});
   } catch (error) {
-    console.error('Create log category error:', error);
+    console.error('=== CREATE LOG CATEGORY ERROR ===');
+    console.error('Error details:', {
+      message: error.message,
+      stack: error.stack,
+      name: error.name
+    });
     return errorResponseHelper(res, {message:'Internal server error', code:'00500'});
   }
 };

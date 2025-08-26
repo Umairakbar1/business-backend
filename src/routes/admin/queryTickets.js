@@ -16,7 +16,8 @@ import {
   deleteComment,
   addReply,
   editReply,
-  deleteReply
+  deleteReply,
+  closeQueryTicket
 } from "../../controllers/admin/queryTicket.controller.js";
 
 const router = Router();
@@ -31,6 +32,7 @@ router.delete("/:id", authorizedAccessAdmin, deleteQueryTicket);
 router.patch("/:id/status", authorizedAccessAdmin, updateTicketStatus);
 router.patch("/:id/assign", authorizedAccessAdmin, assignTicket);
 router.patch("/bulk-status", authorizedAccessAdmin, bulkUpdateStatus);
+router.patch("/:id/close", authorizedAccessAdmin, closeQueryTicket);
 
 // Comment routes
 router.post("/:id/comments", authorizedAccessAdmin, addComment);
@@ -38,8 +40,8 @@ router.put("/:id/comments/:commentId", authorizedAccessAdmin, editComment);
 router.delete("/:id/comments/:commentId", authorizedAccessAdmin, deleteComment);
 
 // Reply routes
-router.post("/:id/comments/:commentId/replies", authorizedAccessAdmin, addReply);
-router.put("/:id/comments/:commentId/replies/:replyId", authorizedAccessAdmin, editReply);
-router.delete("/:id/comments/:commentId/replies/:replyId", authorizedAccessAdmin, deleteReply);
+router.post("/comments/:commentId/replies", authorizedAccessAdmin, addReply);
+router.put("/comments/:commentId/replies/:replyId", authorizedAccessAdmin, editReply);
+router.delete("/comments/:commentId/replies/:replyId", authorizedAccessAdmin, deleteReply);
 
 export default router; 

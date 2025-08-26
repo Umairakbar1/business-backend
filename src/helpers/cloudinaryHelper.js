@@ -148,9 +148,10 @@ const uploadImageWithThumbnail = async (fileBuffer, folder = 'business-app') => 
     // Upload original image
     const originalImage = await uploadImage(fileBuffer, folder);
     
-    // Generate and upload thumbnail
+    // Generate and upload thumbnail with a simpler folder structure
     const thumbnailBuffer = await generateThumbnail(fileBuffer);
-    const thumbnail = await uploadImage(thumbnailBuffer, `${folder}/thumbnails`);
+    const thumbnailFolder = folder.replace('/thumbnails', ''); // Remove any existing /thumbnails
+    const thumbnail = await uploadImage(thumbnailBuffer, `${thumbnailFolder}-thumbnails`);
 
     return {
       original: {

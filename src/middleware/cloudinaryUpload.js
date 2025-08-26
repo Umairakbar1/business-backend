@@ -170,7 +170,12 @@ export const cloudinaryImageUpload = multer({
   storage: memoryStorage,
   fileFilter: imageFileFilter,
   limits: {
-    fileSize: 5 * 1024 * 1024 // 5MB limit
+    fileSize: 5 * 1024 * 1024, // 5MB limit
+    fieldSize: 2 * 1024 * 1024, // 2MB limit for text fields
+    fields: 50, // Maximum number of non-file fields
+    files: 1, // Maximum number of files
+    parts: 100, // Maximum number of parts (fields + files)
+    headerPairs: 2000 // Maximum number of header key=>value pairs
   }
 });
 
@@ -191,7 +196,266 @@ export const cloudinaryDocumentUpload = multer({
 });
 
 // Single image upload middleware for Cloudinary
-export const uploadSingleImageToCloudinary = cloudinaryImageUpload.single('image');
+export const uploadSingleImageToCloudinary = (req, res, next) => {
+  console.log('🔧 uploadSingleImageToCloudinary - Starting...');
+  console.log('🔧 Request path:', req.path);
+  console.log('🔧 Content-Type:', req.headers['content-type']);
+  console.log('🔧 Content-Length:', req.headers['content-length']);
+  console.log('🔧 User-Agent:', req.headers['user-agent']);
+  
+  // Check if this is a multipart request
+  if (!req.headers['content-type'] || !req.headers['content-type'].includes('multipart/form-data')) {
+    console.log('⚠️ Not a multipart request, skipping file upload');
+    return next();
+  }
+  
+  // Validate content-type format
+  const contentType = req.headers['content-type'];
+  if (!contentType.includes('boundary=')) {
+    console.error('❌ Invalid multipart content-type - missing boundary');
+    return res.status(400).json({
+      success: false,
+      message: 'Invalid request format. Please ensure you are sending a proper multipart form.',
+      code: '00400'
+    });
+  }
+  
+  // Check content length
+  const contentLength = parseInt(req.headers['content-length'] || '0');
+  if (contentLength === 0) {
+    console.error('❌ Empty request body');
+    return res.status(400).json({
+      success: false,
+      message: 'Request body is empty. Please ensure you are sending form data.',
+      code: '00400'
+    });
+  }
+  
+  if (contentLength > 10 * 1024 * 1024) { // 10MB limit
+    console.error('❌ Request too large:', contentLength, 'bytes');
+    return res.status(400).json({
+      success: false,
+      message: 'Request too large. Please reduce the size of your data.',
+      code: '00400'
+    });
+  }
+  
+  // Log additional request details for debugging
+  console.log('🔧 Request method:', req.method);
+  console.log('🔧 Request URL:', req.url);
+  console.log('🔧 Request headers keys:', Object.keys(req.headers));
+  console.log('🔧 Boundary from content-type:', contentType.split('boundary=')[1]);
+  
+  // Check if request body is readable
+  if (req.body && Object.keys(req.body).length > 0) {
+    console.log('🔧 Request body already parsed:', Object.keys(req.body));
+  } else {
+    console.log('🔧 Request body not yet parsed or empty');
+  }
+  
+  // Set a timeout to prevent hanging requests
+  const timeout = setTimeout(() => {
+    console.error('❌ Request timeout - multer processing took too long');
+    if (!res.headersSent) {
+      res.status(408).json({
+        success: false,
+        message: 'Request timeout. The file upload is taking too long.',
+        code: '00408'
+      });
+    }
+  }, 30000); // 30 second timeout
+  
+  // Wrap the multer middleware in a try-catch to handle any unexpected errors
+  try {
+    console.log('🔧 About to process with multer...');
+    
+    // Use the configured multer instance
+    cloudinaryImageUpload.single('image')(req, res, (err) => {
+      // Clear the timeout since we got a response
+      clearTimeout(timeout);
+      
+      if (err) {
+        console.error('❌ File upload error in uploadSingleImageToCloudinary:', err);
+        console.error('❌ Error type:', err.constructor.name);
+        console.error('❌ Error code:', err.code);
+        console.error('❌ Error field:', err.field);
+        console.error('❌ Error message:', err.message);
+        
+        if (err instanceof multer.MulterError) {
+          switch (err.code) {
+            case 'LIMIT_FILE_SIZE':
+              return res.status(400).json({
+                success: false,
+                message: 'File too large. Maximum size is 5MB',
+                code: '00400'
+              });
+            case 'LIMIT_FILE_COUNT':
+              return res.status(400).json({
+                success: false,
+                message: 'Too many files. Only one image allowed',
+                code: '00400'
+              });
+            case 'LIMIT_FIELD_COUNT':
+              return res.status(400).json({
+                success: false,
+                message: 'Too many form fields. Please reduce the number of fields.',
+                code: '00400'
+              });
+            case 'LIMIT_PART_COUNT':
+              return res.status(400).json({
+                success: false,
+                message: 'Form data too complex. Please simplify your request.',
+                code: '00400'
+              });
+            default:
+              return res.status(400).json({
+                success: false,
+                message: 'File upload error: ' + err.message,
+                code: '00400'
+              });
+          }
+        }
+        
+        // Handle "Unexpected end of form" error specifically
+        if (err.message.includes('Unexpected end of form')) {
+          console.error('❌ Multipart form parsing error - this usually indicates malformed form data');
+          console.error('❌ This error often occurs when:');
+          console.error('   - The frontend is not properly sending multipart data');
+          console.error('   - The form is being submitted before the file is fully loaded');
+          console.error('   - There are network issues during upload');
+          console.error('   - The request is being interrupted');
+          
+          return res.status(400).json({
+            success: false,
+            message: 'Form data is incomplete or malformed. This usually happens when the file upload is interrupted or not properly formatted. Please try uploading the image again.',
+            code: '00400'
+          });
+        }
+        
+        return res.status(400).json({
+          success: false,
+          message: 'File upload failed: ' + err.message,
+          code: '00400'
+        });
+      }
+      
+      // Success - log file details
+      if (req.file) {
+        console.log('✅ File uploaded successfully:');
+        console.log('   - Field name:', req.file.fieldname);
+        console.log('   - Original name:', req.file.originalname);
+        console.log('   - MIME type:', req.file.mimetype);
+        console.log('   - Size:', req.file.size, 'bytes');
+        console.log('   - Buffer exists:', !!req.file.buffer);
+      } else {
+        console.log('ℹ️ No file uploaded in this request');
+      }
+      
+      console.log('🔧 Multer processing completed successfully');
+      next();
+    });
+  } catch (unexpectedError) {
+    // Clear the timeout since we got an error
+    clearTimeout(timeout);
+    
+    console.error('❌ Unexpected error in uploadSingleImageToCloudinary:', unexpectedError);
+    console.error('❌ Unexpected error stack:', unexpectedError.stack);
+    return res.status(500).json({
+      success: false,
+      message: 'An unexpected error occurred during file upload. Please try again.',
+      code: '00500'
+    });
+  }
+};
+
+// Robust profile upload middleware specifically for admin profiles
+export const uploadAdminProfileImage = (req, res, next) => {
+    console.log('🔧 Admin Profile Upload Middleware - Starting...');
+    console.log('🔧 Request headers:', req.headers);
+    console.log('🔧 Content-Type:', req.headers['content-type']);
+    console.log('🔧 Content-Length:', req.headers['content-length']);
+    
+    // Check if this is a multipart request
+    if (!req.headers['content-type'] || !req.headers['content-type'].includes('multipart/form-data')) {
+        console.log('⚠️ Not a multipart request, skipping file upload');
+        return next();
+    }
+    
+    // Use a simple, reliable multer configuration
+    const simpleUpload = multer({
+        storage: memoryStorage,
+        fileFilter: (req, file, cb) => {
+            // Only accept image files
+            if (file.mimetype.startsWith('image/')) {
+                console.log('✅ File accepted:', file.originalname, file.mimetype, file.size);
+                cb(null, true);
+            } else {
+                console.log('❌ File rejected:', file.originalname, file.mimetype);
+                cb(new Error('Only image files are allowed'), false);
+            }
+        },
+        limits: {
+            fileSize: 5 * 1024 * 1024, // 5MB limit
+            files: 1 // Only allow 1 file
+        }
+    }).any(); // Use .any() to accept any field name
+    
+    simpleUpload(req, res, (err) => {
+        if (err) {
+            console.error('❌ File upload error:', err);
+            
+            if (err instanceof multer.MulterError) {
+                switch (err.code) {
+                    case 'LIMIT_FILE_SIZE':
+                        return res.status(400).json({
+                            success: false,
+                            message: 'File too large. Maximum size is 5MB',
+                            code: '00400'
+                        });
+                    case 'LIMIT_FILE_COUNT':
+                        return res.status(400).json({
+                            success: false,
+                            message: 'Too many files. Only one image allowed',
+                            code: '00400'
+                        });
+                    default:
+                        return res.status(400).json({
+                            success: false,
+                            message: 'File upload error: ' + err.message,
+                            code: '00400'
+                        });
+                }
+            }
+            
+            return res.status(400).json({
+                success: false,
+                message: 'File upload failed: ' + err.message,
+                code: '00400'
+            });
+        }
+        
+        // Success - log file details
+        if (req.files && req.files.length > 0) {
+            console.log('✅ Files uploaded successfully:');
+            req.files.forEach((file, index) => {
+                console.log(`   File ${index + 1}:`);
+                console.log('     - Field name:', file.fieldname);
+                console.log('     - Original name:', file.originalname);
+                console.log('     - MIME type:', file.mimetype);
+                console.log('     - Size:', file.size, 'bytes');
+                console.log('     - Buffer exists:', !!file.buffer);
+            });
+            
+            // Set req.file to the first file for backward compatibility
+            req.file = req.files[0];
+        } else {
+            console.log('ℹ️ No files uploaded in this request');
+        }
+        
+        console.log('🔧 Admin Profile Upload Middleware - Completed successfully');
+        next();
+    });
+};
 
 // Single image upload middleware for blog cover images
 export const uploadBlogCoverImageToCloudinary = cloudinaryImageUpload.single('coverImage');
@@ -213,6 +477,8 @@ export const uploadMultipleDocumentsToCloudinary = cloudinaryDocumentUpload.arra
 
 // Error handling middleware for Cloudinary uploads
 export const handleCloudinaryUploadError = (error, req, res, next) => {
+  console.log('🔧 handleCloudinaryUploadError - Processing error:', error.message);
+  
   if (error instanceof multer.MulterError) {
     if (error.code === 'LIMIT_FILE_SIZE') {
       return res.status(400).json({
@@ -231,7 +497,17 @@ export const handleCloudinaryUploadError = (error, req, res, next) => {
       success: false,
       message: error.message
     });
+  } else if (error.message.includes('Unexpected end of form')) {
+    console.error('❌ Multipart form parsing error detected in handleCloudinaryUploadError');
+    return res.status(400).json({
+      success: false,
+      message: 'Form data is incomplete or malformed. Please ensure all required fields are filled and the image file is properly selected.',
+      code: '00400'
+    });
   }
+  
+  // For any other errors, pass them to the next error handler
+  console.log('🔧 Passing error to next handler:', error.message);
   next(error);
 };
 
@@ -372,4 +648,370 @@ export const cleanupUploadedFiles = async (uploadedFiles) => {
   } catch (error) {
     console.error('Failed to cleanup uploaded files:', error);
   }
+}; 
+
+// Very simple middleware that just handles the existing Cloudinary upload
+export const simpleProfileUpload = (req, res, next) => {
+    const contentType = req.headers['content-type'] || '';
+    
+    if (contentType.includes('multipart/form-data')) {
+        // For multipart requests, use the existing Cloudinary upload middleware
+        uploadSingleImageToCloudinary(req, res, (err) => {
+            if (err) {
+                console.error('Simple upload error:', err);
+                // Handle specific multipart errors
+                if (err.message && err.message.includes('Unexpected end of form')) {
+                    return res.status(400).json({
+                        success: false,
+                        message: 'Invalid form data. Please ensure your form is properly formatted and complete.',
+                        code: '00400'
+                    });
+                }
+                return res.status(400).json({
+                    success: false,
+                    message: 'Form data error: ' + err.message,
+                    code: '00400'
+                });
+            }
+            next();
+        });
+    } else {
+        // For JSON requests, just continue
+        next();
+    }
+};
+
+// Completely new, robust middleware for admin profile updates
+export const robustProfileUpload = (req, res, next) => {
+    const contentType = req.headers['content-type'] || '';
+    
+    console.log('🔍 Middleware: Content-Type detected:', contentType);
+    console.log('🔍 Middleware: Request method:', req.method);
+    console.log('🔍 Middleware: Request URL:', req.url);
+    
+    if (contentType.includes('multipart/form-data')) {
+        console.log('🔍 Middleware: Processing multipart request');
+        
+        // Create a completely new multer instance with more permissive settings
+        const robustUpload = multer({
+            storage: memoryStorage,
+            fileFilter: (req, file, cb) => {
+                // Accept any file for now - validation happens in controller
+                console.log('🔍 Middleware: Processing file:', file.originalname, file.mimetype, file.size);
+                cb(null, true);
+            },
+            limits: {
+                fileSize: 5 * 1024 * 1024, // 5MB limit
+                fieldSize: 2 * 1024 * 1024, // 2MB for text fields
+                fields: 20, // Allow up to 20 fields
+                files: 1, // Allow only 1 file
+                parts: 25 // Allow up to 25 parts total
+            }
+        }).single('image');
+        
+        robustUpload(req, res, (err) => {
+            if (err) {
+                console.error('❌ Middleware: Upload error:', err);
+                console.error('❌ Middleware: Error details:', {
+                    message: err.message,
+                    code: err.code,
+                    field: err.field,
+                    storageErrors: err.storageErrors
+                });
+                
+                // Handle specific multipart errors with better messages
+                if (err.message && err.message.includes('Unexpected end of form')) {
+                    console.error('❌ Middleware: Form data incomplete - this usually means:');
+                    console.error('   - Form was submitted before all data was entered');
+                    console.error('   - Network interruption during upload');
+                    console.error('   - File object is invalid or corrupted');
+                    console.error('   - FormData construction issue on frontend');
+                    
+                    return res.status(400).json({
+                        success: false,
+                        message: 'Form data incomplete. Please check your form and try again.',
+                        code: '00400',
+                        details: 'The form submission was incomplete. This usually happens when: 1) The form is submitted too quickly, 2) There are network issues, 3) The file object is invalid, or 4) There are frontend form construction issues.',
+                        suggestions: [
+                            'Ensure all form fields are filled before submitting',
+                            'Check that the image file is valid and not corrupted',
+                            'Try submitting without an image first',
+                            'Check your network connection',
+                            'Verify the form is properly constructed on the frontend'
+                        ]
+                    });
+                }
+                
+                if (err.message && err.message.includes('Multipart')) {
+                    return res.status(400).json({
+                        success: false,
+                        message: 'Invalid form format. Please use a proper form submission.',
+                        code: '00400',
+                        details: err.message
+                    });
+                }
+                
+                if (err.code === 'LIMIT_FILE_SIZE') {
+                    return res.status(400).json({
+                        success: false,
+                        message: 'File too large. Maximum size is 5MB.',
+                        code: '00400'
+                    });
+                }
+                
+                if (err.code === 'LIMIT_FILE_COUNT') {
+                    return res.status(400).json({
+                        success: false,
+                        message: 'Too many files. Only one image is allowed.',
+                        code: '00400'
+                    });
+                }
+                
+                // Generic error for other cases
+                return res.status(400).json({
+                    success: false,
+                    message: 'Form processing failed: ' + err.message,
+                    code: '00400',
+                    details: 'Please check your form data and try again.'
+                });
+            }
+            
+            // Log successful processing
+            console.log('✅ Middleware: Form data processed successfully');
+            console.log('✅ Middleware: Body fields:', Object.keys(req.body || {}));
+            console.log('✅ Middleware: File:', req.file ? {
+                name: req.file.originalname,
+                type: req.file.mimetype,
+                size: req.file.size
+            } : 'No file');
+            
+            next();
+        });
+    } else {
+        // For JSON requests, just continue
+        console.log('🔍 Middleware: JSON request detected, skipping file processing');
+        next();
+    }
+};
+
+// Ultra-robust middleware for admin profile updates
+// This middleware can handle corrupted multipart forms and provide recovery options
+export const ultraRobustProfileUpload = (req, res, next) => {
+    const contentType = req.headers['content-type'] || '';
+    
+    console.log('🚀 Ultra-Robust Middleware: Content-Type detected:', contentType);
+    console.log('🚀 Ultra-Robust Middleware: Request method:', req.method);
+    console.log('🚀 Ultra-Robust Middleware: Request URL:', req.url);
+    
+    if (contentType.includes('multipart/form-data')) {
+        console.log('🚀 Ultra-Robust Middleware: Processing multipart request');
+        
+        // Create a completely new multer instance with ultra-permissive settings
+        const ultraRobustUpload = multer({
+            storage: memoryStorage,
+            fileFilter: (req, file, cb) => {
+                // Accept any file for now - validation happens in controller
+                console.log('🚀 Ultra-Robust Middleware: Processing file:', file.originalname, file.mimetype, file.size);
+                cb(null, true);
+            },
+            limits: {
+                fileSize: 10 * 1024 * 1024, // 10MB limit (increased)
+                fieldSize: 5 * 1024 * 1024, // 5MB for text fields (increased)
+                fields: 50, // Allow up to 50 fields (increased)
+                files: 1, // Allow only 1 file
+                parts: 100, // Allow up to 100 parts total (increased)
+                headerPairs: 2000 // Allow more header pairs
+            }
+        }).single('image');
+        
+        ultraRobustUpload(req, res, (err) => {
+            if (err) {
+                console.error('❌ Ultra-Robust Middleware: Upload error:', err);
+                console.error('❌ Ultra-Robust Middleware: Error details:', {
+                    message: err.message,
+                    code: err.code,
+                    field: err.field,
+                    storageErrors: err.storageErrors,
+                    stack: err.stack
+                });
+                
+                // Handle specific multipart errors with recovery options
+                if (err.message && err.message.includes('Unexpected end of form')) {
+                    console.error('❌ Ultra-Robust Middleware: Form data incomplete detected');
+                    console.error('🔧 Attempting recovery...');
+                    
+                    // Try to extract any partial data that might have been received
+                    const partialData = {};
+                    if (req.body && typeof req.body === 'object') {
+                        Object.keys(req.body).forEach(key => {
+                            if (req.body[key] && req.body[key].trim() !== '') {
+                                partialData[key] = req.body[key];
+                            }
+                        });
+                    }
+                    
+                    console.log('🔍 Partial data received:', partialData);
+                    
+                    // If we have some data, offer a recovery option
+                    if (Object.keys(partialData).length > 0) {
+                        console.log('✅ Partial data recovery possible');
+                        
+                        // Set the partial data and continue without file
+                        req.body = partialData;
+                        req.file = null;
+                        
+                        console.log('🚀 Ultra-Robust Middleware: Continuing with partial data recovery');
+                        console.log('⚠️ Note: No image file was processed due to form corruption');
+                        
+                        // Add a flag to indicate this was a recovery
+                        req.partialDataRecovery = true;
+                        
+                        return next();
+                    } else {
+                        console.error('❌ No partial data available for recovery');
+                        
+                        return res.status(400).json({
+                            success: false,
+                            message: 'Form submission failed - data was corrupted during transmission',
+                            code: '00400',
+                            details: 'The multipart form was incomplete or corrupted. This usually happens when:',
+                            causes: [
+                                'Form submitted before all data was fully loaded',
+                                'Network interruption during upload',
+                                'File object is corrupted or invalid',
+                                'Browser compatibility issues',
+                                'FormData construction problems on frontend'
+                            ],
+                            recoverySteps: [
+                                'Try submitting the form again',
+                                'Check your network connection',
+                                'Try without an image first',
+                                'Use a different browser',
+                                'Clear browser cache and cookies',
+                                'Ensure the file is not corrupted'
+                            ],
+                            technicalDetails: {
+                                error: err.message,
+                                contentType: contentType,
+                                boundary: contentType.includes('boundary=') ? contentType.split('boundary=')[1] : 'Not found'
+                            }
+                        });
+                    }
+                }
+                
+                // Handle other specific errors
+                if (err.message && err.message.includes('Multipart')) {
+                    return res.status(400).json({
+                        success: false,
+                        message: 'Invalid multipart form format',
+                        code: '00400',
+                        details: err.message,
+                        suggestions: [
+                            'Ensure you are using a proper form submission',
+                            'Check that all form fields are properly filled',
+                            'Try refreshing the page and submitting again'
+                        ]
+                    });
+                }
+                
+                if (err.code === 'LIMIT_FILE_SIZE') {
+                    return res.status(400).json({
+                        success: false,
+                        message: 'File too large. Maximum size is 10MB.',
+                        code: '00400',
+                        details: `File size limit exceeded. Received: ${err.message}`
+                    });
+                }
+                
+                if (err.code === 'LIMIT_FILE_COUNT') {
+                    return res.status(400).json({
+                        success: false,
+                        message: 'Too many files. Only one image is allowed.',
+                        code: '00400'
+                    });
+                }
+                
+                // Generic error for other cases
+                return res.status(400).json({
+                    success: false,
+                    message: 'Form processing failed',
+                    code: '00400',
+                    details: err.message,
+                    suggestions: [
+                        'Check your form data and try again',
+                        'Ensure all required fields are filled',
+                        'Try submitting without an image first'
+                    ]
+                });
+            }
+            
+            // Log successful processing
+            console.log('✅ Ultra-Robust Middleware: Form data processed successfully');
+            console.log('✅ Ultra-Robust Middleware: Body fields:', Object.keys(req.body || {}));
+            console.log('✅ Ultra-Robust Middleware: File:', req.file ? {
+                name: req.file.originalname,
+                type: req.file.mimetype,
+                size: req.file.size
+            } : 'No file');
+            
+            next();
+        });
+    } else {
+        // For JSON requests, just continue
+        console.log('🚀 Ultra-Robust Middleware: JSON request detected, skipping file processing');
+        next();
+    }
+};
+
+// Alternative: Ultra-simple middleware that just passes through
+export const passThroughUpload = (req, res, next) => {
+    const contentType = req.headers['content-type'] || '';
+    
+    if (contentType.includes('multipart/form-data')) {
+        console.log('Multipart request detected, using basic multer');
+        
+        // Use the most basic multer configuration possible
+        const basicUpload = multer({
+            storage: memoryStorage,
+            limits: {
+                fileSize: 5 * 1024 * 1024
+            }
+        }).single('image');
+        
+        basicUpload(req, res, (err) => {
+            if (err) {
+                console.error('Basic upload error:', err);
+                return res.status(400).json({
+                    success: false,
+                    message: 'Form processing error: ' + err.message,
+                    code: '00400'
+                });
+            }
+            next();
+        });
+    } else {
+        next();
+    }
+};
+
+// Error handling middleware specifically for multipart form errors
+export const handleMultipartErrors = (error, req, res, next) => {
+    if (error.message && error.message.includes('Unexpected end of form')) {
+        return res.status(400).json({
+            success: false,
+            message: 'Invalid form data. Please check your request format.',
+            code: '00400'
+        });
+    }
+    
+    if (error.message && error.message.includes('Multipart')) {
+        return res.status(400).json({
+            success: false,
+            message: 'Invalid multipart form data.',
+            code: '00400'
+        });
+    }
+    
+    // Pass other errors to the next error handler
+    next(error);
 }; 

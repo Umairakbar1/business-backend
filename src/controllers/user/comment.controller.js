@@ -3,6 +3,32 @@ import Reply from '../../models/user/reply.js';
 import Blog from '../../models/admin/blog.js';
 import { errorResponseHelper, successResponseHelper } from '../../helpers/utilityHelper.js';
 
+// Helper function to get all comments with replies for a blog
+const getCommentsWithReplies = async (blogId) => {
+    try {
+        const comments = await Comment.find({ 
+            blogId: blogId, 
+            status: 'active' 
+        })
+        .populate({
+            path: 'replies',
+            match: { status: 'active' },
+            populate: {
+                path: 'author',
+                select: 'name email'
+            }
+        })
+        .populate('author', 'name email')
+        .sort({ createdAt: -1 })
+        .select('-__v');
+
+        return comments;
+    } catch (error) {
+        console.error('Error fetching comments with replies:', error);
+        return [];
+    }
+};
+
 // Create a new comment on a blog
 const createComment = async (req, res) => {
     try {
@@ -64,9 +90,15 @@ const createComment = async (req, res) => {
         // Populate author information for response
         await comment.populate('author', 'name email'); // Changed from firstName lastName to name
 
+        // Get all comments with replies for the blog
+        const allComments = await getCommentsWithReplies(blogId);
+
         return successResponseHelper(res, { 
             message: "Comment created successfully", 
-            data: comment 
+            data: {
+                comment: comment,
+                comments: allComments
+            }
         });
     } catch (error) {
         console.error('Create comment error:', error);
@@ -184,7 +216,7 @@ const updateComment = async (req, res) => {
         }
 
         // Check if user owns the comment
-        if (comment.author.toString() !== userId) {
+        if (!comment.author.equals(userId)) {
             return errorResponseHelper(res, { 
                 message: "You can only edit your own comments", 
                 code: '00403' 
@@ -205,9 +237,15 @@ const updateComment = async (req, res) => {
 
         await comment.save();
 
+        // Get all comments with replies for the blog
+        const allComments = await getCommentsWithReplies(comment.blogId);
+
         return successResponseHelper(res, { 
             message: "Comment updated successfully", 
-            data: comment 
+            data: {
+                comment: comment,
+                comments: allComments
+            }
         });
     } catch (error) {
         console.error('Update comment error:', error);
@@ -233,19 +271,27 @@ const deleteComment = async (req, res) => {
         }
 
         // Check if user owns the comment
-        if (comment.author.toString() !== userId) {
+        if (!comment.author.equals(userId)) {
             return errorResponseHelper(res, { 
                 message: "You can only delete your own comments", 
                 code: '00403' 
             });
         }
 
-        // Soft delete - mark as deleted instead of removing
-        comment.status = 'deleted';
-        await comment.save();
+        // Hard delete - actually remove the comment from database
+        await Comment.findByIdAndDelete(commentId);
+
+        // Also delete all replies associated with this comment
+        await Reply.deleteMany({ comment: commentId });
+
+        // Get all comments with replies for the blog
+        const allComments = await getCommentsWithReplies(comment.blogId);
 
         return successResponseHelper(res, { 
-            message: "Comment deleted successfully" 
+            message: "Comment deleted successfully",
+            data: {
+                comments: allComments
+            }
         });
     } catch (error) {
         console.error('Delete comment error:', error);
