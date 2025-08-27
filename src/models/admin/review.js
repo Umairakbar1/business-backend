@@ -79,6 +79,88 @@ const ReviewSchema = new mongoose.Schema({
     },
     businessManagementGrantedAt: Date,
     approvedAt: Date,
+    // Comments and replies for reviews
+    comments: [{
+      content: {
+        type: String,
+        required: true,
+        trim: true,
+        maxlength: 1000
+      },
+      authorId: {
+        type: mongoose.Schema.Types.ObjectId,
+        required: true
+      },
+      authorType: {
+        type: String,
+        enum: ['user', 'business', 'admin'],
+        required: true
+      },
+      authorName: {
+        type: String,
+        required: true,
+        trim: true
+      },
+      authorEmail: {
+        type: String,
+        trim: true,
+        lowercase: true
+      },
+      createdAt: {
+        type: Date,
+        default: Date.now
+      },
+      updatedAt: {
+        type: Date,
+        default: Date.now
+      },
+      isEdited: {
+        type: Boolean,
+        default: false
+      },
+      editedAt: Date,
+      // Replies to this comment
+      replies: [{
+        content: {
+          type: String,
+          required: true,
+          trim: true,
+          maxlength: 500
+        },
+        authorId: {
+          type: mongoose.Schema.Types.ObjectId,
+          required: true
+        },
+        authorType: {
+          type: String,
+          enum: ['user', 'business', 'admin'],
+          required: true
+        },
+        authorName: {
+          type: String,
+          required: true,
+          trim: true
+        },
+        authorEmail: {
+          type: String,
+          trim: true,
+          lowercase: true
+        },
+        createdAt: {
+          type: Date,
+          default: Date.now
+        },
+        updatedAt: {
+          type: Date,
+          default: Date.now
+        },
+        isEdited: {
+          type: Boolean,
+          default: false
+        },
+        editedAt: Date
+      }]
+    }],
     createdAt: {
       type: Date,
       default: Date.now

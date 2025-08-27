@@ -129,3 +129,353 @@ export const getMyReviews = async (req, res) => {
     return errorResponseHelper(res, { message: error.message, code: '00500' });
   }
 };
+
+// POST /user/review/:id/comments - Add comment to review
+export const addComment = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { content } = req.body;
+    const userId = req.user?._id;
+    
+    if (!userId) {
+      return errorResponseHelper(res, { message: 'User not authenticated', code: '00401' });
+    }
+    
+    if (!content) {
+      return errorResponseHelper(res, { message: 'Comment content is required', code: '00400' });
+    }
+    
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return errorResponseHelper(res, { message: 'Invalid review ID', code: '00400' });
+    }
+    
+    // Find the review
+    const review = await Review.findById(id);
+    if (!review) {
+      return errorResponseHelper(res, { message: 'Review not found', code: '00404' });
+    }
+    
+    // Get user details for author name
+    const user = req.user;
+    const authorName = user ? `${user.firstName || 'User'} ${user.lastName || ''}`.trim() || 'User' : 'User';
+    const authorEmail = user?.email || '';
+    
+    const comment = {
+      content,
+      authorId: userId,
+      authorType: 'user',
+      authorName,
+      authorEmail,
+      createdAt: new Date()
+    };
+    
+    review.comments.push(comment);
+    review.updatedAt = new Date();
+    await review.save();
+    
+    // Populate and return the complete review object
+    await review.populate('businessId', 'businessName businessCategory');
+    await review.populate('userId', 'firstName lastName email');
+    
+    return successResponseHelper(res, {
+      message: 'Comment added successfully',
+      data: review
+    });
+  } catch (error) {
+    return errorResponseHelper(res, { message: error.message, code: '00500' });
+  }
+};
+
+// POST /user/review/comments/:commentId/replies - Add reply to comment
+export const addReply = async (req, res) => {
+  try {
+    const { commentId } = req.params;
+    const { content } = req.body;
+    const userId = req.user?._id;
+    
+    if (!userId) {
+      return errorResponseHelper(res, { message: 'User not authenticated', code: '00401' });
+    }
+    
+    if (!content) {
+      return errorResponseHelper(res, { message: 'Reply content is required', code: '00400' });
+    }
+    
+    if (!mongoose.Types.ObjectId.isValid(commentId)) {
+      return errorResponseHelper(res, { message: 'Invalid comment ID', code: '00400' });
+    }
+    
+    // Find the comment and its parent review
+    const review = await Review.findOne({
+      'comments._id': commentId
+    });
+    
+    if (!review) {
+      return errorResponseHelper(res, { message: 'Comment not found', code: '00404' });
+    }
+    
+    const comment = review.comments.id(commentId);
+    if (!comment) {
+      return errorResponseHelper(res, { message: 'Comment not found', code: '00404' });
+    }
+    
+    // Get user details for author name
+    const user = req.user;
+    const authorName = user ? `${user.firstName || 'User'} ${user.lastName || ''}`.trim() || 'User' : 'User';
+    const authorEmail = user?.email || '';
+    
+    const reply = {
+      content,
+      authorId: userId,
+      authorType: 'user',
+      authorName,
+      authorEmail,
+      createdAt: new Date()
+    };
+    
+    comment.replies.push(reply);
+    review.updatedAt = new Date();
+    await review.save();
+    
+    // Populate and return the complete review object
+    await review.populate('businessId', 'businessName businessCategory');
+    await review.populate('userId', 'firstName lastName email');
+    
+    return successResponseHelper(res, {
+      message: 'Reply added successfully',
+      data: review
+    });
+  } catch (error) {
+    return errorResponseHelper(res, { message: error.message, code: '00500' });
+  }
+};
+
+// PUT /user/review/comments/:commentId - Edit comment
+export const editComment = async (req, res) => {
+  try {
+    const { commentId } = req.params;
+    const { content } = req.body;
+    const userId = req.user?._id;
+    
+    if (!userId) {
+      return errorResponseHelper(res, { message: 'User not authenticated', code: '00401' });
+    }
+    
+    if (!content) {
+      return errorResponseHelper(res, { message: 'Comment content is required', code: '00400' });
+    }
+    
+    if (!mongoose.Types.ObjectId.isValid(commentId)) {
+      return errorResponseHelper(res, { message: 'Invalid comment ID', code: '00400' });
+    }
+    
+    // Find the comment and its parent review
+    const review = await Review.findOne({
+      'comments._id': commentId
+    });
+    
+    if (!review) {
+      return errorResponseHelper(res, { message: 'Comment not found', code: '00404' });
+    }
+    
+    const comment = review.comments.id(commentId);
+    if (!comment) {
+      return errorResponseHelper(res, { message: 'Comment not found', code: '00404' });
+    }
+    
+    // Check if comment belongs to this user
+    if (comment.authorId.toString() !== userId.toString()) {
+      return errorResponseHelper(res, { message: 'You can only edit your own comments', code: '00403' });
+    }
+    
+    comment.content = content;
+    comment.isEdited = true;
+    comment.editedAt = new Date();
+    comment.updatedAt = new Date();
+    
+    review.updatedAt = new Date();
+    await review.save();
+    
+    // Populate and return the complete review object
+    await review.populate('businessId', 'businessName businessCategory');
+    await review.populate('userId', 'firstName lastName email');
+    
+    return successResponseHelper(res, {
+      message: 'Comment updated successfully',
+      data: review
+    });
+  } catch (error) {
+    return errorResponseHelper(res, { message: error.message, code: '00500' });
+  }
+};
+
+// PUT /user/review/comments/:commentId/replies/:replyId - Edit reply
+export const editReply = async (req, res) => {
+  try {
+    const { commentId, replyId } = req.params;
+    const { content } = req.body;
+    const userId = req.user?._id;
+    
+    if (!userId) {
+      return errorResponseHelper(res, { message: 'User not authenticated', code: '00401' });
+    }
+    
+    if (!content) {
+      return errorResponseHelper(res, { message: 'Reply content is required', code: '00400' });
+    }
+    
+    if (!mongoose.Types.ObjectId.isValid(commentId) || !mongoose.Types.ObjectId.isValid(replyId)) {
+      return errorResponseHelper(res, { message: 'Invalid comment or reply ID', code: '00400' });
+    }
+    
+    // Find the comment and its parent review
+    const review = await Review.findOne({
+      'comments._id': commentId
+    });
+    
+    if (!review) {
+      return errorResponseHelper(res, { message: 'Comment not found', code: '00404' });
+    }
+    
+    const comment = review.comments.id(commentId);
+    if (!comment) {
+      return errorResponseHelper(res, { message: 'Comment not found', code: '00404' });
+    }
+    
+    const reply = comment.replies.id(replyId);
+    if (!reply) {
+      return errorResponseHelper(res, { message: 'Reply not found', code: '00404' });
+    }
+    
+    // Check if reply belongs to this user
+    if (reply.authorId.toString() !== userId.toString()) {
+      return errorResponseHelper(res, { message: 'You can only edit your own replies', code: '00403' });
+    }
+    
+    reply.content = content;
+    reply.isEdited = true;
+    reply.editedAt = new Date();
+    reply.updatedAt = new Date();
+    
+    review.updatedAt = new Date();
+    await review.save();
+    
+    // Populate and return the complete review object
+    await review.populate('businessId', 'businessName businessCategory');
+    await review.populate('userId', 'firstName lastName email');
+    
+    return successResponseHelper(res, {
+      message: 'Reply updated successfully',
+      data: review
+    });
+  } catch (error) {
+    return errorResponseHelper(res, { message: error.message, code: '00500' });
+  }
+};
+
+// DELETE /user/review/comments/:commentId - Delete comment
+export const deleteComment = async (req, res) => {
+  try {
+    const { commentId } = req.params;
+    const userId = req.user?._id;
+    
+    if (!userId) {
+      return errorResponseHelper(res, { message: 'User not authenticated', code: '00401' });
+    }
+    
+    if (!mongoose.Types.ObjectId.isValid(commentId)) {
+      return errorResponseHelper(res, { message: 'Invalid comment ID', code: '00400' });
+    }
+    
+    // Find the comment and its parent review
+    const review = await Review.findOne({
+      'comments._id': commentId
+    });
+    
+    if (!review) {
+      return errorResponseHelper(res, { message: 'Comment not found', code: '00404' });
+    }
+    
+    const comment = review.comments.id(commentId);
+    if (!comment) {
+      return errorResponseHelper(res, { message: 'Comment not found', code: '00404' });
+    }
+    
+    // Check if comment belongs to this user
+    if (comment.authorId.toString() !== userId.toString()) {
+      return errorResponseHelper(res, { message: 'You can only delete your own comments', code: '00403' });
+    }
+    
+    // Remove the comment
+    review.comments.pull(commentId);
+    review.updatedAt = new Date();
+    await review.save();
+    
+    // Populate and return the complete review object
+    await review.populate('businessId', 'businessName businessCategory');
+    await review.populate('userId', 'firstName lastName email');
+    
+    return successResponseHelper(res, {
+      message: 'Comment deleted successfully',
+      data: review
+    });
+  } catch (error) {
+    return errorResponseHelper(res, { message: error.message, code: '00500' });
+  }
+};
+
+// DELETE /user/review/comments/:commentId/replies/:replyId - Delete reply
+export const deleteReply = async (req, res) => {
+  try {
+    const { commentId, replyId } = req.params;
+    const userId = req.user?._id;
+    
+    if (!userId) {
+      return errorResponseHelper(res, { message: 'User not authenticated', code: '00401' });
+    }
+    
+    if (!mongoose.Types.ObjectId.isValid(commentId) || !mongoose.Types.ObjectId.isValid(replyId)) {
+      return errorResponseHelper(res, { message: 'Invalid comment or reply ID', code: '00400' });
+    }
+    
+    // Find the comment and its parent review
+    const review = await Review.findOne({
+      'comments._id': commentId
+    });
+    
+    if (!review) {
+      return errorResponseHelper(res, { message: 'Comment not found', code: '00404' });
+    }
+    
+    const comment = review.comments.id(commentId);
+    if (!comment) {
+      return errorResponseHelper(res, { message: 'Comment not found', code: '00404' });
+    }
+    
+    const reply = comment.replies.id(replyId);
+    if (!reply) {
+      return errorResponseHelper(res, { message: 'Reply not found', code: '00404' });
+    }
+    
+    // Check if reply belongs to this user
+    if (reply.authorId.toString() !== userId.toString()) {
+      return errorResponseHelper(res, { message: 'You can only delete your own replies', code: '00403' });
+    }
+    
+    // Remove the reply
+    comment.replies.pull(replyId);
+    review.updatedAt = new Date();
+    await review.save();
+    
+    // Populate and return the complete review object
+    await review.populate('businessId', 'businessName businessCategory');
+    await review.populate('userId', 'firstName lastName email');
+    
+    return successResponseHelper(res, {
+      message: 'Reply deleted successfully',
+      data: review
+    });
+  } catch (error) {
+    return errorResponseHelper(res, { message: error.message, code: '00500' });
+  }
+};

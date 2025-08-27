@@ -11,6 +11,9 @@ import adminReviewsRoutes from "./admin/reviews.js";
 import adminQueryTicketsRoutes from "./admin/queryTickets.js";
 import adminMetadataRoutes from "./admin/metadata.js";
 import adminMediaRoutes from "./admin/media.js";
+import adminPaymentPlanRoutes from "./admin/paymentPlan.js";
+import adminSubscriptionRoutes from "./admin/subscription.js";
+import adminWebhookRoutes from "./admin/webhook.js";
 import businessAuthRoutes from "./business/auth.js";
 import businessBusinessRoutes from "./business/business.js";
 import businessReviewsRoutes from "./business/reviews.js";
@@ -18,6 +21,7 @@ import businessQueryTicketsRoutes from "./business/queryTickets.js";
 import businessOwnerRoutes from "./business/owner.js";
 import businessCategoryRoutes from "./business/category.js";
 import businessReviewEmbedRoutes from "./business/reviewEmbed.js";
+import businessSubscriptionRoutes from "./business/subscription.js";
 import embedRoutes from "./embed.js";
 import userAuthRoutes from "./user/auth.js";
 import userBusinessRoutes from "./user/buisness.js";
@@ -53,6 +57,9 @@ router.use("/admin/reviews", adminReviewsRoutes);
 router.use("/admin/query-tickets", adminQueryTicketsRoutes);
 router.use("/admin/metadata", adminMetadataRoutes);
 router.use("/admin/media", adminMediaRoutes);
+router.use("/admin/payment-plans", adminPaymentPlanRoutes);
+router.use("/admin/subscriptions", adminSubscriptionRoutes);
+router.use("/admin/webhooks", adminWebhookRoutes);
 
 // Business routes
 router.use("/business/auth", businessAuthRoutes);
@@ -62,6 +69,7 @@ router.use("/business/businesses", businessBusinessRoutes);
 router.use("/business/owner", businessOwnerRoutes);
 router.use("/business/categories", businessCategoryRoutes);
 router.use("/business/review-embed", businessReviewEmbedRoutes);
+router.use("/business/subscriptions", businessSubscriptionRoutes);
 
 // Public embed routes (no authentication required) - Review embeds only
 router.use("/embed", embedRoutes);

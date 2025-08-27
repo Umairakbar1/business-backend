@@ -564,6 +564,200 @@ const metadataUpdateValidator = metadataValidator.fork(
   (schema) => schema.optional()
 );
 
+// Payment Plan validators
+const paymentPlanValidator = Joi.object({
+  name: Joi.string()
+    .min(2)
+    .max(100)
+    .required()
+    .trim()
+    .messages({
+      'string.empty': 'Plan name is required',
+      'string.min': 'Plan name must be at least 2 characters long',
+      'string.max': 'Plan name cannot exceed 100 characters',
+      'any.required': 'Plan name is required'
+    }),
+
+  description: Joi.string()
+    .min(10)
+    .max(500)
+    .required()
+    .trim()
+    .messages({
+      'string.empty': 'Plan description is required',
+      'string.min': 'Plan description must be at least 10 characters long',
+      'string.max': 'Plan description cannot exceed 500 characters',
+      'any.required': 'Plan description is required'
+    }),
+
+  planType: Joi.string()
+    .valid('business', 'boost')
+    .required()
+    .messages({
+      'any.only': 'Plan type must be either business or boost',
+      'any.required': 'Plan type is required'
+    }),
+
+  price: Joi.number()
+    .positive()
+    .required()
+    .messages({
+      'number.base': 'Price must be a number',
+      'number.positive': 'Price must be greater than 0',
+      'any.required': 'Price is required'
+    }),
+
+  currency: Joi.string()
+    .valid('USD', 'EUR', 'GBP')
+    .default('USD')
+    .messages({
+      'any.only': 'Currency must be USD, EUR, or GBP'
+    }),
+
+
+
+  features: Joi.array()
+    .items(Joi.object({
+      name: Joi.string()
+        .required()
+        .trim()
+        .messages({
+          'string.empty': 'Feature name is required',
+          'any.required': 'Feature name is required'
+        }),
+      description: Joi.string()
+        .required()
+        .trim()
+        .messages({
+          'string.empty': 'Feature description is required',
+          'any.required': 'Feature description is required'
+        }),
+      included: Joi.boolean()
+        .default(true)
+        .messages({
+          'boolean.base': 'Feature included must be a boolean'
+        }),
+      limit: Joi.number()
+        .integer()
+        .min(0)
+        .allow(null)
+        .optional()
+        .messages({
+          'number.base': 'Feature limit must be a number',
+          'number.integer': 'Feature limit must be an integer',
+          'number.min': 'Feature limit cannot be negative'
+        })
+    }))
+    .min(1)
+    .required()
+    .messages({
+      'array.min': 'At least one feature is required',
+      'any.required': 'Features are required'
+    }),
+
+  isPopular: Joi.boolean()
+    .default(false)
+    .messages({
+      'boolean.base': 'isPopular must be a boolean'
+    }),
+
+  sortOrder: Joi.number()
+    .integer()
+    .min(0)
+    .default(0)
+    .messages({
+      'number.base': 'Sort order must be a number',
+      'number.integer': 'Sort order must be an integer',
+      'number.min': 'Sort order cannot be negative'
+    }),
+
+  maxBusinesses: Joi.number()
+    .integer()
+    .min(1)
+    .allow(null)
+    .optional()
+    .messages({
+      'number.base': 'Max businesses must be a number',
+      'number.integer': 'Max businesses must be an integer',
+      'number.min': 'Max businesses must be at least 1'
+    }),
+
+  maxReviews: Joi.number()
+    .integer()
+    .min(1)
+    .allow(null)
+    .optional()
+    .messages({
+      'number.base': 'Max reviews must be a number',
+      'number.integer': 'Max reviews must be an integer',
+      'number.min': 'Max reviews must be at least 1'
+    }),
+
+  maxBoostPerDay: Joi.number()
+    .integer()
+    .min(0)
+    .default(0)
+    .messages({
+      'number.base': 'Max boost per day must be a number',
+      'number.integer': 'Max boost per day must be an integer',
+      'number.min': 'Max boost per day cannot be negative'
+    })
+});
+
+// Subscription validators
+const subscriptionValidator = Joi.object({
+  businessId: Joi.string()
+    .pattern(/^[0-9a-fA-F]{24}$/)
+    .required()
+    .messages({
+      'string.empty': 'Business ID is required',
+      'string.pattern.base': 'Business ID must be a valid MongoDB ObjectId',
+      'any.required': 'Business ID is required'
+    }),
+
+  paymentPlanId: Joi.string()
+    .pattern(/^[0-9a-fA-F]{24}$/)
+    .required()
+    .messages({
+      'string.empty': 'Payment plan ID is required',
+      'string.pattern.base': 'Payment plan ID must be a valid MongoDB ObjectId',
+      'any.required': 'Payment plan ID is required'
+    }),
+
+  customerEmail: Joi.string()
+    .email()
+    .required()
+    .trim()
+    .messages({
+      'string.email': 'Customer email must be a valid email address',
+      'string.empty': 'Customer email is required',
+      'any.required': 'Customer email is required'
+    }),
+
+  customerName: Joi.string()
+    .min(2)
+    .max(100)
+    .required()
+    .trim()
+    .messages({
+      'string.empty': 'Customer name is required',
+      'string.min': 'Customer name must be at least 2 characters long',
+      'string.max': 'Customer name cannot exceed 100 characters',
+      'any.required': 'Customer name is required'
+    })
+});
+
+// Update validators
+const paymentPlanUpdateValidator = paymentPlanValidator.fork(
+  ['name', 'description', 'planType', 'price', 'currency', 'features', 'isPopular', 'sortOrder', 'maxBusinesses', 'maxReviews', 'maxBoostPerDay'],
+  (schema) => schema.optional()
+);
+
+const subscriptionUpdateValidator = subscriptionValidator.fork(
+  ['businessId', 'paymentPlanId', 'customerEmail', 'customerName'],
+  (schema) => schema.optional()
+);
+
 export {
   categoryValidator,
   subCategoryValidator,
@@ -575,5 +769,9 @@ export {
   queryTicketUpdateValidator,
   planValidator,
   metadataValidator,
-  metadataUpdateValidator
+  metadataUpdateValidator,
+  paymentPlanValidator,
+  subscriptionValidator,
+  paymentPlanUpdateValidator,
+  subscriptionUpdateValidator
 };

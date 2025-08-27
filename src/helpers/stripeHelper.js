@@ -1,212 +1,275 @@
-import Stripe from "stripe";
-import { GLOBAL_ENV } from "../config/globalConfig.js";
+import Stripe from 'stripe';
 
-const {
-  stripeSecretKey,
-  stripePublishableKey,
-  stripeWebhookSecret,
-} = GLOBAL_ENV;
-const stripe = Stripe(stripeSecretKey);
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 
-const getStripeOAuthUrl = async (callbackUrl) => {
-  const authorizeUrl = await stripe.oauth.authorizeUrl({
-    client_id: stripeClientId,
-    redirect_uri: callbackUrl,
-    scope: "read_write",
-  });
-  return authorizeUrl;
-};
-
-const oAuthGetStripeCustomer = async (code) => {
-  const customerData = await stripe.oauth.token({
-    grant_type: "authorization_code",
-    code,
-  });
-  return customerData;
-};
-
-const createStripeCustomer = async (phone, name) => {
-  let customer = await stripe.customers.create({
-    phone,
-    name,
-  });
-  return customer;
-};
-
-const createStripePaymentIntent = async (
-  amount,
-  customer,
-  metadata,
-  currency = 'usd',
-) => {
-
-  console.log(amount,
-    customer,
-    metadata, " amount,customer,metadata, ")
-  const paymentIntent = await stripe.paymentIntents.create({
-    amount: Math.round(amount * 100),
-    customer,
-    metadata,
-    currency: 'usd',
-    automatic_payment_methods: {
-      enabled: true,
-    },
-    // payment_method_types: ['affirm', 'card'],
-
-    transfer_group: metadata.orderId,
-  });
-  const ephemeralKey = await stripe.ephemeralKeys.create(
-    { customer, },
-    { apiVersion: '2022-08-01' }
-  );
-  return { paymentIntent, stripePublishableKey, ephemeralKey };
-};
-
-const createStripeCheckoutSession = async (
-  title,
-  amount,
-  currency,
-  customer,
-  metadata
-) => {
-  const session = await stripe.checkout.sessions.create({
-    payment_method_types: ["card"],
-    customer,
-    line_items: [
-      {
-        price_data: {
-          currency,
-          product_data: {
-            name: title,
-          },
-          unit_amount: amount,
-        },
-        quantity: 1,
-      },
-    ],
-    mode: "payment",
-    metadata,
-    payment_intent_data: {
-      metadata,
-      // capture_method: "manual",
-      transfer_group: metadata.orderId,
-    },
-    success_url: `https://soberin40-admin-react.vercel.app/Purchase/${metadata.orderId}`,
-    cancel_url: `https://soberin40-admin-react.vercel.app/Error`,
-  });
-  return session;
-};
-
-const retrieveStripePaymentSession = async (sessionId) => {
-  const session = await stripe.checkout.sessions.retrieve(sessionId);
-  return session;
-};
-
-const retrieveStripePaymentIntentSession = async (sessionId) => {
-  const session = await stripe.checkout.sessions.retrieve(sessionId);
-  let paymentIntent = null;
-  if (session && session.payment_intent) {
-    paymentIntent = await stripe.paymentIntents.retrieve(
-      session.payment_intent
-    );
+class StripeHelper {
+  /**
+   * Create a product in Stripe
+   */
+  static async createProduct(productData) {
+    try {
+      const product = await stripe.products.create({
+        name: productData.name,
+        description: productData.description,
+        metadata: {
+          planType: productData.planType,
+          features: JSON.stringify(productData.features)
+        }
+      });
+      return product;
+    } catch (error) {
+      throw new Error(`Failed to create Stripe product: ${error.message}`);
+    }
   }
 
-  return { session, paymentIntent };
-};
-
-const retrieveStripePaymentIntent = async (intentId) => {
-  const paymentIntent = await stripe.paymentIntents.retrieve(intentId);
-  return paymentIntent;
-};
-
-const handleStripeWebhook = async (req, res) => {
-  const sig = req.headers['stripe-signature'];
-  let event = req.body;
-  console.log(JSON.stringify(event), 'event-------')
-  
-  // Handle the event
-  switch (event.type) {
-    case 'payment_intent.succeeded':
-      const { metadata } = event.data.object;
-      console.log(`charge success 001  ${event.type}`, metadata);
-      try {
-        // Generic webhook handling - you can customize this based on your needs
-        console.log('Payment succeeded:', metadata);
-        return res.status(200).send({ message: `Webhook Succeeded` });
-      } catch (error) {
-        return res.status(400).send({ message: `Webhook Error: ${error?.message}` }); 
-      }
-      break;
-    // ... handle other event types
-    default:
-      console.log(`Unhandled event type ${event.type}`);
-      res.send();
+  /**
+   * Create a price in Stripe
+   */
+  static async createPrice(priceData) {
+    try {
+      const price = await stripe.prices.create({
+        product: priceData.productId,
+        unit_amount: Math.round(priceData.amount * 100), // Convert to cents
+        currency: priceData.currency.toLowerCase(),
+        // One-time payment for both business and boost plans
+        metadata: {
+          planType: priceData.planType
+        }
+      });
+      return price;
+    } catch (error) {
+      throw new Error(`Failed to create Stripe price: ${error.message}`);
+    }
   }
 
-  // Return a 200 response to acknowledge receipt of the event
-};
+  /**
+   * Create a customer in Stripe
+   */
+  static async createCustomer(customerData) {
+    try {
+      const customer = await stripe.customers.create({
+        email: customerData.email,
+        name: customerData.name,
+        metadata: {
+          businessId: customerData.businessId,
+          userId: customerData.userId
+        }
+      });
+      return customer;
+    } catch (error) {
+      throw new Error(`Failed to create Stripe customer: ${error.message}`);
+    }
+  }
 
-const createStripeSetupIntent = async (customerId) => {
-  const setupIntent = await stripe.setupIntents.create({
-    payment_method_types: ["card"],
-    customer: customerId,
-  });
-  return { setupIntent, stripePublishableKey };
-};
+  /**
+   * Create a subscription in Stripe
+   */
+  static async createSubscription(subscriptionData) {
+    try {
+      const subscription = await stripe.subscriptions.create({
+        customer: subscriptionData.customerId,
+        items: [{
+          price: subscriptionData.priceId
+        }],
+        payment_behavior: 'default_incomplete',
+        payment_settings: { save_default_payment_method: 'on_subscription' },
+        expand: ['latest_invoice.payment_intent'],
+        metadata: {
+          businessId: subscriptionData.businessId,
+          planType: subscriptionData.planType
+        }
+      });
+      return subscription;
+    } catch (error) {
+      throw new Error(`Failed to create Stripe subscription: ${error.message}`);
+    }
+  }
 
-const updateStripeSetupIntent = async (setupId) => {
-  const setupIntent = await stripe.setupIntents.update(setupId);
-  return { setupIntent, stripePublishableKey };
-};
+  /**
+   * Cancel a subscription in Stripe
+   */
+  static async cancelSubscription(subscriptionId, cancelAtPeriodEnd = true) {
+    try {
+      const subscription = await stripe.subscriptions.update(subscriptionId, {
+        cancel_at_period_end: cancelAtPeriodEnd
+      });
+      return subscription;
+    } catch (error) {
+      throw new Error(`Failed to cancel Stripe subscription: ${error.message}`);
+    }
+  }
 
-const getAllStripePaymentMethods = async (customer) => {
-  const paymentMethods = await stripe.paymentMethods.list({
-    customer,
-    type: "card",
-  });
-  return { paymentMethods, stripePublishableKey };
-};
+  /**
+   * Retrieve a subscription from Stripe
+   */
+  static async getSubscription(subscriptionId) {
+    try {
+      const subscription = await stripe.subscriptions.retrieve(subscriptionId);
+      return subscription;
+    } catch (error) {
+      throw new Error(`Failed to retrieve Stripe subscription: ${error.message}`);
+    }
+  }
 
-const deleteStripePaymentMethod = async (paymentMethodId) => {
-  await stripe.paymentMethods.detach(paymentMethodId);
-  return { message: "card deleted successfully" };
-};
+  /**
+   * Update subscription in Stripe
+   */
+  static async updateSubscription(subscriptionId, updateData) {
+    try {
+      const subscription = await stripe.subscriptions.update(subscriptionId, updateData);
+      return subscription;
+    } catch (error) {
+      throw new Error(`Failed to update Stripe subscription: ${error.message}`);
+    }
+  }
 
-const createStripeTransfer = async (
-  amountInDollars,
-  currency,
-  destination,
-  orderId
-) => {
-  let amount = Math.round(amountInDollars * 100); // amount in cents
-  let createTransfer = await stripe.transfers.create({
-    amount,
-    currency,
-    destination,
-    transfer_group: orderId,
-  });
-  return createTransfer;
-};
+  /**
+   * Create a payment intent for one-time payments
+   */
+  static async createPaymentIntent(paymentData) {
+    try {
+      const paymentIntent = await stripe.paymentIntents.create({
+        amount: Math.round(paymentData.amount * 100), // Convert to cents
+        currency: paymentData.currency.toLowerCase(),
+        customer: paymentData.customerId,
+        metadata: {
+          businessId: paymentData.businessId,
+          planType: paymentData.planType
+        }
+      });
+      return paymentIntent;
+    } catch (error) {
+      throw new Error(`Failed to create payment intent: ${error.message}`);
+    }
+  }
 
-const captureStripePaymentIntent = async (paymentIntentId) => {
-  const capturedIntent = await stripe.paymentIntents.capture(paymentIntentId);
-  return capturedIntent;
-};
+  /**
+   * Retrieve a customer from Stripe
+   */
+  static async getCustomer(customerId) {
+    try {
+      const customer = await stripe.customers.retrieve(customerId);
+      return customer;
+    } catch (error) {
+      throw new Error(`Failed to retrieve Stripe customer: ${error.message}`);
+    }
+  }
 
-export {
-  getStripeOAuthUrl,
-  oAuthGetStripeCustomer,
-  createStripeTransfer,
-  createStripeCheckoutSession,
-  retrieveStripePaymentSession,
-  retrieveStripePaymentIntent,
-  retrieveStripePaymentIntentSession,
-  createStripePaymentIntent,
-  createStripeCustomer,
-  handleStripeWebhook,
-  updateStripeSetupIntent,
-  createStripeSetupIntent,
-  getAllStripePaymentMethods,
-  deleteStripePaymentMethod,
-  captureStripePaymentIntent,
-};
+  /**
+   * Retrieve a payment intent from Stripe
+   */
+  static async getPaymentIntent(paymentIntentId) {
+    try {
+      const paymentIntent = await stripe.paymentIntents.retrieve(paymentIntentId);
+      return paymentIntent;
+    } catch (error) {
+      throw new Error(`Failed to retrieve payment intent: ${error.message}`);
+    }
+  }
+
+  /**
+   * List all products from Stripe
+   */
+  static async listProducts(limit = 100) {
+    try {
+      const products = await stripe.products.list({ limit });
+      return products;
+    } catch (error) {
+      throw new Error(`Failed to list Stripe products: ${error.message}`);
+    }
+  }
+
+  /**
+   * List all prices for a product
+   */
+  static async listPrices(productId) {
+    try {
+      const prices = await stripe.prices.list({
+        product: productId,
+        active: true
+      });
+      return prices;
+    } catch (error) {
+      throw new Error(`Failed to list Stripe prices: ${error.message}`);
+    }
+  }
+
+  /**
+   * Delete a product from Stripe
+   */
+  static async deleteProduct(productId) {
+    try {
+      const product = await stripe.products.del(productId);
+      return product;
+    } catch (error) {
+      throw new Error(`Failed to delete Stripe product: ${error.message}`);
+    }
+  }
+
+  /**
+   * Create a Stripe checkout session for one-time payments
+   */
+  static async createStripeCheckoutSession(sessionData) {
+    try {
+      const session = await stripe.checkout.sessions.create({
+        customer: sessionData.customerId,
+        payment_method_types: ['card'],
+        line_items: [{
+          price: sessionData.priceId,
+          quantity: 1,
+        }],
+        mode: 'payment', // One-time payment
+        success_url: `${process.env.FRONTEND_URL}/success?session_id={CHECKOUT_SESSION_ID}`,
+        cancel_url: `${process.env.FRONTEND_URL}/cancel`,
+        metadata: {
+          businessId: sessionData.businessId,
+          planType: sessionData.planType,
+          planId: sessionData.planId
+        }
+      });
+      return session;
+    } catch (error) {
+      throw new Error(`Failed to create Stripe checkout session: ${error.message}`);
+    }
+  }
+
+  /**
+   * Alias for createStripeCheckoutSession for backward compatibility
+   */
+  static async createCheckoutSession(sessionData) {
+    return StripeHelper.createStripeCheckoutSession(sessionData);
+  }
+
+  /**
+   * Create a Stripe checkout session (alias for createStripeCheckoutSession)
+   * This is for backward compatibility with existing code
+   */
+  static async createStripeCheckoutSession(sessionData) {
+    try {
+      const session = await stripe.checkout.sessions.create({
+        customer: sessionData.customerId,
+        payment_method_types: ['card'],
+        line_items: [{
+          price: sessionData.priceId,
+          quantity: 1,
+        }],
+        mode: 'payment', // One-time payment
+        success_url: `${process.env.FRONTEND_URL}/success?session_id={CHECKOUT_SESSION_ID}`,
+        cancel_url: `${process.env.FRONTEND_URL}/cancel`,
+        metadata: {
+          businessId: sessionData.businessId,
+          planType: sessionData.planType,
+          planId: sessionData.planId
+        }
+      });
+      return session;
+    } catch (error) {
+      throw new Error(`Failed to create Stripe checkout session: ${error.message}`);
+    }
+  }
+}
+
+export default StripeHelper;
+
+// Named exports for backward compatibility
+export const { createStripeCheckoutSession, createCheckoutSession, createPaymentIntent, createCustomer, getCustomer, getPaymentIntent } = StripeHelper;

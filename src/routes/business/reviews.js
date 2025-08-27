@@ -7,7 +7,13 @@ import {
   approveReview,
   rejectReview,
   deleteReview,
-  getReviewStats
+  getReviewStats,
+  addComment,
+  addReply,
+  editComment,
+  editReply,
+  deleteComment,
+  deleteReply
 } from "../../controllers/business/review.controller.js";
 
 const router = Router();
@@ -32,5 +38,23 @@ router.put("/:id/reject", verifyBusinessOwnerToken, rejectReview);
 
 // DELETE /business/reviews/:id - Delete a review (only if business has access)
 router.delete("/:id", verifyBusinessOwnerToken, deleteReview);
+
+// POST /business/reviews/:id/comments - Add comment to review
+router.post("/:id/comments", verifyBusinessOwnerToken, addComment);
+
+// POST /business/reviews/comments/:commentId/replies - Add reply to comment
+router.post("/comments/:commentId/replies", verifyBusinessOwnerToken, addReply);
+
+// PUT /business/reviews/comments/:commentId - Edit comment
+router.put("/comments/:commentId", verifyBusinessOwnerToken, editComment);
+
+// PUT /business/reviews/comments/:commentId/replies/:replyId - Edit reply
+router.put("/comments/:commentId/replies/:replyId", verifyBusinessOwnerToken, editReply);
+
+// DELETE /business/reviews/comments/:commentId - Delete comment
+router.delete("/comments/:commentId", verifyBusinessOwnerToken, deleteComment);
+
+// DELETE /business/reviews/comments/:commentId/replies/:replyId - Delete reply
+router.delete("/comments/:commentId/replies/:replyId", verifyBusinessOwnerToken, deleteReply);
 
 export default router; 

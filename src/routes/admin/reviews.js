@@ -11,7 +11,12 @@ import {
   revokeBusinessAccess,
   getBusinessesWithReviews,
   getBusinessWithReviewsById,
-  
+  addComment,
+  addReply,
+  editComment,
+  editReply,
+  deleteComment,
+  deleteReply
 } from "../../controllers/admin/review.controller.js";
 
 const router = Router();
@@ -45,5 +50,23 @@ router.put("/:id/grant-business-access", authorizedAccessAdmin, grantBusinessAcc
 
 // PUT /admin/reviews/:id/revoke-business-access - Revoke business access to manage this review
 router.put("/:id/revoke-business-access", authorizedAccessAdmin, revokeBusinessAccess);
+
+// POST /admin/reviews/:id/comments - Add comment to review
+router.post("/:id/comments", authorizedAccessAdmin, addComment);
+
+// POST /admin/reviews/comments/:commentId/replies - Add reply to comment
+router.post("/comments/:commentId/replies", authorizedAccessAdmin, addReply);
+
+// PUT /admin/reviews/comments/:commentId - Edit comment
+router.put("/comments/:commentId", authorizedAccessAdmin, editComment);
+
+// PUT /admin/reviews/comments/:commentId/replies/:replyId - Edit reply
+router.put("/comments/:commentId/replies/:replyId", authorizedAccessAdmin, editReply);
+
+// DELETE /admin/reviews/comments/:commentId - Delete comment
+router.delete("/comments/:commentId", authorizedAccessAdmin, deleteComment);
+
+// DELETE /admin/reviews/comments/:commentId/replies/:replyId - Delete reply
+router.delete("/comments/:commentId/replies/:replyId", authorizedAccessAdmin, deleteReply);
 
 export default router; 
