@@ -268,6 +268,125 @@ class BusinessSubscriptionController {
   }
 
   /**
+   * Get all business subscriptions with populated business data
+   */
+  static async getAllBusinessSubscriptionsWithBusiness(req, res) {
+    try {
+      // Get the business owner ID from the authenticated user
+      const businessOwnerId = req.businessOwner?._id || req.user?._id;
+      
+      if (!businessOwnerId) {
+        return res.status(401).json({
+          success: false,
+          message: 'Unauthorized access'
+        });
+      }
+
+      // Find all businesses owned by this user
+      const businesses = await Business.find({ businessOwner: businessOwnerId })
+        .select('_id businessName businessCategory businessType status createdAt');
+
+      if (businesses.length === 0) {
+        return res.status(200).json({
+          success: true,
+          message: 'No businesses found for this user',
+          data: {
+            subscriptions: [],
+            businesses: [],
+            totalSubscriptions: 0
+          }
+        });
+      }
+
+      const businessIds = businesses.map(b => b._id);
+
+      // Find all subscriptions for these businesses with populated data
+      const subscriptions = await Subscription.find({ business: { $in: businessIds } })
+        .populate('business', 'businessName businessCategory businessType status businessLogo businessAddress businessOwner')
+        .populate('paymentPlan', 'name planType price features maxBusinesses maxReviews maxBoostPerDay validityDays description')
+        .sort({ createdAt: -1 });
+
+      // Separate subscriptions by type and business
+      const organizedData = businesses.map(business => {
+        const businessSubscriptions = subscriptions.filter(sub => 
+          sub.business._id.toString() === business._id.toString()
+        );
+
+        const businessPlanSubscriptions = businessSubscriptions.filter(sub => 
+          sub.subscriptionType === 'business'
+        );
+        
+        const boostSubscriptions = businessSubscriptions.filter(sub => 
+          sub.subscriptionType === 'boost'
+        );
+
+        const activeBusinessPlan = businessPlanSubscriptions.find(sub => 
+          sub.status === 'active'
+        );
+        
+        const activeBoostPlan = boostSubscriptions.find(sub => 
+          sub.status === 'active'
+        );
+
+        return {
+          business: {
+            _id: business._id,
+            businessName: business.businessName,
+            businessCategory: business.businessCategory,
+            businessType: business.businessType,
+            status: business.status,
+            createdAt: business.createdAt
+          },
+          subscriptions: {
+            business: businessPlanSubscriptions,
+            boost: boostSubscriptions,
+            all: businessSubscriptions
+          },
+          currentPlans: {
+            businessPlan: activeBusinessPlan,
+            boostPlan: activeBoostPlan
+          },
+          subscriptionCount: businessSubscriptions.length,
+          hasActiveBusinessPlan: !!activeBusinessPlan,
+          hasActiveBoostPlan: !!activeBoostPlan
+        };
+      });
+
+      res.status(200).json({
+        success: true,
+        message: 'All business subscriptions retrieved successfully',
+        data: {
+          businesses: organizedData,
+          allSubscriptions: subscriptions, // All subscriptions in one array
+          totalBusinesses: businesses.length,
+          totalSubscriptions: subscriptions.length,
+          summary: {
+            totalActiveBusinessPlans: subscriptions.filter(sub => 
+              sub.subscriptionType === 'business' && sub.status === 'active'
+            ).length,
+            totalActiveBoostPlans: subscriptions.filter(sub => 
+              sub.subscriptionType === 'boost' && sub.status === 'active'
+            ).length,
+            totalExpiredPlans: subscriptions.filter(sub => 
+              sub.status === 'expired' || (sub.expiresAt && new Date() > sub.expiresAt)
+            ).length,
+            totalPendingPlans: subscriptions.filter(sub => 
+              sub.status === 'pending'
+            ).length
+          }
+        }
+      });
+    } catch (error) {
+      console.error('Error fetching all business subscriptions:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to fetch all business subscriptions',
+        error: error.message
+      });
+    }
+  }
+
+  /**
    * Get active business plan
    */
   static async getActiveBusinessPlan(req, res) {
@@ -840,6 +959,235 @@ class BusinessSubscriptionController {
       res.status(500).json({
         success: false,
         message: 'Failed to confirm payment',
+        error: error.message
+      });
+    }
+  }
+
+  /**
+   * Get all business plan subscriptions with populated business data
+   */
+  static async getAllBusinessPlanSubscriptions(req, res) {
+    try {
+      // Get the business owner ID from the authenticated user
+      const businessOwnerId = req.businessOwner?._id || req.user?._id;
+      
+      if (!businessOwnerId) {
+        return res.status(401).json({
+          success: false,
+          message: 'Unauthorized access'
+        });
+      }
+
+      // Find all businesses owned by this user
+      const businesses = await Business.find({ businessOwner: businessOwnerId })
+        .select('_id businessName businessCategory businessType status createdAt businessLogo businessAddress');
+
+      if (businesses.length === 0) {
+        return res.status(200).json({
+          success: true,
+          message: 'No businesses found for this user',
+          data: []
+        });
+      }
+
+      const businessIds = businesses.map(b => b._id);
+
+      // Find all business plan subscriptions for these businesses with populated data
+      const allSubscriptions = await Subscription.find({ 
+        business: { $in: businessIds },
+        subscriptionType: 'business'
+      })
+        .populate('business', 'businessName businessCategory businessType status businessLogo businessAddress businessOwner')
+        .populate('paymentPlan', 'name planType price features maxBusinesses maxReviews validityDays description')
+        .sort({ createdAt: -1 });
+
+      // Organize data by business with their subscriptions
+      const organizedData = businesses.map(business => {
+        const businessSubscriptions = allSubscriptions.filter(sub => 
+          sub.business._id.toString() === business._id.toString()
+        );
+
+        const activeSubscriptions = businessSubscriptions.filter(sub => 
+          sub.status === 'active'
+        );
+        
+        const expiredSubscriptions = businessSubscriptions.filter(sub => 
+          sub.status === 'expired' || (sub.expiresAt && new Date() > sub.expiresAt)
+        );
+
+        const pendingSubscriptions = businessSubscriptions.filter(sub => 
+          sub.status === 'pending'
+        );
+
+        return {
+          business: {
+            _id: business._id,
+            businessName: business.businessName,
+            businessCategory: business.businessCategory,
+            businessType: business.businessType,
+            status: business.status,
+            createdAt: business.createdAt,
+            businessLogo: business.businessLogo,
+            businessAddress: business.businessAddress
+          },
+          subscriptions: businessSubscriptions,
+          subscriptionCount: businessSubscriptions.length,
+          activeSubscriptions: activeSubscriptions,
+          expiredSubscriptions: expiredSubscriptions,
+          pendingSubscriptions: pendingSubscriptions,
+          hasActiveSubscription: activeSubscriptions.length > 0,
+          currentActiveSubscription: activeSubscriptions[0] || null
+        };
+      });
+
+      // Calculate summary statistics
+      const totalActiveSubscriptions = allSubscriptions.filter(sub => sub.status === 'active').length;
+      const totalExpiredSubscriptions = allSubscriptions.filter(sub => 
+        sub.status === 'expired' || (sub.expiresAt && new Date() > sub.expiresAt)
+      ).length;
+      const totalPendingSubscriptions = allSubscriptions.filter(sub => sub.status === 'pending').length;
+
+      res.status(200).json({
+        success: true,
+        message: 'All business plan subscriptions retrieved successfully',
+        data: {
+          businesses: organizedData,
+          allSubscriptions: allSubscriptions, // All subscriptions in one array
+          summary: {
+            totalBusinesses: businesses.length,
+            totalSubscriptions: allSubscriptions.length,
+            totalActiveSubscriptions,
+            totalExpiredSubscriptions,
+            totalPendingSubscriptions,
+            averageSubscriptionsPerBusiness: businesses.length > 0 ? (allSubscriptions.length / businesses.length).toFixed(2) : 0
+          }
+        }
+      });
+    } catch (error) {
+      console.error('Error fetching all business plan subscriptions:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to fetch all business plan subscriptions',
+        error: error.message
+      });
+    }
+  }
+
+  /**
+   * Get all boost subscriptions with populated business data
+   */
+  static async getAllBoostSubscriptions(req, res) {
+    try {
+      // Get the business owner ID from the authenticated user
+      const businessOwnerId = req.businessOwner?._id || req.user?._id;
+      
+      if (!businessOwnerId) {
+        return res.status(401).json({
+          success: false,
+          message: 'Unauthorized access'
+        });
+      }
+
+      // Find all businesses owned by this user
+      const businesses = await Business.find({ businessOwner: businessOwnerId })
+        .select('_id businessName businessCategory businessType status createdAt businessLogo businessAddress');
+
+      if (businesses.length === 0) {
+        return res.status(200).json({
+          success: true,
+          message: 'No businesses found for this user',
+          data: {
+            businesses: [],
+            allSubscriptions: [],
+            summary: {
+              totalBusinesses: 0,
+              totalSubscriptions: 0,
+              totalActiveSubscriptions: 0,
+              totalExpiredSubscriptions: 0
+            }
+          }
+        });
+      }
+
+      const businessIds = businesses.map(b => b._id);
+
+      // Find all boost subscriptions for these businesses with populated data
+      const allSubscriptions = await Subscription.find({ 
+        business: { $in: businessIds },
+        subscriptionType: 'boost'
+      })
+        .populate('business', 'businessName businessCategory businessType status businessLogo businessAddress businessOwner')
+        .populate('paymentPlan', 'name planType price features maxBoostPerDay validityDays description')
+        .sort({ createdAt: -1 });
+
+      // Organize data by business with their boost subscriptions
+      const organizedData = businesses.map(business => {
+        const businessBoostSubscriptions = allSubscriptions.filter(sub => 
+          sub.business._id.toString() === business._id.toString()
+        );
+
+        const activeBoostSubscriptions = businessBoostSubscriptions.filter(sub => 
+          sub.status === 'active'
+        );
+        
+        const expiredBoostSubscriptions = businessBoostSubscriptions.filter(sub => 
+          sub.status === 'expired' || (sub.expiresAt && new Date() > sub.expiresAt)
+        );
+
+        const pendingBoostSubscriptions = businessBoostSubscriptions.filter(sub => 
+          sub.status === 'pending'
+        );
+
+        return {
+          business: {
+            _id: business._id,
+            businessName: business.businessName,
+            businessCategory: business.businessCategory,
+            businessType: business.businessType,
+            status: business.status,
+            createdAt: business.createdAt,
+            businessLogo: business.businessLogo,
+            businessAddress: business.businessAddress
+          },
+          boostSubscriptions: businessBoostSubscriptions,
+          subscriptionCount: businessBoostSubscriptions.length,
+          activeBoostSubscriptions: activeBoostSubscriptions,
+          expiredBoostSubscriptions: expiredBoostSubscriptions,
+          pendingBoostSubscriptions: pendingBoostSubscriptions,
+          hasActiveBoostSubscription: activeBoostSubscriptions.length > 0,
+          currentActiveBoostSubscription: activeBoostSubscriptions[0] || null
+        };
+      });
+
+      // Calculate summary statistics
+      const totalActiveBoostSubscriptions = allSubscriptions.filter(sub => sub.status === 'active').length;
+      const totalExpiredBoostSubscriptions = allSubscriptions.filter(sub => 
+        sub.status === 'expired' || (sub.expiresAt && new Date() > sub.expiresAt)
+      ).length;
+      const totalPendingBoostSubscriptions = allSubscriptions.filter(sub => sub.status === 'pending').length;
+
+      res.status(200).json({
+        success: true,
+        message: 'All boost subscriptions retrieved successfully',
+        data: {
+          businesses: organizedData,
+          allSubscriptions: allSubscriptions, // All boost subscriptions in one array
+          summary: {
+            totalBusinesses: businesses.length,
+            totalSubscriptions: allSubscriptions.length,
+            totalActiveBoostSubscriptions: totalActiveBoostSubscriptions,
+            totalExpiredBoostSubscriptions: totalExpiredBoostSubscriptions,
+            totalPendingBoostSubscriptions: totalPendingBoostSubscriptions,
+            averageBoostSubscriptionsPerBusiness: businesses.length > 0 ? (allSubscriptions.length / businesses.length).toFixed(2) : 0
+          }
+        }
+      });
+    } catch (error) {
+      console.error('Error fetching all boost subscriptions:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to fetch all boost subscriptions',
         error: error.message
       });
     }

@@ -7,7 +7,8 @@ import {
   editComment, 
   editReply, 
   deleteComment, 
-  deleteReply 
+  deleteReply,
+  getReviewById,
 } from "../../controllers/user/review.controller.js";
 import { authorizedAccessUser } from "../../middleware/authorization.js";
 import { uploadMultipleMediaToCloudinary, handleCloudinaryUploadError } from "../../middleware/cloudinaryUpload.js";
@@ -19,6 +20,9 @@ router.post("/", authorizedAccessUser, uploadMultipleMediaToCloudinary, handleCl
 
 // GET /user/review/my-reviews - Get user's own reviews
 router.get("/my-reviews", authorizedAccessUser, getMyReviews);
+
+// GET /user/review/:id - Get review by id
+router.get("/:id", authorizedAccessUser, getReviewById);
 
 // POST /user/review/:id/comments - Add comment to review
 router.post("/:id/comments", authorizedAccessUser, addComment);

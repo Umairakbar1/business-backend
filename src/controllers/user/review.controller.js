@@ -107,6 +107,11 @@ export const getMyReviews = async (req, res) => {
     
     const reviews = await Review.find(filter)
       .populate('businessId', 'businessName businessCategory')
+      .populate('userId', 'firstName lastName email profilePhoto')
+      .populate('approvedBy', 'firstName lastName email')
+      .populate('businessManagementGrantedBy', 'firstName lastName email')
+      .populate('comments.authorId', '_id firstName lastName email businessName')
+      .populate('comments.replies.authorId', '_id firstName lastName email businessName')
       .sort({ createdAt: -1 })
       .skip(skip)
       .limit(parseInt(limit));
@@ -157,7 +162,7 @@ export const addComment = async (req, res) => {
     
     // Get user details for author name
     const user = req.user;
-    const authorName = user ? `${user.firstName || 'User'} ${user.lastName || ''}`.trim() || 'User' : 'User';
+    const authorName = user ? `${user.name || 'User'}`.trim() || 'User' : 'User';
     const authorEmail = user?.email || '';
     
     const comment = {
@@ -221,7 +226,7 @@ export const addReply = async (req, res) => {
     
     // Get user details for author name
     const user = req.user;
-    const authorName = user ? `${user.firstName || 'User'} ${user.lastName || ''}`.trim() || 'User' : 'User';
+    const authorName = user ? `${user.name || 'User'}`.trim() || 'User' : 'User';
     const authorEmail = user?.email || '';
     
     const reply = {
@@ -413,7 +418,12 @@ export const deleteComment = async (req, res) => {
     
     // Populate and return the complete review object
     await review.populate('businessId', 'businessName businessCategory');
-    await review.populate('userId', 'firstName lastName email');
+    await review.populate('userId', 'firstName lastName email profilePhoto');
+    await review.populate('approvedBy', 'firstName lastName email');
+    await review.populate('businessManagementGrantedBy', 'firstName lastName email');
+    
+    // Populate comment author data
+    await review.populate('comments.authorId', '_id firstName lastName email businessName');
     
     return successResponseHelper(res, {
       message: 'Comment deleted successfully',
@@ -469,10 +479,56 @@ export const deleteReply = async (req, res) => {
     
     // Populate and return the complete review object
     await review.populate('businessId', 'businessName businessCategory');
-    await review.populate('userId', 'firstName lastName email');
+    await review.populate('userId', 'firstName lastName email profilePhoto');
+    await review.populate('approvedBy', 'firstName lastName email');
+    await review.populate('businessManagementGrantedBy', 'firstName lastName email');
+    
+    // Populate comment and reply author data
+    await review.populate('comments.authorId', '_id firstName lastName email businessName');
+    await review.populate('comments.replies.authorId', '_id firstName lastName email businessName');
     
     return successResponseHelper(res, {
       message: 'Reply deleted successfully',
+      data: review
+    });
+  } catch (error) {
+    return errorResponseHelper(res, { message: error.message, code: '00500' });
+  }
+};
+
+
+// GET /user/review/:id - Get review by id
+export const getReviewById = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const userId = req.user?._id;
+    
+    if (!userId) {
+      return errorResponseHelper(res, { message: 'User not authenticated', code: '00401' });
+    }
+    
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return errorResponseHelper(res, { message: 'Invalid review ID', code: '00400' });
+    }
+    
+    // Get the review and populate user information
+    const review = await Review.findById(id)
+      .populate('userId', 'firstName lastName email profilePhoto')
+      .populate('approvedBy', 'firstName lastName email')
+      .populate('businessManagementGrantedBy', 'firstName lastName email')
+      .populate('businessId', 'businessName businessCategory email')
+      .populate('comments.authorId', '_id firstName lastName email businessName')
+      .populate('comments.replies.authorId', '_id firstName lastName email businessName');
+    
+    if (!review) {
+      return errorResponseHelper(res, { message: 'Review not found', code: '00404' });
+    }
+    
+    // For regular users, they can view any review but we can add additional checks if needed
+    // For example, you might want to check if the user has permission to view this specific review
+    
+    return successResponseHelper(res, {
+      message: 'Review fetched successfully',
       data: review
     });
   } catch (error) {

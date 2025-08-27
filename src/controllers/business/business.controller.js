@@ -1,6 +1,6 @@
 import Business from '../../models/business/business.js';
 import mongoose from 'mongoose';
-import { createStripeCheckoutSession } from '../../helpers/stripeHelper.js';
+import StripeHelper from '../../helpers/stripeHelper.js';
 import BusinessSubscription from '../../models/admin/businessSubsciption.js';
 import { uploadImageWithThumbnail } from '../../helpers/cloudinaryHelper.js';
 import axios from 'axios';
@@ -1325,14 +1325,29 @@ export const createPlanPaymentSession = async (req, res) => {
     // Get business
     const business = await Business.findOne({ _id: businessId, businessOwner: req.businessOwner._id });
     if (!business) return res.status(404).json({ success: false, message: 'Business not found' });
+    // Create product and price in Stripe first
+    const product = await StripeHelper.createProduct({
+      name: `${plan.charAt(0).toUpperCase() + plan.slice(1)} Plan`,
+      description: `Upgrade to ${plan} plan`,
+      planType: plan,
+      features: ['query', 'review', 'embeded']
+    });
+
+    const stripePrice = await StripeHelper.createPrice({
+      productId: product.id,
+      amount: price,
+      currency: 'usd',
+      planType: plan
+    });
+
     // Create Stripe session
-    const session = await createStripeCheckoutSession(
-      `${plan.charAt(0).toUpperCase() + plan.slice(1)} Plan`,
-      price,
-      'usd',
-      null, // customer (optional)
-      { businessId, plan }
-    );
+    const session = await StripeHelper.createStripeCheckoutSession({
+      customerId: null, // No customer ID for this flow
+      priceId: stripePrice.id,
+      businessId: businessId,
+      planType: plan,
+      planId: plan
+    });
     return successResponseHelper(res, {
       message: 'Payment session created successfully',
       data: { url: session.url }

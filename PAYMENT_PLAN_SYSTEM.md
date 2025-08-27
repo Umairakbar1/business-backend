@@ -1,6 +1,6 @@
 # Payment Plan System
 
-This system provides two types of payment plans: **Business Plans** (lifetime) and **Boost Plans** (24-hour expiration).
+This system provides two types of payment plans: **Business Plans** (lifetime) and **Boost Plans** (temporary with configurable validity).
 
 ## Features
 
@@ -10,9 +10,9 @@ This system provides two types of payment plans: **Business Plans** (lifetime) a
 - Includes features like review management, query tickets, etc.
 - No auto-renewal
 
-### Boost Plans (24-hour)
+### Boost Plans (Temporary)
 - One-time payment
-- Expires after 24 hours
+- Configurable validity period (1-168 hours, maximum 7 days)
 - Daily boost usage limits
 - No auto-renewal
 
@@ -24,10 +24,27 @@ This system provides two types of payment plans: **Business Plans** (lifetime) a
 - `planType`: Either 'business' or 'boost'
 - `price`: Plan price
 - `currency`: USD, EUR, or GBP
-- `features`: Array of included features
-- `maxBusinesses`: Maximum businesses allowed (null = unlimited)
-- `maxReviews`: Maximum reviews allowed (null = unlimited)
-- `maxBoostPerDay`: Maximum boosts per day for boost plans
+- `features`: Array of included features (business plans only)
+- `maxBoostPerDay`: Maximum boosts per day (business plans only)
+- `validityHours`: Validity period in hours (boost plans only, 1-168 hours)
+- `discount`: Discount percentage (0-7%)
+- `isActive`: Whether the plan is active
+- `isPopular`: Whether the plan is marked as popular
+- `sortOrder`: Display order for the plan
+
+### Plan Type Constraints
+
+#### Business Plans (Lifetime)
+- ✅ Must have business features (query, review, embeded)
+- ✅ Cannot have validity hours (lifetime access)
+- ✅ Can have daily boost usage limits (maxBoostPerDay)
+- ✅ One-time payment model
+
+#### Boost Plans (Temporary)
+- ✅ Must have validity hours (1-168 hours)
+- ✅ Cannot have business features
+- ✅ Cannot have daily boost limits (they are the boost themselves)
+- ✅ One-time payment model
 
 ### Subscription
 - `business`: Reference to business
@@ -210,7 +227,8 @@ POST /business/subscriptions/:businessId/confirm-payment
 ## Notes
 
 - Business plans are lifetime and never expire
-- Boost plans expire after 24 hours and need to be repurchased
+- Business plans set daily boost usage limits (maxBoostPerDay)
+- Boost plans expire after their validity period and need to be repurchased
 - Daily boost limits reset at midnight
 - All payments are one-time (no recurring billing)
 - Stripe webhooks automatically update subscription status
@@ -237,3 +255,12 @@ POST /business/subscriptions/:businessId/confirm-payment
 - Stripe payment verification prevents fake payment confirmations
 - Subscription status validation prevents unauthorized usage
 - Boost usage tracking prevents abuse of daily limits
+
+## Business Logic
+
+- **Business plans** provide permanent access to business features and set daily boost usage limits
+- **Boost plans** provide temporary visibility enhancement (they are the boost themselves)
+- Both plan types are one-time purchases (no recurring billing)
+- Plan types cannot be mixed or converted between each other
+- Each plan type serves a distinct business purpose
+- Business plans control how many boosts a business can use per day

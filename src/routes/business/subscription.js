@@ -1,8 +1,17 @@
 import express from 'express';
 import businessSubscriptionController from '../../controllers/business/subscription.controller.js';
-import { authorizedAccessBusiness } from '../../middleware/authorization.js';
+import { authorizedAccessBusiness, verifyBusinessOwnerToken } from '../../middleware/authorization.js';
 
 const router = express.Router();
+
+// Get all business subscriptions with populated business data (for admin/business owner overview)
+router.get('/all-with-business', verifyBusinessOwnerToken, businessSubscriptionController.getAllBusinessSubscriptionsWithBusiness);
+
+// Get all business plan subscriptions with populated business data
+router.get('/all-business-plans', verifyBusinessOwnerToken, businessSubscriptionController.getAllBusinessPlanSubscriptions);
+
+// Get all boost subscriptions with populated business data
+router.get('/all-boost-plans', verifyBusinessOwnerToken, businessSubscriptionController.getAllBoostSubscriptions);
 
 // Subscribe to a payment plan
 router.post('/:businessId/subscribe', authorizedAccessBusiness, businessSubscriptionController.subscribeToPlan);
@@ -12,6 +21,7 @@ router.post('/:businessId/upgrade', authorizedAccessBusiness, businessSubscripti
 
 // Get business subscriptions (separated by type)
 router.get('/:businessId/subscriptions', authorizedAccessBusiness, businessSubscriptionController.getBusinessSubscriptions);
+
 
 // Get active business plan
 router.get('/:businessId/business-plan', authorizedAccessBusiness, businessSubscriptionController.getActiveBusinessPlan);

@@ -23,6 +23,18 @@ class StripeHelper {
   }
 
   /**
+   * Update a product in Stripe
+   */
+  static async updateProduct(productId, updateData) {
+    try {
+      const product = await stripe.products.update(productId, updateData);
+      return product;
+    } catch (error) {
+      throw new Error(`Failed to update Stripe product: ${error.message}`);
+    }
+  }
+
+  /**
    * Create a price in Stripe
    */
   static async createPrice(priceData) {
@@ -207,12 +219,23 @@ class StripeHelper {
   }
 
   /**
+   * Delete a Stripe price (deactivate it)
+   */
+  static async deletePrice(priceId) {
+    try {
+      await stripe.prices.update(priceId, { active: false });
+      return { success: true };
+    } catch (error) {
+      throw new Error(`Failed to delete Stripe price: ${error.message}`);
+    }
+  }
+
+  /**
    * Create a Stripe checkout session for one-time payments
    */
   static async createStripeCheckoutSession(sessionData) {
     try {
-      const session = await stripe.checkout.sessions.create({
-        customer: sessionData.customerId,
+      const sessionConfig = {
         payment_method_types: ['card'],
         line_items: [{
           price: sessionData.priceId,
@@ -226,7 +249,14 @@ class StripeHelper {
           planType: sessionData.planType,
           planId: sessionData.planId
         }
-      });
+      };
+
+      // Only add customer if customerId is provided
+      if (sessionData.customerId) {
+        sessionConfig.customer = sessionData.customerId;
+      }
+
+      const session = await stripe.checkout.sessions.create(sessionConfig);
       return session;
     } catch (error) {
       throw new Error(`Failed to create Stripe checkout session: ${error.message}`);
@@ -239,37 +269,6 @@ class StripeHelper {
   static async createCheckoutSession(sessionData) {
     return StripeHelper.createStripeCheckoutSession(sessionData);
   }
-
-  /**
-   * Create a Stripe checkout session (alias for createStripeCheckoutSession)
-   * This is for backward compatibility with existing code
-   */
-  static async createStripeCheckoutSession(sessionData) {
-    try {
-      const session = await stripe.checkout.sessions.create({
-        customer: sessionData.customerId,
-        payment_method_types: ['card'],
-        line_items: [{
-          price: sessionData.priceId,
-          quantity: 1,
-        }],
-        mode: 'payment', // One-time payment
-        success_url: `${process.env.FRONTEND_URL}/success?session_id={CHECKOUT_SESSION_ID}`,
-        cancel_url: `${process.env.FRONTEND_URL}/cancel`,
-        metadata: {
-          businessId: sessionData.businessId,
-          planType: sessionData.planType,
-          planId: sessionData.planId
-        }
-      });
-      return session;
-    } catch (error) {
-      throw new Error(`Failed to create Stripe checkout session: ${error.message}`);
-    }
-  }
 }
 
 export default StripeHelper;
-
-// Named exports for backward compatibility
-export const { createStripeCheckoutSession, createCheckoutSession, createPaymentIntent, createCustomer, getCustomer, getPaymentIntent } = StripeHelper;

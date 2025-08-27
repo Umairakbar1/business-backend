@@ -155,7 +155,9 @@ export const getReviewById = async (req, res) => {
     const review = await Review.findById(id)
       .populate('userId', 'name email profilePhoto')
       .populate('approvedBy', 'name email')
-      .populate('businessManagementGrantedBy', 'name email');
+      .populate('businessManagementGrantedBy', 'name email')
+      .populate('comments.authorId', '_id businessName email')
+      .populate('comments.replies.authorId', '_id businessName email');
     
     if (!review) {
       return errorResponseHelper(res, { message: 'Review not found', code: '00404' });
@@ -792,11 +794,15 @@ export const deleteReply = async (req, res) => {
     review.updatedAt = new Date();
     await review.save();
     
-    // Populate and return the complete review object
-    await review.populate('userId', 'firstName lastName email');
+    // Populate and return the complete review object with comment and reply author data
+    await review.populate('userId', 'firstName lastName email profilePhoto');
     await review.populate('businessId', 'businessName businessCategory');
     await review.populate('approvedBy', 'firstName lastName email');
     await review.populate('businessManagementGrantedBy', 'firstName lastName email');
+    
+    // Populate comment and reply author data
+    await review.populate('comments.authorId', '_id businessName email');
+    await review.populate('comments.replies.authorId', '_id businessName email');
     
     return successResponseHelper(res, {
       message: 'Reply deleted successfully',

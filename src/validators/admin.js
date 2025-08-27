@@ -616,44 +616,21 @@ const paymentPlanValidator = Joi.object({
 
 
 
-  features: Joi.array()
-    .items(Joi.object({
-      name: Joi.string()
-        .required()
-        .trim()
-        .messages({
-          'string.empty': 'Feature name is required',
-          'any.required': 'Feature name is required'
-        }),
-      description: Joi.string()
-        .required()
-        .trim()
-        .messages({
-          'string.empty': 'Feature description is required',
-          'any.required': 'Feature description is required'
-        }),
-      included: Joi.boolean()
-        .default(true)
-        .messages({
-          'boolean.base': 'Feature included must be a boolean'
-        }),
-      limit: Joi.number()
-        .integer()
-        .min(0)
-        .allow(null)
-        .optional()
-        .messages({
-          'number.base': 'Feature limit must be a number',
-          'number.integer': 'Feature limit must be an integer',
-          'number.min': 'Feature limit cannot be negative'
-        })
-    }))
-    .min(1)
-    .required()
-    .messages({
-      'array.min': 'At least one feature is required',
-      'any.required': 'Features are required'
-    }),
+  features: Joi.when('planType', {
+    is: 'business',
+    then: Joi.array()
+      .items(Joi.string().valid('query', 'review', 'embeded', 'boost'))
+      .min(1)
+      .required()
+      .messages({
+        'array.min': 'At least one feature is required',
+        'any.required': 'Features are required for business plans',
+        'any.only': 'Features must be one of: query, review, embeded, boost'
+      }),
+    otherwise: Joi.forbidden().messages({
+      'any.unknown': 'Features are not allowed for boost plans'
+    })
+  }),
 
   isPopular: Joi.boolean()
     .default(false)
@@ -671,27 +648,7 @@ const paymentPlanValidator = Joi.object({
       'number.min': 'Sort order cannot be negative'
     }),
 
-  maxBusinesses: Joi.number()
-    .integer()
-    .min(1)
-    .allow(null)
-    .optional()
-    .messages({
-      'number.base': 'Max businesses must be a number',
-      'number.integer': 'Max businesses must be an integer',
-      'number.min': 'Max businesses must be at least 1'
-    }),
 
-  maxReviews: Joi.number()
-    .integer()
-    .min(1)
-    .allow(null)
-    .optional()
-    .messages({
-      'number.base': 'Max reviews must be a number',
-      'number.integer': 'Max reviews must be an integer',
-      'number.min': 'Max reviews must be at least 1'
-    }),
 
   maxBoostPerDay: Joi.number()
     .integer()
@@ -701,6 +658,34 @@ const paymentPlanValidator = Joi.object({
       'number.base': 'Max boost per day must be a number',
       'number.integer': 'Max boost per day must be an integer',
       'number.min': 'Max boost per day cannot be negative'
+    }),
+
+  validityHours: Joi.when('planType', {
+    is: 'boost',
+    then: Joi.number()
+      .integer()
+      .min(1)
+      .max(168) // Maximum 7 days (168 hours)
+      .default(24)
+      .messages({
+        'number.base': 'Validity hours must be a number',
+        'number.integer': 'Validity hours must be an integer',
+        'number.min': 'Validity hours must be at least 1 hour',
+        'number.max': 'Validity hours cannot exceed 168 hours (7 days)'
+      }),
+    otherwise: Joi.forbidden().messages({
+      'any.unknown': 'Validity hours are only allowed for boost plans'
+    })
+  }),
+
+  discount: Joi.number()
+    .min(0)
+    .max(7)
+    .default(0)
+    .messages({
+      'number.base': 'Discount must be a number',
+      'number.min': 'Discount cannot be negative',
+      'number.max': 'Discount cannot exceed 7%'
     })
 });
 
@@ -749,7 +734,7 @@ const subscriptionValidator = Joi.object({
 
 // Update validators
 const paymentPlanUpdateValidator = paymentPlanValidator.fork(
-  ['name', 'description', 'planType', 'price', 'currency', 'features', 'isPopular', 'sortOrder', 'maxBusinesses', 'maxReviews', 'maxBoostPerDay'],
+  ['name', 'description', 'planType', 'price', 'currency', 'features', 'isPopular', 'sortOrder', 'maxBoostPerDay', 'discount'],
   (schema) => schema.optional()
 );
 

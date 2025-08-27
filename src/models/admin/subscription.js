@@ -55,6 +55,27 @@ const subscriptionSchema = new mongoose.Schema({
       default: Date.now
     }
   },
+  // Daily boost limit from payment plan
+  maxBoostPerDay: {
+    type: Number,
+    default: 0
+  },
+  // Payment tracking
+  paymentId: {
+    type: String,
+    required: true
+  },
+  // Features from payment plan (for business plans)
+  features: [{
+    type: String,
+    enum: ['query', 'review', 'embeded']
+  }],
+  // Validity hours for boost plans
+  validityHours: {
+    type: Number,
+    min: 1,
+    max: 168
+  },
   // For business plans - track features usage
   featureUsage: {
     reviewsPosted: {
@@ -138,6 +159,49 @@ subscriptionSchema.methods.canPostReview = function() {
 subscriptionSchema.methods.incrementReviewUsage = function() {
   this.featureUsage.reviewsPosted += 1;
   return this.save();
+};
+
+// Virtual for days remaining (boost plans only)
+subscriptionSchema.virtual('daysRemaining').get(function() {
+  if (this.subscriptionType === 'business' || !this.expiresAt) {
+    return null;
+  }
+  const now = new Date();
+  const end = new Date(this.expiresAt);
+  const diffTime = end - now;
+  const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+  return Math.max(0, diffDays);
+});
+
+// Virtual for checking if subscription is expired
+subscriptionSchema.virtual('isExpired').get(function() {
+  if (this.subscriptionType === 'business') {
+    return false; // Business plans never expire
+  }
+  if (this.expiresAt) {
+    return new Date() > this.expiresAt;
+  }
+  return false;
+});
+
+// Method to check if business can use boost today (for business plans)
+subscriptionSchema.methods.canUseBoostToday = function() {
+  if (this.subscriptionType !== 'business') {
+    return false; // Only business plans have daily boost limits
+  }
+  
+  if (this.maxBoostPerDay === 0) {
+    return false; // No boost allowance
+  }
+  
+  const today = new Date().toDateString();
+  const lastBoostDay = this.boostUsage.lastResetDate ? new Date(this.boostUsage.lastResetDate).toDateString() : null;
+  
+  if (lastBoostDay !== today) {
+    return true; // First boost of the day
+  }
+  
+  return this.boostUsage.currentDay < this.maxBoostPerDay;
 };
 
 export default mongoose.model('Subscription', subscriptionSchema);
