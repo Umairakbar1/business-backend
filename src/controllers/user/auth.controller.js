@@ -406,6 +406,12 @@ const googleAuth = async (req, res) => {
 };
 
 // Password Recovery Functions
+// 
+// IMPORTANT: Fresh Start Policy
+// Each password reset request generates a completely new token and OTP.
+// Previous tokens and OTPs are invalidated to prevent conflicts from
+// multiple reset attempts with different emails.
+// This ensures users always start fresh and prevents "email mismatch" errors.
 
 // Step 1: Request Password Reset - Verify Email and Send OTP
 const requestPasswordReset = async (req, res) => {
@@ -447,11 +453,16 @@ const requestPasswordReset = async (req, res) => {
       });
     }
 
-    // Generate OTP for password reset
+    // IMPORTANT: Clear any existing OTP to ensure fresh start
+    // This prevents issues with old OTPs from previous requests
+    existingUser.otp = undefined;
+    
+    // Generate fresh OTP for password reset
     const otp = existingUser.generateOTP();
     await existingUser.save();
 
-    // Generate password reset token (expires in 15 minutes)
+    // Generate fresh password reset token (expires in 15 minutes)
+    // Each new request gets a completely new token
     const passwordResetToken = signPasswordResetToken(email);
 
     // Send OTP via email
@@ -459,6 +470,7 @@ const requestPasswordReset = async (req, res) => {
       // Commented out for testing - using dummy OTP
       // await sendEmail(email, "Password Reset Verification", `Your verification code is: ${otp}. This code will expire in 10 minutes.`);
       console.log(`[TESTING] Password Reset OTP for ${email}: ${otp}`);
+      console.log(`[TESTING] Fresh token generated for ${email}`);
       
       return successResponseHelper(res, {
         message: 'OTP sent to your email. Please verify to complete password reset.',

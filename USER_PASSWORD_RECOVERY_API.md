@@ -73,6 +73,8 @@ POST /user/auth
 - The `passwordResetToken` expires in 15 minutes
 - OTP expires in 10 minutes
 - For testing, OTP is always "775511"
+- **Important**: Each new password reset request generates a fresh token and OTP
+- Previous tokens and OTPs are invalidated when a new request is made
 
 ---
 

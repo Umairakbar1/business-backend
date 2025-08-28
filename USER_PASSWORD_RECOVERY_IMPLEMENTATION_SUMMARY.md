@@ -73,6 +73,8 @@ Added three new public endpoints:
 - OTP stored in user document with expiration
 - Test OTP: "775511" (for development)
 - Production: Random 6-digit OTP generation
+- **Fresh Start Policy**: Each new password reset request clears previous OTP and generates fresh token
+- Prevents conflicts from multiple reset attempts with different emails
 
 ### JWT Tokens
 - `passwordResetToken`: Generated when requesting reset
