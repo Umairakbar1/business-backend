@@ -14,6 +14,7 @@ import adminMediaRoutes from "./admin/media.js";
 import adminPaymentPlanRoutes from "./admin/paymentPlan.js";
 import adminSubscriptionRoutes from "./admin/subscription.js";
 import adminWebhookRoutes from "./admin/webhook.js";
+import adminDashboardRoutes from "./admin/dashboard.js";
 import businessAuthRoutes from "./business/auth.js";
 import businessBusinessRoutes from "./business/business.js";
 import businessReviewsRoutes from "./business/reviews.js";
@@ -60,6 +61,7 @@ router.use("/admin/media", adminMediaRoutes);
 router.use("/admin/payment-plans", adminPaymentPlanRoutes);
 router.use("/admin/subscriptions", adminSubscriptionRoutes);
 router.use("/admin/webhooks", adminWebhookRoutes);
+router.use("/admin/dashboard", adminDashboardRoutes);
 
 // Business routes
 router.use("/business/auth", businessAuthRoutes);

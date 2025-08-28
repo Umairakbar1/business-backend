@@ -48,8 +48,8 @@ const UserSchema = new Schema({
     },
     status: { 
         type: String, 
-        enum: ["active", "inactive", "banned", "blocked"], 
-        default: "active" 
+        enum: GLOBAL_ENUMS.userStatus, 
+        default: "Active" 
     },
     userName: { type: String, required: true, unique: true },
     avatar: { type: String, default: GLOBAL_ENUMS.defaultProfilePhoto }, // URL to profile image
@@ -101,5 +101,5 @@ UserSchema.methods.verifyOTP = function(code) {
     return this.otp.code === code;
 };
 
-const User = model('User', UserSchema);
+const   User = model('User', UserSchema);
 export default User;

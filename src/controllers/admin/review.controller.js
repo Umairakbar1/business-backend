@@ -26,6 +26,7 @@ export const getAllReviews = async (req, res) => {
       .populate('userId', 'name email profilePhoto')
       .populate('approvedBy', 'name email')
       .populate('businessManagementGrantedBy', 'name email')
+      .populate('replies.admin.authorId', 'name email')
       .sort(sort)
       .skip(skip)
       .limit(parseInt(limit));
@@ -62,7 +63,8 @@ export const getReviewById = async (req, res) => {
       .populate('businessId', 'businessName contactPerson email phone businessCategory')
       .populate('userId', 'name email profilePhoto')
       .populate('approvedBy', 'name email')
-      .populate('businessManagementGrantedBy', 'name email');
+      .populate('businessManagementGrantedBy', 'name email')
+      .populate('replies.admin.authorId', 'name email');
     
     if (!review) {
       return errorResponseHelper(res, { message: 'Review not found', code: '00404' });
@@ -539,6 +541,7 @@ export const getBusinessesWithReviews = async (req, res) => {
             let reviews = await Review.find({ businessId: businessObj._id })
               .populate('userId', 'name email profilePhoto')
               .populate('approvedBy', 'name email')
+              .populate('replies.admin.authorId', 'name email')
               .sort({ createdAt: -1 })
               .limit(parseInt(reviewsLimit) || 5);
             
@@ -550,6 +553,7 @@ export const getBusinessesWithReviews = async (req, res) => {
               reviews = await Review.find({ businessId: businessObj._id.toString() })
                 .populate('userId', 'name email profilePhoto')
                 .populate('approvedBy', 'name email')
+                .populate('replies.admin.authorId', 'name email')
                 .sort({ createdAt: -1 })
                 .limit(parseInt(reviewsLimit) || 5);
               console.log('Found reviews with string ID:', reviews.length);
@@ -691,6 +695,7 @@ export const getBusinessWithReviewsById = async (req, res) => {
       .populate('userId', 'name email profilePhoto')
       .populate('approvedBy', 'name email')
       .populate('businessManagementGrantedBy', 'name email')
+      .populate('replies.admin.authorId', 'name email')
       .sort(sort)
       .skip(skip)
       .limit(parseInt(limit));
@@ -1115,6 +1120,180 @@ export const deleteReply = async (req, res) => {
     
     // Remove the reply
     comment.replies.pull(replyId);
+    review.updatedAt = new Date();
+    await review.save();
+    
+    // Populate and return the complete review object
+    await review.populate('businessId', 'businessName contactPerson email phone businessCategory');
+    await review.populate('userId', 'name email profilePhoto');
+    await review.populate('approvedBy', 'name email');
+    await review.populate('businessManagementGrantedBy', 'name email');
+    
+    return successResponseHelper(res, {
+      message: 'Reply deleted successfully',
+      data: review
+    });
+  } catch (error) {
+    return errorResponseHelper(res, { message: error.message, code: '00500' });
+  }
+}; 
+
+// POST /admin/reviews/:id/reply - Add direct reply to review
+export const addReplyToReview = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { content } = req.body;
+    const adminId = req.user?._id;
+    
+    if (!adminId) {
+      return errorResponseHelper(res, { message: 'Admin not authenticated', code: '00401' });
+    }
+    
+    if (!content) {
+      return errorResponseHelper(res, { message: 'Reply content is required', code: '00400' });
+    }
+    
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return errorResponseHelper(res, { message: 'Invalid review ID', code: '00400' });
+    }
+    
+    // Find the review
+    const review = await Review.findById(id);
+    if (!review) {
+      return errorResponseHelper(res, { message: 'Review not found', code: '00404' });
+    }
+    
+    // Check if admin already has a reply
+    if (review.replies?.admin?.content) {
+      return errorResponseHelper(res, { message: 'Admin already has a reply to this review', code: '00400' });
+    }
+    
+    // Get admin details for author name
+    const admin = req.user;
+    const authorName = admin ? `${admin.firstName || 'Admin'} ${admin.lastName || ''} (Admin)`.trim() || 'Admin User' : 'Admin User';
+    const authorEmail = admin?.email || '';
+    
+    // Initialize replies object if it doesn't exist
+    if (!review.replies) {
+      review.replies = {};
+    }
+    
+    review.replies.admin = {
+      content,
+      authorId: adminId,
+      authorName,
+      authorEmail,
+      createdAt: new Date()
+    };
+    
+    review.updatedAt = new Date();
+    await review.save();
+    
+    // Populate and return the complete review object
+    await review.populate('businessId', 'businessName contactPerson email phone businessCategory');
+    await review.populate('userId', 'name email profilePhoto');
+    await review.populate('approvedBy', 'name email');
+    await review.populate('businessManagementGrantedBy', 'name email');
+    
+    return successResponseHelper(res, {
+      message: 'Reply added successfully',
+      data: review
+    });
+  } catch (error) {
+    return errorResponseHelper(res, { message: error.message, code: '00500' });
+  }
+};
+
+// PUT /admin/reviews/:id/reply - Edit reply to review
+export const editReplyToReview = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { content } = req.body;
+    const adminId = req.user?._id;
+    
+    if (!adminId) {
+      return errorResponseHelper(res, { message: 'Admin not authenticated', code: '00401' });
+    }
+    
+    if (!content) {
+      return errorResponseHelper(res, { message: 'Reply content is required', code: '00400' });
+    }
+    
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return errorResponseHelper(res, { message: 'Invalid review ID', code: '00400' });
+    }
+    
+    // Find the review
+    const review = await Review.findById(id);
+    if (!review) {
+      return errorResponseHelper(res, { message: 'Review not found', code: '00404' });
+    }
+    
+    // Check if admin has a reply
+    if (!review.replies?.admin?.content) {
+      return errorResponseHelper(res, { message: 'Admin does not have a reply to this review', code: '00400' });
+    }
+    
+    // Check if reply belongs to this admin
+    if (review.replies.admin.authorId.toString() !== adminId.toString()) {
+      return errorResponseHelper(res, { message: 'You can only edit your own replies', code: '00403' });
+    }
+    
+    review.replies.admin.content = content;
+    review.replies.admin.isEdited = true;
+    review.replies.admin.editedAt = new Date();
+    review.replies.admin.updatedAt = new Date();
+    
+    review.updatedAt = new Date();
+    await review.save();
+    
+    // Populate and return the complete review object
+    await review.populate('businessId', 'businessName contactPerson email phone businessCategory');
+    await review.populate('userId', 'name email profilePhoto');
+    await review.populate('approvedBy', 'name email');
+    await review.populate('businessManagementGrantedBy', 'name email');
+    
+    return successResponseHelper(res, {
+      message: 'Reply updated successfully',
+      data: review
+    });
+  } catch (error) {
+    return errorResponseHelper(res, { message: error.message, code: '00500' });
+  }
+};
+
+// DELETE /admin/reviews/:id/reply - Delete reply to review
+export const deleteReplyToReview = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const adminId = req.user?._id;
+    
+    if (!adminId) {
+      return errorResponseHelper(res, { message: 'Admin not authenticated', code: '00401' });
+    }
+    
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return errorResponseHelper(res, { message: 'Invalid review ID', code: '00400' });
+    }
+    
+    // Find the review
+    const review = await Review.findById(id);
+    if (!review) {
+      return errorResponseHelper(res, { message: 'Review not found', code: '00404' });
+    }
+    
+    // Check if admin has a reply
+    if (!review.replies?.admin?.content) {
+      return errorResponseHelper(res, { message: 'Admin does not have a reply to this review', code: '00400' });
+    }
+    
+    // Check if reply belongs to this admin
+    if (review.replies.admin.authorId.toString() !== adminId.toString()) {
+      return errorResponseHelper(res, { message: 'You can only delete your own replies', code: '00403' });
+    }
+    
+    // Remove the admin reply
+    review.replies.admin = undefined;
     review.updatedAt = new Date();
     await review.save();
     

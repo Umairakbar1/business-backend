@@ -13,7 +13,10 @@ import {
   editComment,
   editReply,
   deleteComment,
-  deleteReply
+  deleteReply,
+  addReplyToReview,
+  editReplyToReview,
+  deleteReplyToReview
 } from "../../controllers/business/review.controller.js";
 
 const router = Router();
@@ -38,6 +41,15 @@ router.put("/:id/reject", verifyBusinessOwnerToken, rejectReview);
 
 // DELETE /business/reviews/:id - Delete a review (only if business has access)
 router.delete("/:id", verifyBusinessOwnerToken, deleteReview);
+
+// POST /business/reviews/:id/reply - Add direct reply to review
+router.post("/:id/reply", verifyBusinessOwnerToken, addReplyToReview);
+
+// PUT /business/reviews/:id/reply - Edit direct reply to review
+router.put("/:id/reply", verifyBusinessOwnerToken, editReplyToReview);
+
+// DELETE /business/reviews/:id/reply - Delete direct reply to review
+router.delete("/:id/reply", verifyBusinessOwnerToken, deleteReplyToReview);
 
 // POST /business/reviews/:id/comments - Add comment to review
 router.post("/:id/comments", verifyBusinessOwnerToken, addComment);

@@ -123,11 +123,27 @@ const getAllBlogs = async (req, res) => {
             .skip(skip)
             .limit(parseInt(limit));
 
+        // Get comment counts for all blogs
+        const Comment = (await import('../../models/user/comment.js')).default;
+        const blogsWithComments = await Promise.all(
+            blogs.map(async (blog) => {
+                const commentCount = await Comment.countDocuments({ 
+                    blogId: blog._id, 
+                    status: 'active' 
+                });
+                
+                return {
+                    ...blog.toObject(),
+                    commentCount
+                };
+            })
+        );
+
         const total = await Blog.countDocuments(query);
 
         return successResponseHelper(res, {
             message: "Blogs retrieved successfully",
-            data:blogs,
+            data: blogsWithComments,
             pagination: {
                 page: parseInt(page),
                 limit: parseInt(limit),
@@ -159,7 +175,50 @@ const getBlogById = async (req, res) => {
             return errorResponseHelper(res, { message: "Blog post not found", code: '00404' });
         }
 
-        return successResponseHelper(res, { message: "Blog post retrieved successfully", data: blog });
+        // Get comments and replies for the blog
+        const Comment = (await import('../../models/user/comment.js')).default;
+        const Reply = (await import('../../models/user/reply.js')).default;
+        
+        // Get comment count
+        const commentCount = await Comment.countDocuments({ 
+            blogId: id, 
+            status: 'active' 
+        });
+
+        // Get all active comments for this blog
+        const comments = await Comment.find({ 
+            blogId: id, 
+            status: 'active',
+            parentComment: null // Only top-level comments
+        })
+        .populate('author', 'firstName lastName email')
+        .sort({ createdAt: -1 });
+
+        // Get replies for each comment
+        const commentsWithReplies = await Promise.all(
+            comments.map(async (comment) => {
+                const replies = await Reply.find({ 
+                    comment: comment._id, 
+                    status: 'active' 
+                })
+                .populate('author', 'firstName lastName email')
+                .sort({ createdAt: 1 });
+
+                return {
+                    ...comment.toObject(),
+                    replies
+                };
+            })
+        );
+
+        // Add comments and comment count to blog data
+        const blogWithComments = {
+            ...blog.toObject(),
+            commentCount,
+            comments: commentsWithReplies
+        };
+
+        return successResponseHelper(res, { message: "Blog post retrieved successfully", data: blogWithComments });
     } catch (error) {
         console.error('Get blog error:', error);
         return errorResponseHelper(res, { message: 'Internal server error', code: '00500' });
@@ -344,6 +403,10 @@ const getBlogStats = async (req, res) => {
         const publishedBlogs = await Blog.countDocuments({ status: 'published' });
         const draftBlogs = await Blog.countDocuments({ status: 'draft' });
         
+        // Get total comments across all blogs
+        const Comment = (await import('../../models/user/comment.js')).default;
+        const totalComments = await Comment.countDocuments({ status: 'active' });
+        
         const recentBlogs = await Blog.find()
             .sort({ createdAt: -1 })
             .limit(5)
@@ -353,6 +416,7 @@ const getBlogStats = async (req, res) => {
             total: totalBlogs,
             published: publishedBlogs,
             draft: draftBlogs,
+            totalComments,
             recentBlogs
         };
 

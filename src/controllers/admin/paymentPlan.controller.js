@@ -3,6 +3,7 @@ import Subscription from '../../models/admin/subscription.js';
 import Payment from '../../models/admin/payment.js';
 import StripeHelper from '../../helpers/stripeHelper.js';
 
+
 /**
  * Payment Plan Controller
  * 
@@ -504,10 +505,27 @@ class PaymentPlanController {
    */
   static async getBoostPlans(req, res) {
     try {
-      const boostPlans = await PaymentPlan.find({
-        planType: 'boost',
-        isActive: true
-      }).sort({ sortOrder: 1, price: 1 });
+        const { isActive, sortBy = 'sortOrder', sortOrder = 'asc', page = 1, limit = 10, queryText = '' } = req.query;
+      
+      const filter = { planType: 'boost' };
+      if (isActive !== undefined && isActive !== '') filter.isActive = isActive === 'true';
+      
+      const sortOptions = {};
+      sortOptions[sortBy] = sortOrder === 'desc' ? -1 : 1;
+      
+      if (queryText && queryText.trim()) {
+        filter.name = { $regex: queryText.trim(), $options: 'i' };
+      }
+
+      const skip = (page - 1) * limit;
+
+      const boostPlans = await PaymentPlan.find(filter)
+        .sort(sortOptions)
+        .populate('features', 'name description')
+        .skip(skip)
+        .limit(parseInt(limit));
+
+      const total = await PaymentPlan.countDocuments(filter);
 
       // Enhance boost plans with validity information
       const enhancedBoostPlans = boostPlans.map(plan => {
@@ -519,8 +537,14 @@ class PaymentPlanController {
 
       res.status(200).json({
         success: true,
-        message: 'Boost plans (temporary) retrieved successfully',
-        data: enhancedBoostPlans
+        message: 'Boost plans retrieved successfully',
+        data: enhancedBoostPlans,
+        pagination: {
+          currentPage: parseInt(page),
+          totalPages: Math.ceil(total / limit),
+          totalItems: total,
+          pageSize: parseInt(limit)
+        }
       });
     } catch (error) {
       console.error('Error fetching boost plans:', error);
@@ -1123,17 +1147,25 @@ class PaymentPlanController {
    */
   static async getAllBoostPlans(req, res) {
     try {
-      const { isActive, sortBy = 'sortOrder', sortOrder = 'asc' } = req.query;
+      const { isActive, sortBy = 'sortOrder', sortOrder = 'asc', page = 1, limit = 10, queryText = '' } = req.query;
       
       const filter = { planType: 'boost' };
-      if (isActive !== undefined) filter.isActive = isActive === 'true';
+      if (isActive !== undefined && isActive !== '') filter.isActive = isActive === 'true';
 
       const sortOptions = {};
       sortOptions[sortBy] = sortOrder === 'desc' ? -1 : 1;
 
+      if (queryText && queryText.trim()) {
+        filter.name = { $regex: queryText.trim(), $options: 'i' };
+      }
+
+      const skip = (page - 1) * limit;
+
       const boostPlans = await PaymentPlan.find(filter)
         .sort(sortOptions)
-        .populate('features', 'name description');
+        .populate('features', 'name description')
+        .skip(skip)
+        .limit(parseInt(limit));
 
       // Enhance boost plans with additional information
       const enhancedBoostPlans = boostPlans.map(plan => {
@@ -1144,10 +1176,18 @@ class PaymentPlanController {
         return planData;
       });
 
+      const total = await PaymentPlan.countDocuments(filter);
+
       res.status(200).json({
         success: true,
         message: 'Boost plans retrieved successfully',
-        data: enhancedBoostPlans
+        data: enhancedBoostPlans,
+        pagination: {
+          currentPage: parseInt(page),
+          totalPages: Math.ceil(total / limit),
+          totalItems: total,
+          pageSize: parseInt(limit)
+        }
       });
     } catch (error) {
       console.error('Error fetching boost plans:', error);
@@ -1164,17 +1204,29 @@ class PaymentPlanController {
    */
   static async getAllBusinessPlans(req, res) {
     try {
-      const { isActive, sortBy = 'sortOrder', sortOrder = 'asc' } = req.query;
+      const { page = 1, limit = 10, queryText = '', isActive, sortBy = 'sortOrder', sortOrder = 'asc' } = req.query;
       
       const filter = { planType: 'business' };
-      if (isActive !== undefined) filter.isActive = isActive === 'true';
+      if (isActive !== undefined && isActive !== '') filter.isActive = isActive === 'true';
+      
+      // Add text search filter for plan name
+      if (queryText && queryText.trim()) {
+        filter.name = { $regex: queryText.trim(), $options: 'i' };
+      }
 
       const sortOptions = {};
       sortOptions[sortBy] = sortOrder === 'desc' ? -1 : 1;
 
+      const skip = (page - 1) * limit ;
+
       const businessPlans = await PaymentPlan.find(filter)
         .sort(sortOptions)
-        .populate('features', 'name description');
+        .populate('features', 'name description')
+        .skip(skip)
+        .limit(parseInt(limit));
+        
+
+      const total = await PaymentPlan.countDocuments(filter);
 
       // Enhance business plans with additional information
       const enhancedBusinessPlans = businessPlans.map(plan => {
@@ -1190,7 +1242,13 @@ class PaymentPlanController {
       res.status(200).json({
         success: true,
         message: 'Business plans retrieved successfully',
-        data: enhancedBusinessPlans
+        data: enhancedBusinessPlans,
+        pagination: {
+          currentPage: parseInt(page),
+          totalPages: Math.ceil(total / limit),
+          totalItems: total,
+          pageSize: parseInt(limit)
+        }
       });
     } catch (error) {
       console.error('Error fetching business plans:', error);

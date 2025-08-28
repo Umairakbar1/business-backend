@@ -79,6 +79,79 @@ const ReviewSchema = new mongoose.Schema({
     },
     businessManagementGrantedAt: Date,
     approvedAt: Date,
+    // Direct replies to review (admin and business can both reply)
+    replies: {
+      admin: {
+        content: {
+          type: String,
+          required: false,
+          trim: true,
+          maxlength: 1000
+        },
+        authorId: {
+          type: mongoose.Schema.Types.ObjectId,
+          required: false
+        },
+        authorName: {
+          type: String,
+          required: false,
+          trim: true
+        },
+        authorEmail: {
+          type: String,
+          trim: true,
+          lowercase: true
+        },
+        createdAt: {
+          type: Date,
+          default: Date.now
+        },
+        updatedAt: {
+          type: Date,
+          default: Date.now
+        },
+        isEdited: {
+          type: Boolean,
+          default: false
+        },
+        editedAt: Date
+      },
+      business: {
+        content: {
+          type: String,
+          required: false,
+          trim: true,
+          maxlength: 1000
+        },
+        authorId: {
+          type: mongoose.Schema.Types.ObjectId,
+          required: false
+        },
+        authorName: {
+          type: String,
+          required: false,
+          trim: true
+        },
+        authorEmail: {
+          type: String,
+          trim: true,
+          lowercase: true
+        },
+        createdAt: {
+          type: Date,
+          default: Date.now
+        },
+        updatedAt: {
+          type: Date,
+          default: Date.now
+        },
+        isEdited: {
+          type: Boolean,
+          default: false
+        },
+        editedAt: Date
+      }
+    },
     // Comments and replies for reviews
     comments: [{
       content: {

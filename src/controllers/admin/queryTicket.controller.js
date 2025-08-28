@@ -9,7 +9,7 @@ import mongoose from 'mongoose';
 export const getAllQueryTickets = async (req, res) => {
   try {
     const adminId = req.user?._id;
-    const { page = 1, limit = 10, status, createdByType, assignedTo, sortBy = 'createdAt', sortOrder = 'desc' } = req.query;
+    const { page = 1, limit = 10, search,status, createdByType, assignedTo, sortBy = 'createdAt', sortOrder = 'desc' } = req.query;
     
     if (!adminId) {
       return errorResponseHelper(res, { message: 'Admin not authenticated', code: '00401' });
@@ -23,6 +23,8 @@ export const getAllQueryTickets = async (req, res) => {
         { assignedToType: 'admin' } // Show all tickets assigned to any admin
       ]
     };
+    
+    if (search) filter.businessName = { $regex: search, $options: 'i' };
     
     if (status) filter.status = status;
     if (createdByType) filter.createdByType = createdByType;

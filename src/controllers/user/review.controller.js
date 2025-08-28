@@ -110,6 +110,8 @@ export const getMyReviews = async (req, res) => {
       .populate('userId', 'firstName lastName email profilePhoto')
       .populate('approvedBy', 'firstName lastName email')
       .populate('businessManagementGrantedBy', 'firstName lastName email')
+      .populate('replies.admin.authorId', 'name email')
+      .populate('replies.business.authorId', 'name email')
       .populate('comments.authorId', '_id firstName lastName email businessName')
       .populate('comments.replies.authorId', '_id firstName lastName email businessName')
       .sort({ createdAt: -1 })
@@ -517,6 +519,8 @@ export const getReviewById = async (req, res) => {
       .populate('approvedBy', 'firstName lastName email')
       .populate('businessManagementGrantedBy', 'firstName lastName email')
       .populate('businessId', 'businessName businessCategory email')
+      .populate('replies.admin.authorId', 'name email')
+      .populate('replies.business.authorId', 'name email')
       .populate('comments.authorId', '_id firstName lastName email businessName')
       .populate('comments.replies.authorId', '_id firstName lastName email businessName');
     

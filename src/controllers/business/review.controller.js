@@ -46,6 +46,7 @@ export const getBusinessReviews = async (req, res) => {
       .populate('userId', 'name email profilePhoto')
       .populate('approvedBy', 'name email')
       .populate('businessManagementGrantedBy', 'name email')
+      .populate('replies.admin.authorId', 'name email')
       .sort(sort)
       .skip(skip)
       .limit(parseInt(limit));
@@ -114,6 +115,7 @@ export const getManageableReviews = async (req, res) => {
       .populate('userId', 'name email profilePhoto')
       .populate('approvedBy', 'name email')
       .populate('businessManagementGrantedBy', 'name email')
+      .populate('replies.admin.authorId', 'name email')
       .sort(sort)
       .skip(skip)
       .limit(parseInt(limit));
@@ -156,6 +158,7 @@ export const getReviewById = async (req, res) => {
       .populate('userId', 'name email profilePhoto')
       .populate('approvedBy', 'name email')
       .populate('businessManagementGrantedBy', 'name email')
+      .populate('reply.authorId', 'name email')
       .populate('comments.authorId', '_id businessName email')
       .populate('comments.replies.authorId', '_id businessName email');
     
@@ -803,6 +806,209 @@ export const deleteReply = async (req, res) => {
     // Populate comment and reply author data
     await review.populate('comments.authorId', '_id businessName email');
     await review.populate('comments.replies.authorId', '_id businessName email');
+    
+    return successResponseHelper(res, {
+      message: 'Reply deleted successfully',
+      data: review
+    });
+  } catch (error) {
+    return errorResponseHelper(res, { message: error.message, code: '00500' });
+  }
+}; 
+
+// POST /business/reviews/:id/reply - Add direct reply to review
+export const addReplyToReview = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { content } = req.body;
+    const businessOwnerId = req.businessOwner?._id;
+    
+    if (!businessOwnerId) {
+      return errorResponseHelper(res, { message: 'Business owner not authenticated', code: '00401' });
+    }
+    
+    if (!content) {
+      return errorResponseHelper(res, { message: 'Reply content is required', code: '00400' });
+    }
+    
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return errorResponseHelper(res, { message: 'Invalid review ID', code: '00400' });
+    }
+    
+    // Get the review and verify business ownership
+    const review = await Review.findById(id);
+    if (!review) {
+      return errorResponseHelper(res, { message: 'Review not found', code: '00404' });
+    }
+    
+    // Verify business ownership
+    const business = await Business.findOne({ 
+      _id: review.businessId, 
+      businessOwner: businessOwnerId 
+    });
+    
+    if (!business) {
+      return errorResponseHelper(res, { message: 'Access denied to this review', code: '00403' });
+    }
+    
+    // Check if business already has a reply
+    if (review.replies?.business?.content) {
+      return errorResponseHelper(res, { message: 'Business already has a reply to this review', code: '00400' });
+    }
+    
+    // Get business details for author name
+    const authorName = business ? `${business.businessName} (Business)` : 'Business User';
+    const authorEmail = business?.email || '';
+    
+    // Initialize replies object if it doesn't exist
+    if (!review.replies) {
+      review.replies = {};
+    }
+    
+    review.replies.business = {
+      content,
+      authorId: businessOwnerId,
+      authorName,
+      authorEmail,
+      createdAt: new Date()
+    };
+    
+    review.updatedAt = new Date();
+    await review.save();
+    
+    // Populate and return the complete review object
+    await review.populate('userId', 'firstName lastName email profilePhoto');
+    await review.populate('businessId', 'businessName businessCategory');
+    await review.populate('approvedBy', 'firstName lastName email');
+    await review.populate('businessManagementGrantedBy', 'firstName lastName email');
+    
+    return successResponseHelper(res, {
+      message: 'Reply added successfully',
+      data: review
+    });
+  } catch (error) {
+    return errorResponseHelper(res, { message: error.message, code: '00500' });
+  }
+};
+
+// PUT /business/reviews/:id/reply - Edit reply to review
+export const editReplyToReview = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { content } = req.body;
+    const businessOwnerId = req.businessOwner?._id;
+    
+    if (!businessOwnerId) {
+      return errorResponseHelper(res, { message: 'Business owner not authenticated', code: '00401' });
+    }
+    
+    if (!content) {
+      return errorResponseHelper(res, { message: 'Reply content is required', code: '00400' });
+    }
+    
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return errorResponseHelper(res, { message: 'Invalid review ID', code: '00400' });
+    }
+    
+    // Get the review and verify business ownership
+    const review = await Review.findById(id);
+    if (!review) {
+      return errorResponseHelper(res, { message: 'Review not found', code: '00404' });
+    }
+    
+    // Verify business ownership
+    const business = await Business.findOne({ 
+      _id: review.businessId, 
+      businessOwner: businessOwnerId 
+    });
+    
+    if (!business) {
+      return errorResponseHelper(res, { message: 'Access denied to this review', code: '00403' });
+    }
+    
+    // Check if business has a reply
+    if (!review.replies?.business?.content) {
+      return errorResponseHelper(res, { message: 'Business does not have a reply to this review', code: '00400' });
+    }
+    
+    // Check if reply belongs to this business
+    if (review.replies.business.authorId.toString() !== businessOwnerId.toString()) {
+      return errorResponseHelper(res, { message: 'You can only edit your own replies', code: '00403' });
+    }
+    
+    review.replies.business.content = content;
+    review.replies.business.isEdited = true;
+    review.replies.business.editedAt = new Date();
+    review.replies.business.updatedAt = new Date();
+    
+    review.updatedAt = new Date();
+    await review.save();
+    
+    // Populate and return the complete review object
+    await review.populate('userId', 'firstName lastName email profilePhoto');
+    await review.populate('businessId', 'businessName businessCategory');
+    await review.populate('approvedBy', 'firstName lastName email');
+    await review.populate('businessManagementGrantedBy', 'firstName lastName email');
+    
+    return successResponseHelper(res, {
+      message: 'Reply updated successfully',
+      data: review
+    });
+  } catch (error) {
+    return errorResponseHelper(res, { message: error.message, code: '00500' });
+  }
+};
+
+// DELETE /business/reviews/:id/reply - Delete reply to review
+export const deleteReplyToReview = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const businessOwnerId = req.businessOwner?._id;
+    
+    if (!businessOwnerId) {
+      return errorResponseHelper(res, { message: 'Business owner not authenticated', code: '00401' });
+    }
+    
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return errorResponseHelper(res, { message: 'Invalid review ID', code: '00400' });
+    }
+    
+    // Get the review and verify business ownership
+    const review = await Review.findById(id);
+    if (!review) {
+      return errorResponseHelper(res, { message: 'Review not found', code: '00404' });
+    }
+    
+    // Verify business ownership
+    const business = await Business.findOne({ 
+      _id: review.businessId, 
+      businessOwner: businessOwnerId 
+    });
+    
+    if (!business) {
+      return errorResponseHelper(res, { message: 'Access denied to this review', code: '00403' });
+    }
+    
+    // Check if business has a reply
+    if (!review.replies?.business?.content) {
+      return errorResponseHelper(res, { message: 'Business does not have a reply to this review', code: '00400' });
+    }
+    
+    // Check if reply belongs to this business
+    if (review.replies.business.authorId.toString() !== businessOwnerId.toString()) {
+      return errorResponseHelper(res, { message: 'You can only delete your own replies', code: '00403' });
+    }
+    
+    // Remove the business reply
+    review.replies.business = undefined;
+    review.updatedAt = new Date();
+    await review.save();
+    
+    // Populate and return the complete review object
+    await review.populate('userId', 'firstName lastName email profilePhoto');
+    await review.populate('businessId', 'businessName businessCategory');
+    await review.populate('approvedBy', 'firstName lastName email');
+    await review.populate('businessManagementGrantedBy', 'firstName lastName email');
     
     return successResponseHelper(res, {
       message: 'Reply deleted successfully',

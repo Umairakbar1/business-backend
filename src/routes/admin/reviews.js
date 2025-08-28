@@ -16,7 +16,10 @@ import {
   editComment,
   editReply,
   deleteComment,
-  deleteReply
+  deleteReply,
+  addReplyToReview,
+  editReplyToReview,
+  deleteReplyToReview
 } from "../../controllers/admin/review.controller.js";
 
 const router = Router();
@@ -50,6 +53,15 @@ router.put("/:id/grant-business-access", authorizedAccessAdmin, grantBusinessAcc
 
 // PUT /admin/reviews/:id/revoke-business-access - Revoke business access to manage this review
 router.put("/:id/revoke-business-access", authorizedAccessAdmin, revokeBusinessAccess);
+
+// POST /admin/reviews/:id/reply - Add direct reply to review
+router.post("/:id/reply", authorizedAccessAdmin, addReplyToReview);
+
+// PUT /admin/reviews/:id/reply - Edit direct reply to review
+router.put("/:id/reply", authorizedAccessAdmin, editReplyToReview);
+
+// DELETE /admin/reviews/:id/reply - Delete direct reply to review
+router.delete("/:id/reply", authorizedAccessAdmin, deleteReplyToReview);
 
 // POST /admin/reviews/:id/comments - Add comment to review
 router.post("/:id/comments", authorizedAccessAdmin, addComment);
