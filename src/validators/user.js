@@ -83,3 +83,113 @@ export const replyUpdateValidator = Joi.object({
             'any.required': 'Reply content is required'
         })
 });
+
+// Password Reset Validation Functions
+
+// Request password reset validation
+export const requestPasswordResetValidation = (req, res, next) => {
+  const schema = Joi.object({
+    email: Joi.string()
+      .email()
+      .required()
+      .messages({
+        'string.empty': 'Email is required',
+        'string.email': 'Please enter a valid email address',
+        'any.required': 'Email is required'
+      })
+  });
+
+  const { error } = schema.validate(req.body);
+  if (error) {
+    return res.status(400).json({
+      success: false,
+      message: error.details[0].message,
+      code: '00400'
+    });
+  }
+  next();
+};
+
+// Verify password reset OTP validation
+export const verifyPasswordResetOtpValidation = (req, res, next) => {
+  const schema = Joi.object({
+    email: Joi.string()
+      .email()
+      .required()
+      .messages({
+        'string.empty': 'Email is required',
+        'string.email': 'Please enter a valid email address',
+        'any.required': 'Email is required'
+      }),
+    otp: Joi.string()
+      .pattern(/^\d{6}$/)
+      .required()
+      .messages({
+        'string.empty': 'OTP is required',
+        'string.pattern.base': 'OTP must be exactly 6 digits',
+        'any.required': 'OTP is required'
+      }),
+    passwordResetToken: Joi.string()
+      .required()
+      .messages({
+        'string.empty': 'Password reset token is required',
+        'any.required': 'Password reset token is required'
+      })
+  });
+
+  const { error } = schema.validate(req.body);
+  if (error) {
+    return res.status(400).json({
+      success: false,
+      message: error.details[0].message,
+      code: '00400'
+    });
+  }
+  next();
+};
+
+// Reset password validation
+export const resetPasswordValidation = (req, res, next) => {
+  const schema = Joi.object({
+    email: Joi.string()
+      .email()
+      .required()
+      .messages({
+        'string.empty': 'Email is required',
+        'string.email': 'Please enter a valid email address',
+        'any.required': 'Email is required'
+      }),
+    newPassword: Joi.string()
+      .pattern(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{8,}$/)
+      .required()
+      .messages({
+        'string.empty': 'New password is required',
+        'string.pattern.base': 'Password must contain at least 8 characters with uppercase, lowercase, number, and special character',
+        'any.required': 'New password is required'
+      }),
+    confirmPassword: Joi.string()
+      .valid(Joi.ref('newPassword'))
+      .required()
+      .messages({
+        'string.empty': 'Confirm password is required',
+        'any.only': 'Passwords do not match',
+        'any.required': 'Confirm password is required'
+      }),
+    finalPasswordResetToken: Joi.string()
+      .required()
+      .messages({
+        'string.empty': 'Final password reset token is required',
+        'any.required': 'Final password reset token is required'
+      })
+  });
+
+  const { error } = schema.validate(req.body);
+  if (error) {
+    return res.status(400).json({
+      success: false,
+      message: error.details[0].message,
+      code: '00400'
+    });
+  }
+  next();
+};

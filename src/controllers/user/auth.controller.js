@@ -7,7 +7,7 @@ import {
   errorResponseHelper,
   successResponseHelper,
 } from "../../helpers/utilityHelper.js";
-import { signAccessToken } from "../../helpers/jwtHelper.js";
+import { signAccessToken, signPasswordResetToken, verifyPasswordResetToken } from "../../helpers/jwtHelper.js";
 import { sendEmail } from "../../helpers/sendGridHelper.js";
 
 // Generate unique username from name
@@ -405,6 +405,239 @@ const googleAuth = async (req, res) => {
   });
 };
 
+// Password Recovery Functions
+
+// Step 1: Request Password Reset - Verify Email and Send OTP
+const requestPasswordReset = async (req, res) => {
+  try {
+    const { email } = req.body;
+
+    // Validate required fields
+    if (!email) {
+      return errorResponseHelper(res, { 
+        message: 'Email is required',
+        code: '00400'
+      });
+    }
+
+    // Validate email format
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      return errorResponseHelper(res, { 
+        message: 'Please enter a valid email address',
+        code: '00400'
+      });
+    }
+
+    // Check if user exists with this email
+    const [existingUser, userError] = await asyncWrapper(() => User.findOne({ email }));
+    if (userError) return serverErrorHelper(req, res, 500, userError);
+    if (!existingUser) {
+      return errorResponseHelper(res, { 
+        message: 'No account found with this email address',
+        code: '00404'
+      });
+    }
+
+    // Check if account is active
+    if (existingUser.status !== 'active') {
+      return errorResponseHelper(res, { 
+        message: 'Your account is not active. Please contact support.',
+        code: '00401'
+      });
+    }
+
+    // Generate OTP for password reset
+    const otp = existingUser.generateOTP();
+    await existingUser.save();
+
+    // Generate password reset token (expires in 15 minutes)
+    const passwordResetToken = signPasswordResetToken(email);
+
+    // Send OTP via email
+    try {
+      // Commented out for testing - using dummy OTP
+      // await sendEmail(email, "Password Reset Verification", `Your verification code is: ${otp}. This code will expire in 10 minutes.`);
+      console.log(`[TESTING] Password Reset OTP for ${email}: ${otp}`);
+      
+      return successResponseHelper(res, {
+        message: 'OTP sent to your email. Please verify to complete password reset.',
+        data: {
+          email,
+          passwordResetToken
+        }
+      });
+    } catch (emailError) {
+      console.error('Email sending error:', emailError);
+      return errorResponseHelper(res, { 
+        message: 'Failed to send OTP. Please try again.',
+        code: '00500'
+      });
+    }
+  } catch (error) {
+    return serverErrorHelper(req, res, 500, error);
+  }
+};
+
+// Step 2: Verify OTP for Password Reset
+const verifyPasswordResetOtp = async (req, res) => {
+  try {
+    const { email, otp, passwordResetToken } = req.body;
+
+    // Validate required fields
+    if (!email || !otp || !passwordResetToken) {
+      return errorResponseHelper(res, { 
+        message: 'Email, OTP, and password reset token are required',
+        code: '00400'
+      });
+    }
+
+    // Validate OTP format
+    if (!/^\d{6}$/.test(otp)) {
+      return errorResponseHelper(res, { 
+        message: 'OTP must be exactly 6 digits',
+        code: '00400'
+      });
+    }
+
+    // Verify password reset token
+    let decodedToken;
+    try {
+      decodedToken = verifyPasswordResetToken(passwordResetToken);
+    } catch (tokenError) {
+      return errorResponseHelper(res, { 
+        message: 'Invalid or expired password reset token. Please request a new one.',
+        code: '00401'
+      });
+    }
+
+    // Verify email matches token
+    if (decodedToken.email !== email) {
+      return errorResponseHelper(res, { 
+        message: 'Email does not match the reset token',
+        code: '00400'
+      });
+    }
+
+    // Check if user exists
+    const [existingUser, userError] = await asyncWrapper(() => User.findOne({ email }));
+    if (userError) return serverErrorHelper(req, res, 500, userError);
+    if (!existingUser) {
+      return errorResponseHelper(res, { 
+        message: 'No account found with this email address',
+        code: '00404'
+      });
+    }
+
+    // Verify OTP
+    if (!existingUser.verifyOTP(otp)) {
+      return errorResponseHelper(res, { 
+        message: 'Invalid or expired OTP. Please check your email and try again.',
+        code: '00400'
+      });
+    }
+
+    // Clear OTP after successful verification
+    existingUser.otp = undefined;
+    await existingUser.save();
+
+    // Generate new password reset token for the final step
+    const finalPasswordResetToken = signPasswordResetToken(email);
+
+    return successResponseHelper(res, {
+      message: 'OTP verified successfully. You can now reset your password.',
+      data: {
+        email,
+        finalPasswordResetToken
+      }
+    });
+  } catch (error) {
+    return serverErrorHelper(req, res, 500, error);
+  }
+};
+
+// Step 3: Reset Password with New Password
+const resetPassword = async (req, res) => {
+  try {
+    const { email, newPassword, confirmPassword, finalPasswordResetToken } = req.body;
+
+    // Validate required fields
+    if (!email || !newPassword || !confirmPassword || !finalPasswordResetToken) {
+      return errorResponseHelper(res, { 
+        message: 'Email, new password, confirm password, and reset token are required',
+        code: '00400'
+      });
+    }
+
+    // Validate email format
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      return errorResponseHelper(res, { 
+        message: 'Please enter a valid email address',
+        code: '00400'
+      });
+    }
+
+    // Verify password reset token
+    let decodedToken;
+    try {
+      decodedToken = verifyPasswordResetToken(finalPasswordResetToken);
+    } catch (tokenError) {
+      return errorResponseHelper(res, { 
+        message: 'Invalid or expired password reset token. Please request a new one.',
+        code: '00401'
+      });
+    }
+
+    // Verify email matches token
+    if (decodedToken.email !== email) {
+      return errorResponseHelper(res, { 
+        message: 'Email does not match the reset token',
+        code: '00400'
+      });
+    }
+
+    // Check if passwords match
+    if (newPassword !== confirmPassword) {
+      return errorResponseHelper(res, { 
+        message: 'New password and confirm password do not match',
+        code: '00400'
+      });
+    }
+
+    // Validate password strength
+    if (!/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{8,}$/.test(newPassword)) {
+      return errorResponseHelper(res, { 
+        message: 'Password must contain at least 8 characters with uppercase, lowercase, number, and special character',
+        code: '00400'
+      });
+    }
+
+    // Check if user exists
+    const [existingUser, userError] = await asyncWrapper(() => User.findOne({ email }));
+    if (userError) return serverErrorHelper(req, res, 500, userError);
+    if (!existingUser) {
+      return errorResponseHelper(res, { 
+        message: 'No account found with this email address',
+        code: '00404'
+      });
+    }
+
+    // Update password
+    existingUser.password = newPassword;
+    await existingUser.save();
+
+    return successResponseHelper(res, {
+      message: 'Password reset successfully. You can now login with your new password.',
+      data: {
+        email: existingUser.email
+      }
+    });
+  } catch (error) {
+    return serverErrorHelper(req, res, 500, error);
+  }
+};
+
 export {
   sendRegistrationOtp,
   verifyRegistrationOtp,
@@ -414,5 +647,8 @@ export {
   updateProfile,
   deleteProfile,
   googleAuth,
-  sendOtp
+  sendOtp,
+  requestPasswordReset,
+  verifyPasswordResetOtp,
+  resetPassword
 };
