@@ -20,8 +20,30 @@ export const getBusinessListings = async (req, res) => {
       subcategoryId,
     } = req.query;
 
-    const lat = location?.lat;
-    const lng = location?.lng;
+    // Parse location if it's a JSON string
+    let parsedLocation = null;
+    let lat = null;
+    let lng = null;
+    
+    if (location) {
+      try {
+        // If location is a JSON string, parse it
+        if (typeof location === 'string' && location.startsWith('{')) {
+          parsedLocation = JSON.parse(location);
+          lat = parsedLocation.lat;
+          lng = parsedLocation.lng;
+        } else {
+          // If location is already an object
+          parsedLocation = location;
+          lat = location.lat;
+          lng = location.lng;
+        }
+      } catch (error) {
+        console.log('Error parsing location:', error);
+        // Fallback to text-based search
+        parsedLocation = location;
+      }
+    }
 
     const filter = {};
     if (typeof claimed !== 'undefined') filter.claimed = claimed === 'true';
@@ -37,15 +59,17 @@ export const getBusinessListings = async (req, res) => {
         filter.subcategories = { $in: subcategoryIds };
       }
     }
-    // Handle location filtering
-    if (location) {
-      // Text-based location search (city, address, etc.)
-      filter.$or = [
-        { 'location.description': { $regex: location, $options: 'i' } },
-        { city: { $regex: location, $options: 'i' } },
-        { state: { $regex: location, $options: 'i' } },
-        { address: { $regex: location, $options: 'i' } }
-      ];
+    // Handle text-based location filtering (only if no coordinates or as fallback)
+    if (parsedLocation && !lat && !lng) {
+      const searchText = typeof parsedLocation === 'string' ? parsedLocation : parsedLocation.description;
+      if (searchText) {
+        filter.$or = [
+          { 'location.description': { $regex: searchText, $options: 'i' } },
+          { city: { $regex: searchText, $options: 'i' } },
+          { state: { $regex: searchText, $options: 'i' } },
+          { address: { $regex: searchText, $options: 'i' } }
+        ];
+      }
     }
     
     // Handle coordinates-based location filtering
@@ -59,14 +83,35 @@ export const getBusinessListings = async (req, res) => {
       
       if (!isNaN(userLat) && !isNaN(userLng)) {
         hasCoordinates = true;
+        console.log('📍 Using coordinates for filtering:', { userLat, userLng });
         
         // Add geospatial filter for businesses with coordinates
+        // Check both location.lat/lng and location.coordinates (GeoJSON)
         filter.$and = [
-          { 'location.lat': { $exists: true, $ne: null } },
-          { 'location.lng': { $exists: true, $ne: null } }
+          {
+            $or: [
+              // Check if business has lat/lng coordinates
+              {
+                $and: [
+                  { 'location.lat': { $exists: true, $ne: null } },
+                  { 'location.lng': { $exists: true, $ne: null } }
+                ]
+              },
+              // Check if business has GeoJSON coordinates
+              {
+                $and: [
+                  { 'location.coordinates': { $exists: true, $ne: null } },
+                  { $expr: { $eq: [{ $size: '$location.coordinates' }, 2] } }
+                ]
+              }
+            ]
+          }
         ];
       }
     }
+    
+    console.log('🔍 Final filter:', JSON.stringify(filter, null, 2));
+    console.log('📍 Has coordinates:', hasCoordinates);
 
     // Aggregate to filter by average rating if needed - Only approved reviews
     let pipeline = [
@@ -159,52 +204,95 @@ export const getBusinessListings = async (req, res) => {
     
     // Add distance calculation if coordinates are provided
     if (hasCoordinates) {
+      console.log('📍 Adding distance calculation to pipeline');
       pipeline.push({
         $addFields: {
           distance: {
-            $cond: {
-              if: {
-                $and: [
-                  { $ne: ['$location.lat', null] },
-                  { $ne: ['$location.lng', null] }
-                ]
+            $let: {
+              vars: {
+                userLat: userLat,
+                userLng: userLng
               },
-              then: {
-                $multiply: [
-                  {
-                    $acos: {
-                      $add: [
-                        {
-                          $multiply: [
-                            { $sin: { $multiply: [{ $divide: [{ $multiply: ['$location.lat', 0.0174533] }, 2] }, 2] } },
-                            { $sin: { $multiply: [{ $divide: [{ $multiply: [userLat, 0.0174533] }, 2] }, 2] } }
-                          ]
+              in: {
+                $cond: {
+                  if: {
+                    $or: [
+                      // Check if business has lat/lng coordinates
+                      {
+                        $and: [
+                          { $ne: ['$location.lat', null] },
+                          { $ne: ['$location.lng', null] }
+                        ]
+                      },
+                      // Check if business has GeoJSON coordinates
+                      {
+                        $and: [
+                          { $ne: ['$location.coordinates', null] },
+                          { $expr: { $eq: [{ $size: '$location.coordinates' }, 2] } }
+                        ]
+                      }
+                    ]
+                  },
+                  then: {
+                    $let: {
+                      vars: {
+                        businessLat: {
+                          $cond: {
+                            if: { $ne: ['$location.lat', null] },
+                            then: '$location.lat',
+                            else: { $arrayElemAt: ['$location.coordinates', 1] } // GeoJSON: [lng, lat]
+                          }
                         },
-                        {
-                          $multiply: [
-                            { $cos: { $multiply: ['$location.lat', 0.0174533] } },
-                            { $cos: { $multiply: [userLat, 0.0174533] } },
-                            { $cos: { $multiply: [{ $subtract: ['$location.lng', userLng] }, 0.0174533] } }
-                          ]
+                        businessLng: {
+                          $cond: {
+                            if: { $ne: ['$location.lng', null] },
+                            then: '$location.lng',
+                            else: { $arrayElemAt: ['$location.coordinates', 0] } // GeoJSON: [lng, lat]
+                          }
                         }
-                      ]
+                      },
+                      in: {
+                        $multiply: [
+                          {
+                            $acos: {
+                              $add: [
+                                {
+                                  $multiply: [
+                                    { $sin: { $multiply: [{ $divide: [{ $multiply: ['$$businessLat', 0.0174533] }, 2] }, 2] } },
+                                    { $sin: { $multiply: [{ $divide: [{ $multiply: ['$$userLat', 0.0174533] }, 2] }, 2] } }
+                                  ]
+                                },
+                                {
+                                  $multiply: [
+                                    { $cos: { $multiply: ['$$businessLat', 0.0174533] } },
+                                    { $cos: { $multiply: ['$$userLat', 0.0174533] } },
+                                    { $cos: { $multiply: [{ $subtract: ['$$businessLng', '$$userLng'] }, 0.0174533] } }
+                                  ]
+                                }
+                              ]
+                            }
+                          },
+                          6371 // Earth's radius in kilometers
+                        ]
+                      }
                     }
                   },
-                  6371 // Earth's radius in kilometers
-                ]
-              },
-              else: null
+                  else: null
+                }
+              }
             }
           }
         }
       });
       
-             // Filter by radius (only include businesses within the default radius)
-       pipeline.push({
-         $match: {
-           distance: { $lte: DEFAULT_RADIUS }
-         }
-       });
+      // Filter by radius (only include businesses within the default radius)
+      pipeline.push({
+        $match: {
+          distance: { $lte: DEFAULT_RADIUS }
+        }
+      });
+      
+      console.log('📍 Added radius filtering (25km)');
     }
     
     if (rating) {
@@ -249,6 +337,20 @@ export const getBusinessListings = async (req, res) => {
     });
 
     const businesses = await Business.aggregate(pipeline);
+    
+    console.log('📍 Found businesses:', businesses.length);
+    if (businesses.length > 0) {
+      console.log('📍 Sample business location data:', {
+        name: businesses[0].businessName,
+        location: businesses[0].location,
+        hasLatLng: businesses[0].location?.lat && businesses[0].location?.lng,
+        hasCoordinates: businesses[0].location?.coordinates && businesses[0].location?.coordinates.length === 2
+      });
+      
+      if (hasCoordinates && businesses[0].distance !== undefined) {
+        console.log('📍 Distance calculation working:', businesses[0].distance);
+      }
+    }
     
     // Add metadata about the search
     const response = {
@@ -567,3 +669,282 @@ export const getSingleCategoryWithSubcategories = async (req, res) => {
     });
   }
 };
+
+// 6. Get search suggestions for businesses and categories
+export const getSearchSuggestions = async (req, res) => {
+  try {
+    const { q: searchQuery, limit = 10 } = req.query;
+    
+    if (!searchQuery || searchQuery.trim().length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Search query is required'
+      });
+    }
+
+    const searchKey = searchQuery.trim();
+    const searchLimit = Math.min(parseInt(limit), 20); // Max 20 results
+
+    console.log('🔍 getSearchSuggestions called');
+    console.log('📝 Search query:', searchKey);
+    console.log('📝 Result limit:', searchLimit);
+
+    // Create regex pattern for case-insensitive search
+    const searchRegex = new RegExp(searchKey, 'i');
+
+    // Search businesses
+    const businessSuggestions = await Business.aggregate([
+      {
+        $match: {
+          $and: [
+            { status: 'active' },
+            {
+              $or: [
+                { businessName: { $regex: searchRegex } },
+                { description: { $regex: searchRegex } },
+                { 'location.description': { $regex: searchRegex } },
+                { city: { $regex: searchRegex } },
+                { state: { $regex: searchRegex } },
+                { address: { $regex: searchRegex } }
+              ]
+            }
+          ]
+        }
+      },
+      {
+        $lookup: {
+          from: 'categories',
+          let: { categoryId: '$category' },
+          pipeline: [
+            {
+              $match: {
+                $expr: { $eq: ['$_id', '$$categoryId'] },
+                status: 'active'
+              }
+            },
+            {
+              $project: {
+                _id: 1,
+                title: 1,
+                slug: 1
+              }
+            }
+          ],
+          as: 'categoryData',
+        },
+      },
+      {
+        $addFields: {
+          category: { $arrayElemAt: ['$categoryData', 0] },
+          type: 'business',
+          displayName: '$businessName',
+          searchScore: {
+            $add: [
+              // Exact match gets highest score
+              { $cond: [{ $eq: [{ $toLower: '$businessName' }, searchKey.toLowerCase()] }, 100, 0] },
+              // Starts with gets high score
+              { $cond: [{ $regexMatch: { input: '$businessName', regex: `^${searchKey}`, options: 'i' } }, 50, 0] },
+              // Contains gets medium score
+              { $cond: [{ $regexMatch: { input: '$businessName', regex: searchKey, options: 'i' } }, 25, 0] },
+              // Description match gets lower score
+              { $cond: [{ $regexMatch: { input: '$description', regex: searchKey, options: 'i' } }, 10, 0] },
+              // Location match gets lower score
+              { $cond: [{ $regexMatch: { input: '$city', regex: searchKey, options: 'i' } }, 5, 0] }
+            ]
+          }
+        }
+      },
+      {
+        $sort: { searchScore: -1, businessName: 1 }
+      },
+      {
+        $limit: Math.ceil(searchLimit / 2) // Half for businesses
+      },
+      {
+        $project: {
+          _id: 1,
+          type: 1,
+          displayName: 1,
+          businessName: 1,
+          description: 1,
+          logo: 1,
+          location: 1,
+          city: 1,
+          state: 1,
+          category: 1,
+          searchScore: 1
+        }
+      }
+    ]);
+
+    // Search categories
+    const categorySuggestions = await Category.aggregate([
+      {
+        $match: {
+          $and: [
+            { status: 'active' },
+            {
+              $or: [
+                { title: { $regex: searchRegex } },
+                { description: { $regex: searchRegex } }
+              ]
+            }
+          ]
+        }
+      },
+      {
+        $addFields: {
+          type: 'category',
+          displayName: '$title',
+          searchScore: {
+            $add: [
+              // Exact match gets highest score
+              { $cond: [{ $eq: [{ $toLower: '$title' }, searchKey.toLowerCase()] }, 100, 0] },
+              // Starts with gets high score
+              { $cond: [{ $regexMatch: { input: '$title', regex: `^${searchKey}`, options: 'i' } }, 50, 0] },
+              // Contains gets medium score
+              { $cond: [{ $regexMatch: { input: '$title', regex: searchKey, options: 'i' } }, 25, 0] },
+              // Description match gets lower score
+              { $cond: [{ $regexMatch: { input: '$description', regex: searchKey, options: 'i' } }, 10, 0] }
+            ]
+          }
+        }
+      },
+      {
+        $sort: { searchScore: -1, title: 1 }
+      },
+      {
+        $limit: Math.ceil(searchLimit / 2) // Half for categories
+      },
+      {
+        $project: {
+          _id: 1,
+          type: 1,
+          displayName: 1,
+          title: 1,
+          description: 1,
+          image: 1,
+          slug: 1,
+          color: 1,
+          searchScore: 1
+        }
+      }
+    ]);
+
+    // Search subcategories
+    const subcategorySuggestions = await SubCategory.aggregate([
+      {
+        $match: {
+          $and: [
+            { status: 'active' },
+            {
+              $or: [
+                { title: { $regex: searchRegex } },
+                { description: { $regex: searchRegex } }
+              ]
+            }
+          ]
+        }
+      },
+      {
+        $lookup: {
+          from: 'categories',
+          let: { categoryId: '$categoryId' },
+          pipeline: [
+            {
+              $match: {
+                $expr: { $eq: ['$_id', '$$categoryId'] },
+                status: 'active'
+              }
+            },
+            {
+              $project: {
+                _id: 1,
+                title: 1,
+                slug: 1
+              }
+            }
+          ],
+          as: 'categoryData',
+        },
+      },
+      {
+        $addFields: {
+          type: 'subcategory',
+          displayName: '$title',
+          parentCategory: { $arrayElemAt: ['$categoryData', 0] },
+          searchScore: {
+            $add: [
+              // Exact match gets highest score
+              { $cond: [{ $eq: [{ $toLower: '$title' }, searchKey.toLowerCase()] }, 100, 0] },
+              // Starts with gets high score
+              { $cond: [{ $regexMatch: { input: '$title', regex: `^${searchKey}`, options: 'i' } }, 50, 0] },
+              // Contains gets medium score
+              { $cond: [{ $regexMatch: { input: '$title', regex: searchKey, options: 'i' } }, 25, 0] },
+              // Description match gets lower score
+              { $cond: [{ $regexMatch: { input: '$description', regex: searchKey, options: 'i' } }, 10, 0] }
+            ]
+          }
+        }
+      },
+      {
+        $sort: { searchScore: -1, title: 1 }
+      },
+      {
+        $limit: Math.ceil(searchLimit / 3) // One third for subcategories
+      },
+      {
+        $project: {
+          _id: 1,
+          type: 1,
+          displayName: 1,
+          title: 1,
+          description: 1,
+          image: 1,
+          slug: 1,
+          parentCategory: 1,
+          searchScore: 1
+        }
+      }
+    ]);
+
+    // Combine and sort all suggestions by search score
+    const allSuggestions = [
+      ...businessSuggestions,
+      ...categorySuggestions,
+      ...subcategorySuggestions
+    ].sort((a, b) => b.searchScore - a.searchScore);
+
+    // Limit total results
+    const finalSuggestions = allSuggestions.slice(0, searchLimit);
+
+    console.log('✅ Search suggestions found:', {
+      businesses: businessSuggestions.length,
+      categories: categorySuggestions.length,
+      subcategories: subcategorySuggestions.length,
+      total: finalSuggestions.length
+    });
+
+    res.json({
+      success: true,
+      data: finalSuggestions,
+      meta: {
+        total: finalSuggestions.length,
+        businesses: businessSuggestions.length,
+        categories: categorySuggestions.length,
+        subcategories: subcategorySuggestions.length,
+        searchQuery: searchKey
+      }
+    });
+
+  } catch (error) {
+    console.error('❌ Error fetching search suggestions:', error);
+    console.error('❌ Error stack:', error.stack);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch search suggestions',
+      error: error.message
+    });
+  }
+};
+

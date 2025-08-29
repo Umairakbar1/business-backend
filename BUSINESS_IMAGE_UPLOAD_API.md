@@ -48,6 +48,7 @@ Content-Type: multipart/form-data
 - `metaTitle` (string, optional): SEO meta title
 - `metaDescription` (string, optional): SEO meta description
 - `focusKeywords` (array, optional): SEO focus keywords
+- `businessUrls` (array, optional): Up to 5 business URLs/links
 - `about` (string, optional): Business description
 - `serviceOffer` (string, optional): Services offered
 - `address` (string, optional): Business address
@@ -94,6 +95,10 @@ Content-Type: multipart/form-data
       ],
       "media": [
         // Same as images array for consistency
+      ],
+      "businessUrls": [
+        "https://example.com",
+        "https://linkedin.com/company/business"
       ]
     }
   }
@@ -304,6 +309,7 @@ Content-Type: multipart/form-data
 - `metaTitle` (string, optional): Updated SEO meta title
 - `metaDescription` (string, optional): Updated SEO meta description
 - `focusKeywords` (array, optional): Updated SEO focus keywords
+- `businessUrls` (array, optional): Updated business URLs/links (max 5)
 - `about` (string, optional): Updated business description
 - `serviceOffer` (string, optional): Updated services offered
 - `address` (string, optional): Updated business address
@@ -349,6 +355,10 @@ Content-Type: multipart/form-data
     ],
     "media": [
       // Same as images array for consistency
+    ],
+    "businessUrls": [
+      "https://example.com",
+      "https://linkedin.com/company/business"
     ]
   }
 }

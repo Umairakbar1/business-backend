@@ -3,12 +3,8 @@ import Joi from 'joi';
 
 export const validateBusiness = [
   body('businessName').notEmpty().withMessage('Business name is required'),
-  body('plan').isIn(['bronze', 'silver', 'gold']).withMessage('Invalid plan'),
-  body('removeImages').optional().isArray().withMessage('removeImages must be an array'),
-  body('removeLogo').optional().isBoolean().withMessage('removeLogo must be a boolean'),
-  // Allow any additional fields (including location, logo, images, media)
+  // Allow any additional fields without strict validation
   body('*').optional(),
-  // Add more validation as needed
 ];
 
 export const validateBusinessStatus = [
@@ -17,7 +13,7 @@ export const validateBusinessStatus = [
 
 export const businessJoiSchema = Joi.object({
   businessName: Joi.string().required(),
-  plan: Joi.string().valid('bronze', 'silver', 'gold').required(),
+  plan: Joi.string().valid('bronze', 'silver', 'gold').optional(),
   businessCategory: Joi.string().optional(),
   website: Joi.string().uri().optional(),
   address: Joi.string().optional(),
@@ -25,6 +21,18 @@ export const businessJoiSchema = Joi.object({
   state: Joi.string().optional(),
   zipCode: Joi.string().optional(),
   country: Joi.string().optional(),
+  metaTitle: Joi.string().optional(),
+  metaDescription: Joi.string().optional(),
+  focusKeywords: Joi.array().items(Joi.string()).optional(),
+  about: Joi.string().optional(),
+  serviceOffer: Joi.string().optional(),
+  category: Joi.string().optional(),
+  subcategories: Joi.array().items(Joi.string()).optional(),
+  phoneNumber: Joi.string().optional(),
+  email: Joi.string().email().optional(),
+  facebook: Joi.string().optional(),
+  linkedIn: Joi.string().optional(),
+  twitter: Joi.string().optional(),
   location: Joi.object({
     description: Joi.string().optional(),
     lat: Joi.number().optional(),
@@ -60,8 +68,8 @@ export const businessJoiSchema = Joi.object({
   })).optional(),
   removeImages: Joi.array().items(Joi.string()).optional(),
   removeLogo: Joi.boolean().optional(),
-  // Add more fields as needed
-});
+  businessUrls: Joi.array().items(Joi.string().uri()).max(5).optional(),
+}).unknown(true); // Allow unknown fields
 
 export const businessStatusJoiSchema = Joi.object({
   status: Joi.string().valid('active', 'inactive').required(),

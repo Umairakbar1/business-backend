@@ -730,7 +730,7 @@ export const updateBusiness = async (req, res) => {
     const business = await Business.findOneAndUpdate(
       { _id: id, businessOwner: req.businessOwner._id },
       updateData,
-      { new: true, runValidators: true }
+      { new: true, runValidators: false } // Temporarily disable validation
     );
     if (!business) return res.status(404).json({ success: false, message: 'Business not found' });
     

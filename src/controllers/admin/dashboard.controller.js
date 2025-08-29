@@ -50,7 +50,7 @@ export const getDashboardStats = async (req, res) => {
         createdAt: { $gte: currentMonth }
       }),
       Business.countDocuments({ 
-        status: 'Active',
+        status: 'active',
         createdAt: { $gte: currentMonth }
       }),
       Subscription.countDocuments({ 
@@ -88,7 +88,7 @@ export const getDashboardStats = async (req, res) => {
         createdAt: { $gte: previousMonth, $lt: currentMonth }
       }),
       Business.countDocuments({ 
-        status: 'Active',
+        status: 'active',
         createdAt: { $gte: previousMonth, $lt: currentMonth }
       }),
       Subscription.countDocuments({ 
@@ -139,7 +139,7 @@ export const getDashboardStats = async (req, res) => {
         createdAt: { $gte: lastWeek }
       }),
       Business.countDocuments({ 
-        status: 'Active',
+        status: 'active',
         createdAt: { $gte: lastWeek }
       }),
       Payment.countDocuments({ 
@@ -272,7 +272,7 @@ export const getQuickStats = async (req, res) => {
       currentMonthEarnings
     ] = await Promise.all([
       User.countDocuments({ status: 'Active' }),
-      Business.countDocuments({ status: 'Active' }),
+      Business.countDocuments({ status: 'active' }),
       Subscription.countDocuments({ 
         status: 'active', 
         subscriptionType: 'business' 

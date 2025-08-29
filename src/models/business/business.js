@@ -59,6 +59,22 @@ const BusinessSchema = new Schema({
   metaDescription: String,
   focusKeywords: [String],
   
+  // Business Links
+  businessUrls: {
+    type: [String],
+    validate: {
+      validator: function(urls) {
+        if (!Array.isArray(urls)) return false;
+        if (urls.length > 5) return false;
+        
+        // Check if all URLs are valid
+        const urlPattern = /^https?:\/\/.+/;
+        return urls.every(url => url && urlPattern.test(url));
+      },
+      message: 'businessUrls must be an array of valid URLs (max 5)'
+    }
+  },
+  
   // Business Details
   about: String,
   serviceOffer: String,
