@@ -12,6 +12,12 @@ router.post('/', authorizedAccessAdmin, validate(subscriptionValidator), subscri
 // Get all subscriptions
 router.get('/', authorizedAccessAdmin, subscriptionController.getAllSubscriptions);
 
+// Get all business boost subscriptions
+router.get('/boost', authorizedAccessAdmin, subscriptionController.getAllBusinessBoostSubscriptions);
+
+// Get all paid subscriptions (both business and boost)
+router.get('/paid', authorizedAccessAdmin, subscriptionController.getAllPaidSubscriptions);
+
 // Get subscription statistics
 router.get('/stats', authorizedAccessAdmin, subscriptionController.getSubscriptionStats);
 

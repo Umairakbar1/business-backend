@@ -3,6 +3,7 @@ import Review from '../../models/admin/review.js';
 import Media from '../../models/admin/media.js';
 import Category from '../../models/admin/category.js';
 import SubCategory from '../../models/admin/subCategory.js';
+import Subscription from '../../models/admin/subscription.js';
 import mongoose from 'mongoose';
 
 // 1. Get business listings with filters
@@ -18,35 +19,51 @@ export const getBusinessListings = async (req, res) => {
       limit = 10,
       categoryId,
       subcategoryId,
+      radius,
     } = req.query;
 
-    // Parse location if it's a JSON string
-    let parsedLocation = null;
-    let lat = null;
-    let lng = null;
-    
-    if (location) {
-      try {
-        // If location is a JSON string, parse it
-        if (typeof location === 'string' && location.startsWith('{')) {
-          parsedLocation = JSON.parse(location);
-          lat = parsedLocation.lat;
-          lng = parsedLocation.lng;
-        } else {
-          // If location is already an object
-          parsedLocation = location;
-          lat = location.lat;
-          lng = location.lng;
-        }
-      } catch (error) {
-        console.log('Error parsing location:', error);
-        // Fallback to text-based search
-        parsedLocation = location;
-      }
-    }
+         // Parse location if it's a JSON string
+     let parsedLocation = null;
+     let lat = null;
+     let lng = null;
+     
+     // Check if lat and lng are provided as separate query parameters
+     if (req.query.lat && req.query.lng) {
+       lat = req.query.lat;
+       lng = req.query.lng;
+       console.log('📍 Found lat/lng in query params:', { lat, lng });
+     } else if (location) {
+       try {
+         // If location is a JSON string, parse it
+         if (typeof location === 'string' && location.startsWith('{')) {
+           parsedLocation = JSON.parse(location);
+           lat = parsedLocation.lat;
+           lng = parsedLocation.lng;
+         } else {
+           // If location is already an object
+           parsedLocation = location;
+           lat = location.lat;
+           lng = location.lng;
+         }
+       } catch (error) {
+         console.log('Error parsing location:', error);
+         // Fallback to text-based search
+         parsedLocation = location;
+       }
+     }
 
-    const filter = {};
-    if (typeof claimed !== 'undefined') filter.claimed = claimed === 'true';
+         const filter = {};
+     // Only apply claimed filter if it's explicitly provided and not empty
+     if (claimed !== undefined && claimed !== '' && claimed !== null) {
+       if (claimed === 'true') {
+         // For claimed businesses, check if they have active subscriptions
+         filter.claimed = true;
+         // We'll add subscription filtering in the pipeline
+       } else {
+         // For unclaimed businesses, just filter by claimed status
+         filter.claimed = false;
+       }
+     }
     if (status) filter.status = status;
     if (categoryId) filter.category = categoryId;
     
@@ -59,31 +76,36 @@ export const getBusinessListings = async (req, res) => {
         filter.subcategories = { $in: subcategoryIds };
       }
     }
-    // Handle text-based location filtering (only if no coordinates or as fallback)
-    if (parsedLocation && !lat && !lng) {
-      const searchText = typeof parsedLocation === 'string' ? parsedLocation : parsedLocation.description;
-      if (searchText) {
-        filter.$or = [
-          { 'location.description': { $regex: searchText, $options: 'i' } },
-          { city: { $regex: searchText, $options: 'i' } },
-          { state: { $regex: searchText, $options: 'i' } },
-          { address: { $regex: searchText, $options: 'i' } }
-        ];
-      }
-    }
+         // Handle text-based location filtering (only if no coordinates or as fallback)
+     if (parsedLocation && !lat && !lng && parsedLocation !== 'null') {
+       const searchText = typeof parsedLocation === 'string' ? parsedLocation : parsedLocation.description;
+       if (searchText && searchText !== 'null') {
+         filter.$or = [
+           { 'location.description': { $regex: searchText, $options: 'i' } },
+           { city: { $regex: searchText, $options: 'i' } },
+           { state: { $regex: searchText, $options: 'i' } },
+           { address: { $regex: searchText, $options: 'i' } }
+         ];
+       }
+     }
     
     // Handle coordinates-based location filtering
     let hasCoordinates = false;
     let userLat, userLng;
-    const DEFAULT_RADIUS = 25; // Default 25km radius for better user experience
+    const DEFAULT_RADIUS = 100; // Increased to 100km radius to find more businesses
+    const searchRadius = radius ? parseFloat(radius) : DEFAULT_RADIUS;
     
-    if (lat && lng) {
-      userLat = parseFloat(lat);
-      userLng = parseFloat(lng);
-      
-      if (!isNaN(userLat) && !isNaN(userLng)) {
-        hasCoordinates = true;
-        console.log('📍 Using coordinates for filtering:', { userLat, userLng });
+         console.log('📍 Raw lat/lng values:', { lat, lng, type: typeof lat });
+     
+     if (lat && lng) {
+       userLat = parseFloat(lat);
+       userLng = parseFloat(lng);
+       
+       console.log('📍 Parsed coordinates:', { userLat, userLng, isNaN: { lat: isNaN(userLat), lng: isNaN(userLng) } });
+       
+       if (!isNaN(userLat) && !isNaN(userLng)) {
+         hasCoordinates = true;
+         console.log('📍 Using coordinates for filtering:', { userLat, userLng });
         
         // Add geospatial filter for businesses with coordinates
         // Check both location.lat/lng and location.coordinates (GeoJSON)
@@ -112,6 +134,59 @@ export const getBusinessListings = async (req, res) => {
     
     console.log('🔍 Final filter:', JSON.stringify(filter, null, 2));
     console.log('📍 Has coordinates:', hasCoordinates);
+    
+    // Debug: Check total businesses without location filter
+    const totalBusinesses = await Business.countDocuments({});
+    console.log('📍 Total businesses in database:', totalBusinesses);
+    
+    // Debug: Check businesses with coordinates
+    const businessesWithCoords = await Business.countDocuments({
+      $or: [
+        {
+          $and: [
+            { 'location.lat': { $exists: true, $ne: null } },
+            { 'location.lng': { $exists: true, $ne: null } }
+          ]
+        },
+        {
+          $and: [
+            { 'location.coordinates': { $exists: true, $ne: null } },
+            { $expr: { $eq: [{ $size: '$location.coordinates' }, 2] } }
+          ]
+        }
+      ]
+    });
+         console.log('📍 Businesses with coordinates:', businessesWithCoords);
+     
+     // Debug: Check businesses with specific coordinates format
+     const businessesWithLatLng = await Business.countDocuments({
+       'location.lat': { $exists: true, $ne: null },
+       'location.lng': { $exists: true, $ne: null }
+     });
+     console.log('📍 Businesses with lat/lng format:', businessesWithLatLng);
+     
+     const businessesWithGeoJSON = await Business.countDocuments({
+       'location.coordinates': { $exists: true, $ne: null },
+       $expr: { $eq: [{ $size: '$location.coordinates' }, 2] }
+     });
+     console.log('📍 Businesses with GeoJSON format:', businessesWithGeoJSON);
+     
+     // Debug: Get a sample business to see its location structure
+     const sampleBusiness = await Business.findOne({
+       $or: [
+         { 'location.lat': { $exists: true, $ne: null } },
+         { 'location.coordinates': { $exists: true, $ne: null } }
+       ]
+     }).select('businessName location');
+     
+     if (sampleBusiness) {
+       console.log('📍 Sample business location structure:', {
+         name: sampleBusiness.businessName,
+         location: sampleBusiness.location,
+         hasLatLng: sampleBusiness.location?.lat && sampleBusiness.location?.lng,
+         hasCoordinates: sampleBusiness.location?.coordinates && sampleBusiness.location?.coordinates.length === 2
+       });
+     }
 
     // Aggregate to filter by average rating if needed - Only approved reviews
     let pipeline = [
@@ -285,19 +360,20 @@ export const getBusinessListings = async (req, res) => {
         }
       });
       
-      // Filter by radius (only include businesses within the default radius)
-      pipeline.push({
-        $match: {
-          distance: { $lte: DEFAULT_RADIUS }
-        }
-      });
-      
-      console.log('📍 Added radius filtering (25km)');
+             // Filter by radius (only include businesses within the search radius)
+       pipeline.push({
+         $match: {
+           distance: { $lte: searchRadius }
+         }
+       });
+       
+       console.log(`📍 Added radius filtering (${searchRadius}km)`);
     }
     
-    if (rating) {
-      pipeline.push({ $match: { avgRating: { $gte: Number(rating) } } });
-    }
+         // Only apply rating filter if it's explicitly provided and not empty
+     if (rating !== undefined && rating !== '' && rating !== null) {
+       pipeline.push({ $match: { avgRating: { $gte: Number(rating) } } });
+     }
 
     // Sorting
     let sort = {};
@@ -339,6 +415,145 @@ export const getBusinessListings = async (req, res) => {
     const businesses = await Business.aggregate(pipeline);
     
     console.log('📍 Found businesses:', businesses.length);
+    
+    // If no businesses found with coordinates, try without location filter
+    if (businesses.length === 0 && hasCoordinates) {
+      console.log('📍 No businesses found with coordinates, trying without location filter...');
+      
+      // Remove location filter and try again
+      const fallbackFilter = { ...filter };
+      delete fallbackFilter.$and;
+      
+      const fallbackPipeline = [
+        { $match: fallbackFilter },
+        // Ensure subcategories is always an array
+        {
+          $addFields: {
+            subcategories: {
+              $cond: {
+                if: { $isArray: '$subcategories' },
+                then: '$subcategories',
+                else: []
+              }
+            }
+          }
+        },
+        {
+          $lookup: {
+            from: 'reviews',
+            let: { businessId: '$_id' },
+            pipeline: [
+              {
+                $match: {
+                  $expr: { $eq: ['$businessId', '$$businessId'] },
+                  status: 'approved'
+                }
+              }
+            ],
+            as: 'reviews',
+          },
+        },
+        {
+          $addFields: {
+            avgRating: { $avg: '$reviews.rating' },
+            reviewsCount: { $size: '$reviews' },
+          },
+        },
+        // Lookup category data
+        {
+          $lookup: {
+            from: 'categories',
+            let: { categoryId: '$category' },
+            pipeline: [
+              {
+                $match: {
+                  $expr: { $eq: ['$_id', '$$categoryId'] },
+                  status: 'active'
+                }
+              },
+              {
+                $project: {
+                  _id: 1,
+                  title: 1,
+                  description: 1,
+                  image: 1,
+                  slug: 1
+                }
+              }
+            ],
+            as: 'categoryData',
+          },
+        },
+        // Lookup subcategory data
+        {
+          $lookup: {
+            from: 'subcategories',
+            let: { subcategoryIds: '$subcategories' },
+            pipeline: [
+              {
+                $match: {
+                  $expr: { $in: ['$_id', '$$subcategoryIds'] },
+                  status: 'active'
+                }
+              },
+              {
+                $project: {
+                  _id: 1,
+                  title: 1,
+                  description: 1,
+                  image: 1,
+                  categoryId: 1,
+                  slug: 1
+                }
+              }
+            ],
+            as: 'subcategoryData',
+          },
+        },
+        { $sort: sort },
+        { $skip: (Number(page) - 1) * Number(limit) },
+        { $limit: Number(limit) },
+        {
+          $project: {
+            _id: 1,
+            businessName: 1,
+            email: 1,
+            phoneNumber: 1,
+            address: 1,
+            location: 1,
+            website: 1,
+            logo: 1,
+            description: 1,
+            category: { $arrayElemAt: ['$categoryData', 0] },
+            subcategories: '$subcategoryData',
+            claimed: 1,
+            status: 1,
+            avgRating: 1,
+            reviewsCount: 1,
+            media: 1,
+            createdAt: 1,
+            updatedAt: 1,
+          },
+        }
+      ];
+      
+      const fallbackBusinesses = await Business.aggregate(fallbackPipeline);
+      console.log('📍 Found businesses without location filter:', fallbackBusinesses.length);
+      
+      if (fallbackBusinesses.length > 0) {
+        return res.json({
+          success: true,
+          data: fallbackBusinesses,
+          meta: {
+            total: fallbackBusinesses.length,
+            page: Number(page),
+            limit: Number(limit),
+            hasNextPage: fallbackBusinesses.length === Number(limit),
+            note: 'Showing businesses without location filtering'
+          }
+        });
+      }
+    }
     if (businesses.length > 0) {
       console.log('📍 Sample business location data:', {
         name: businesses[0].businessName,
@@ -365,14 +580,14 @@ export const getBusinessListings = async (req, res) => {
     };
     
          // Add location info if coordinates were used
-     if (hasCoordinates) {
-       response.meta.location = {
-         userLat,
-         userLng,
-         radius: DEFAULT_RADIUS,
-         unit: 'km'
-       };
-     }
+           if (hasCoordinates) {
+        response.meta.location = {
+          userLat,
+          userLng,
+          radius: searchRadius,
+          unit: 'km'
+        };
+      }
     
     res.json(response);
   } catch (error) {

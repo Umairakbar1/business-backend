@@ -18,6 +18,8 @@ import adminDashboardRoutes from "./admin/dashboard.js";
 import adminBoostQueueRoutes from "./admin/boostQueue.js";
 import adminBoostExpiryRoutes from "./admin/boostExpiry.js";
 import adminNotificationRoutes from "./admin/notification.js";
+import adminBrandLogoRoutes from "./admin/brandLogo.js";
+import adminLegalDocumentRoutes from "./admin/legalDocument.js";
 import businessAuthRoutes from "./business/auth.js";
 import businessBusinessRoutes from "./business/business.js";
 import businessReviewsRoutes from "./business/reviews.js";
@@ -36,6 +38,7 @@ import userCommentsRoutes from "./user/comments.js";
 import userRepliesRoutes from "./user/replies.js";
 import mediaRoutes from "./media.js";
 import { getMetadataByUrl } from "../controllers/admin/metadata.controller.js";
+import { getBrandLogo } from "../controllers/admin/brandLogo.controller.js";
 
 const router = Router();
 
@@ -69,6 +72,8 @@ router.use("/admin/dashboard", adminDashboardRoutes);
 router.use("/admin/boost-queue", adminBoostQueueRoutes);
 router.use("/admin/boost-expiry", adminBoostExpiryRoutes);
 router.use("/admin/notifications", adminNotificationRoutes);
+router.use("/admin/brand-logo", adminBrandLogoRoutes);
+router.use("/admin/legal-documents", adminLegalDocumentRoutes);
 
 // Business routes
 router.use("/business/auth", businessAuthRoutes);
@@ -97,5 +102,8 @@ router.use("/media", mediaRoutes);
 
 // Public metadata route for user-side pages
 router.get("/metadata/:url", getMetadataByUrl);
+
+// Public brand logo route (accessible by all sites)
+router.get("/brand-logo", getBrandLogo);
 
 export default router;

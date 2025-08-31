@@ -2,6 +2,7 @@ import PaymentPlan from '../../models/admin/paymentPlan.js';
 import Subscription from '../../models/admin/subscription.js';
 import Payment from '../../models/admin/payment.js';
 import StripeHelper from '../../helpers/stripeHelper.js';
+import { errorResponseHelper, successResponseHelper } from '../../helpers/utilityHelper.js';
 
 
 /**
@@ -1265,65 +1266,293 @@ class PaymentPlanController {
    */
   static async getBusinessSubscriptionHistory(req, res) {
     try {
-      const { businessId, planType, status, page = 1, limit = 10 } = req.query;
-      
+      const {queryText, businessId, planType, status, page = 1, limit = 10 } = req.query;
+
       const filter = {};
-      if (businessId) filter.businessId = businessId;
-      if (planType) filter.planType = planType;
-      if (status) filter.status = status;
-
-      const skip = (page - 1) * limit;
-
-      const subscriptions = await Subscription.find(filter)
-        .populate('business', 'businessName businessEmail')
-        .populate('paymentPlan', 'name description price currency features maxBoostPerDay validityHours')
-        .sort({ createdAt: -1 })
-        .skip(skip)
-        .limit(parseInt(limit));
-
-      const total = await Subscription.countDocuments(filter);
-
-      // Enhance subscriptions with additional information
-      const enhancedSubscriptions = subscriptions.map(sub => {
-        const subData = sub.toObject();
-        
-        // Add status information
-        if (sub.subscriptionType === 'business') {
-          subData.statusInfo = 'Lifetime subscription';
-          subData.isExpired = false;
-          subData.daysRemaining = null;
+      
+      if (businessId) filter.business = businessId;
+      if (planType) filter.subscriptionType = planType; // Changed from planType to subscriptionType
+      if (status) {
+        // Handle both 'canceled' and 'cancelled' spellings
+        if (status === 'canceled' || status === 'cancelled') {
+          filter.status = { $in: ['canceled', 'cancelled'] };
         } else {
-          subData.statusInfo = sub.isExpired ? 'Expired' : 'Active';
-          subData.isExpired = sub.isExpired;
-          subData.daysRemaining = sub.daysRemaining;
+          filter.status = status;
         }
+      }
 
-        // Add boost usage information for business plans
-        if (sub.subscriptionType === 'business') {
-          subData.canUseBoost = sub.canUseBoostToday();
-          subData.boostUsageInfo = `${sub.boostUsage.currentDay}/${sub.maxBoostPerDay} used today`;
-        }
+      // If queryText is provided, we need to use aggregation to search in populated fields
+      if (queryText && queryText.trim()) {
+        const searchTerm = queryText.trim();
+        
+        // Use aggregation to search in populated business fields
+        const aggregationPipeline = [
+          { $match: filter },
+          {
+            $lookup: {
+              from: 'businesses', // Assuming the business collection name
+              localField: 'business',
+              foreignField: '_id',
+              as: 'business'
+            }
+          },
+          {
+            $unwind: {
+              path: '$business',
+              preserveNullAndEmptyArrays: true
+            }
+          },
+          {
+            $lookup: {
+              from: 'categories', // Populate business category
+              localField: 'business.category',
+              foreignField: '_id',
+              as: 'businessCategory'
+            }
+          },
+          {
+            $unwind: {
+              path: '$businessCategory',
+              preserveNullAndEmptyArrays: true
+            }
+          },
+          {
+            $lookup: {
+              from: 'categories', // Populate boost category
+              localField: 'boostQueueInfo.category',
+              foreignField: '_id',
+              as: 'boostCategory'
+            }
+          },
+          {
+            $unwind: {
+              path: '$boostCategory',
+              preserveNullAndEmptyArrays: true
+            }
+          },
+          {
+            $match: {
+              $or: [
+                { 'business.businessName': { $regex: searchTerm, $options: 'i' } },
+                { 'business.businessEmail': { $regex: searchTerm, $options: 'i' } },
+                { 'business.businessPhone': { $regex: searchTerm, $options: 'i' } }
+              ]
+            }
+          },
+          {
+            $lookup: {
+              from: 'paymentplans', // Assuming the payment plan collection name
+              localField: 'paymentPlan',
+              foreignField: '_id',
+              as: 'paymentPlan'
+            }
+          },
+          {
+            $unwind: {
+              path: '$paymentPlan',
+              preserveNullAndEmptyArrays: true
+            }
+          },
+          {
+            $lookup: {
+              from: 'categories', // Populate boost category
+              localField: 'boostQueueInfo.category',
+              foreignField: '_id',
+              as: 'boostCategory'
+            }
+          },
+          {
+            $unwind: {
+              path: '$boostCategory',
+              preserveNullAndEmptyArrays: true
+            }
+          },
+          {
+            $sort: { createdAt: -1 }
+          },
+          {
+            $skip: (page - 1) * limit
+          },
+          {
+            $limit: parseInt(limit)
+          }
+        ];
 
-        return subData;
-      });
+        const subscriptions = await Subscription.aggregate(aggregationPipeline);
 
-      res.status(200).json({
-        success: true,
-        message: 'Business subscription history retrieved successfully',
-        data: {
-          subscriptions: enhancedSubscriptions,
+        // Get total count for pagination
+        const totalCountPipeline = [
+          { $match: filter },
+          {
+            $lookup: {
+              from: 'businesses',
+              localField: 'business',
+              foreignField: '_id',
+              as: 'business'
+            }
+          },
+          {
+            $unwind: {
+              path: '$business',
+              preserveNullAndEmptyArrays: true
+            }
+          },
+          {
+            $match: {
+              $or: [
+                { 'business.businessName': { $regex: searchTerm, $options: 'i' } },
+                { 'business.businessEmail': { $regex: searchTerm, $options: 'i' } },
+                { 'business.businessPhone': { $regex: searchTerm, $options: 'i' } }
+              ]
+            }
+          },
+          {
+            $count: 'total'
+          }
+        ];
+
+        const totalResult = await Subscription.aggregate(totalCountPipeline);
+        const total = totalResult.length > 0 ? totalResult[0].total : 0;
+
+        // Enhance subscriptions with additional information
+        const enhancedSubscriptions = subscriptions.map(sub => {
+          const subData = { ...sub };
+          
+          // Add status information
+          if (sub.subscriptionType === 'business') {
+            subData.statusInfo = 'Lifetime subscription';
+            subData.isExpired = false;
+            subData.daysRemaining = null;
+          } else {
+            subData.statusInfo = sub.isExpired ? 'Expired' : 'Active';
+            subData.isExpired = sub.isExpired;
+            subData.daysRemaining = sub.daysRemaining;
+          }
+
+                     // Add boost usage information for business plans
+           if (sub.subscriptionType === 'business') {
+             // Calculate boost usage manually since we're dealing with plain objects
+             const today = new Date().toDateString();
+             const lastResetDate = sub.boostUsage?.lastResetDate ? new Date(sub.boostUsage.lastResetDate).toDateString() : null;
+             const canUseBoost = lastResetDate !== today || !sub.boostUsage?.lastResetDate;
+             
+             subData.canUseBoost = canUseBoost;
+             subData.boostUsageInfo = `${sub.boostUsage?.currentDay || 0}/${sub.maxBoostPerDay || 0} used today`;
+           }
+
+           // Add category information
+           if (sub.boostQueueInfo?.category) {
+             subData.categoryName = sub.boostQueueInfo.category.name;
+             subData.categoryDescription = sub.boostQueueInfo.category.description;
+           } else if (sub.boostCategory) {
+             subData.categoryName = sub.boostCategory.name;
+             subData.categoryDescription = sub.boostCategory.description;
+           }
+
+                       // Add business category information
+            if (sub.business?.category && typeof sub.business.category === 'object') {
+              subData.businessCategoryName = sub.business.category.name || sub.business.category.title;
+              subData.businessCategoryDescription = sub.business.category.description;
+            } else if (sub.businessCategory) {
+              subData.businessCategoryName = sub.businessCategory.name || sub.businessCategory.title;
+              subData.businessCategoryDescription = sub.businessCategory.description;
+            }
+
+          return subData;
+        });
+
+        successResponseHelper(res, {
+          success: true,
+          message: 'Business subscription history retrieved successfully',
+          data: enhancedSubscriptions,
           pagination: {
             currentPage: parseInt(page),
             totalPages: Math.ceil(total / limit),
-            totalSubscriptions: total,
-            hasNextPage: page * limit < total,
-            hasPrevPage: page > 1
+            totalItems: total,
+            pageSize: parseInt(limit)
           }
-        }
-      });
+        });
+      } else {
+        // No search term, use regular find with populate
+        const skip = (page - 1) * limit;
+
+        const subscriptions = await Subscription.find(filter)
+          .populate({
+            path: 'business',
+            select: 'businessName businessEmail businessPhone category boostCategory',
+            populate: {
+              path: 'category',
+              select: 'name title description'
+            }
+          })
+          .populate('paymentPlan', 'name description price currency features maxBoostPerDay validityHours')
+          .populate({
+            path: 'boostQueueInfo.category',
+            select: 'name description'
+          })
+          .sort({ createdAt: -1 })
+          .skip(skip)
+          .limit(parseInt(limit));
+
+        const total = await Subscription.countDocuments(filter);
+
+        // Enhance subscriptions with additional information
+        const enhancedSubscriptions = subscriptions.map(sub => {
+          const subData = sub.toObject();
+          
+          // Add status information
+          if (sub.subscriptionType === 'business') {
+            subData.statusInfo = 'Lifetime subscription';
+            subData.isExpired = false;
+            subData.daysRemaining = null;
+          } else {
+            subData.statusInfo = sub.isExpired ? 'Expired' : 'Active';
+            subData.isExpired = sub.isExpired;
+            subData.daysRemaining = sub.daysRemaining;
+          }
+
+          // Add boost usage information for business plans
+          if (sub.subscriptionType === 'business') {
+            subData.canUseBoost = sub.canUseBoostToday();
+            subData.boostUsageInfo = `${sub.boostUsage.currentDay}/${sub.maxBoostPerDay} used today`;
+          }
+
+          // Add category information
+          if (sub.boostQueueInfo?.category) {
+            subData.categoryName = sub.boostQueueInfo.category.name;
+            subData.categoryDescription = sub.boostQueueInfo.category.description;
+          } else if (sub.boostCategory) {
+            subData.categoryName = sub.boostCategory.name;
+            subData.categoryDescription = sub.boostCategory.description;
+          }
+
+          // Add business category information
+          if (sub.business?.category && typeof sub.business.category === 'object') {
+            subData.businessCategoryName = sub.business.category.name || sub.business.category.title;
+            subData.businessCategoryDescription = sub.business.category.description;
+          } else if (sub.businessCategory) {
+            subData.businessCategoryName = sub.businessCategory.name || sub.businessCategory.title;
+            subData.businessCategoryDescription = sub.businessCategory.description;
+          }
+
+          return subData;
+        });
+
+        successResponseHelper(res, {
+          success: true,
+          message: 'Business subscription history retrieved successfully',
+          data: enhancedSubscriptions,
+          pagination: {
+            currentPage: parseInt(page),
+            totalPages: Math.ceil(total / limit),
+            totalItems: total,
+            pageSize: parseInt(limit)
+          }
+        });
+      }
     } catch (error) {
       console.error('Error fetching business subscription history:', error);
-      res.status(500).json({
+      errorResponseHelper(res, {
         success: false,
         message: 'Failed to fetch business subscription history',
         error: error.message
@@ -1337,6 +1566,7 @@ class PaymentPlanController {
   static async getPaymentHistory(req, res) {
     try {
       const { 
+        queryText,
         businessId, 
         planType, 
         paymentType, 
@@ -1348,6 +1578,13 @@ class PaymentPlanController {
       } = req.query;
       
       const filter = {};
+      if (queryText && queryText.trim()) {
+        filter.$or.push(
+          { businessName: { $regex: queryText.trim(), $options: 'i' } },
+          { businessEmail: { $regex: queryText.trim(), $options: 'i' } },
+          { businessPhone: { $regex: queryText.trim(), $options: 'i' } }
+        );
+      }
       if (businessId) filter.businessId = businessId;
       if (planType) filter.planType = planType;
       if (paymentType) filter.paymentType = paymentType;
