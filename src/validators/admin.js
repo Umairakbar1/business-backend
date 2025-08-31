@@ -1,4 +1,5 @@
 import Joi from "joi"
+import { GLOBAL_ENUMS } from "../config/globalConfig.js"
 const categoryValidator = Joi.object({
   title: Joi.string()
     .min(2)
@@ -625,7 +626,7 @@ const paymentPlanValidator = Joi.object({
       .messages({
         'array.min': 'At least one feature is required',
         'any.required': 'Features are required for business plans',
-        'any.only': 'Features must be one of: query, review, embeded, boost'
+        'any.only': `Features must be one of: ${GLOBAL_ENUMS.features.QUERY}, ${GLOBAL_ENUMS.features.REVIEW}, ${GLOBAL_ENUMS.features.EMBEDDED}, ${GLOBAL_ENUMS.features.BOOST}`
       }),
     otherwise: Joi.forbidden().messages({
       'any.unknown': 'Features are not allowed for boost plans'

@@ -71,6 +71,29 @@ const authorizedAccessAdmin = async (req, res, next) => {
   }
 };
 
+const verifyAdminToken = async (req, res, next) => {
+  let token = req.header("Authorization");
+  if (!token) return errorResponseHelper(res, {message:GLOBAL_MESSAGES.jwtRequired,code:"00401"});
+
+  if (token.includes("Bearer"))
+    token = req.header("Authorization").replace("Bearer ", "");
+
+  try {
+    const decoded = verify(token, GLOBAL_ENV.jwtSecretKeyAdmin, { expiresIn: GLOBAL_ENV.jwtExpiresInAdmin });
+    if (!mongoose.Types.ObjectId.isValid(decoded._id))
+      return errorResponseHelper(res, {message:GLOBAL_MESSAGES.invalidData,code:"00401"});
+
+    const adminExists = await Admin.findById(decoded._id);
+    if (!adminExists)
+      return errorResponseHelper(res, {message:GLOBAL_MESSAGES.dataNotFound,code:"00401"});
+
+    req.admin = adminExists;
+    next();
+  } catch (error) {
+    return serverErrorHelper(req, res, 500, error);
+  }
+};
+
 const authorizedAccessBusiness = async (req, res, next) => {
   let token = req.header("Authorization");
   if (!token) return errorResponseHelper(res, {message:GLOBAL_MESSAGES.jwtRequired,code:"00401"});
@@ -79,18 +102,21 @@ const authorizedAccessBusiness = async (req, res, next) => {
     token = req.header("Authorization").replace("Bearer ", "");
 
   try {
-    req.business = verify(token, GLOBAL_ENV.jwtSecretKeyBusiness || GLOBAL_ENV.jwtSecretKeyAdmin, { expiresIn: GLOBAL_ENV.jwtExpiresInBusiness || GLOBAL_ENV.jwtExpiresInAdmin });
-    if (!mongoose.Types.ObjectId.isValid(req.business._id))
+    req.businessOwner = verify(token, GLOBAL_ENV.jwtSecretKeyBusiness || GLOBAL_ENV.jwtSecretKeyAdmin, { expiresIn: GLOBAL_ENV.jwtExpiresInBusiness || GLOBAL_ENV.jwtExpiresInAdmin });
+    if (!mongoose.Types.ObjectId.isValid(req.businessOwner._id))
       return errorResponseHelper(res, {message:GLOBAL_MESSAGES.invalidData,code:"00401"});
 
-    const Business = (await import("../models/business/business.js")).default;
-    const businessExists = await Business.findById(req.business._id);
+    const businessOwnerExists = await BusinessOwner.findById(req.businessOwner._id);
 
-    if (!businessExists)
+    if (!businessOwnerExists) {
+      console.log('Business owner not found in middleware:', req.businessOwner._id);
       return errorResponseHelper(res, {message:GLOBAL_MESSAGES.dataNotFound,code:"00401"});
+    }
 
+    console.log('Business owner verified in middleware:', businessOwnerExists.email);
     next();
   } catch (error) {
+    console.error('Error in authorizedAccessBusiness middleware:', error);
     return serverErrorHelper(req, res, 500, error);
   }
 };
@@ -167,5 +193,6 @@ export {
   authorizedAccessAdmin,
   authorizedAccessBusiness,
   verifyBusinessOwnerToken,
-  verifyAccountCreationToken
+  verifyAccountCreationToken,
+  verifyAdminToken
 };

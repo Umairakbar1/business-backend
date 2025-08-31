@@ -187,6 +187,37 @@ const BusinessSchema = new Schema({
     }
   ],
   
+  // Subscription Tracking
+  stripeCustomerId: {
+    type: String,
+    sparse: true
+  },
+  // Two types of subscriptions: business and boost
+  businessSubscriptionId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Subscription',
+    default: null
+  },
+  boostSubscriptionId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Subscription',
+    default: null
+  },
+  isBoosted: {
+    type: Boolean,
+    default: false
+  },
+  boostExpiryAt: {
+    type: Date,
+    default: null
+  },
+  
+  // Firebase Cloud Messaging token for notifications
+  fcmToken: {
+    type: String,
+    default: null
+  },
+  
   // Timestamps
   createdAt: { type: Date, default: Date.now }
 }, {

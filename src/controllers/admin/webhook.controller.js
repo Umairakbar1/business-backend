@@ -2,6 +2,9 @@ import Subscription from '../../models/admin/subscription.js';
 import PaymentPlan from '../../models/admin/paymentPlan.js';
 import Business from '../../models/business/business.js';
 import StripeHelper from '../../helpers/stripeHelper.js';
+import Stripe from 'stripe';
+
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 
 class WebhookController {
   /**
@@ -100,6 +103,19 @@ class WebhookController {
 
         await dbSubscription.save();
         console.log('Subscription created in database:', dbSubscription._id);
+
+        // Update business with appropriate subscription ID
+        const business = await Business.findById(businessId);
+        if (business) {
+          if (planType === 'business') {
+            business.businessSubscriptionId = dbSubscription._id;
+          } else if (planType === 'boost') {
+            business.boostSubscriptionId = dbSubscription._id;
+          }
+          business.stripeCustomerId = subscription.customer;
+          await business.save();
+          console.log('Business updated with subscription ID:', businessId);
+        }
       }
     } catch (error) {
       console.error('Error handling subscription created:', error);

@@ -16,8 +16,11 @@ router.get('/all-boost-plans', verifyBusinessOwnerToken, businessSubscriptionCon
 // Subscribe to a payment plan
 router.post('/:businessId/subscribe', authorizedAccessBusiness, businessSubscriptionController.subscribeToPlan);
 
-// Upgrade business plan
-router.post('/:businessId/upgrade', authorizedAccessBusiness, businessSubscriptionController.upgradeBusinessPlan);
+// Subscribe to boost plan (separate from business subscription)
+router.post('/:businessId/boost/subscribe', authorizedAccessBusiness, businessSubscriptionController.subscribeToBoostPlan);
+
+// Upgrade business subscription
+router.post('/:businessId/upgrade', authorizedAccessBusiness, businessSubscriptionController.upgradeBusinessSubscription);
 
 // Get business subscriptions (separated by type)
 router.get('/:businessId/subscriptions', authorizedAccessBusiness, businessSubscriptionController.getBusinessSubscriptions);
@@ -52,5 +55,29 @@ router.get('/:businessId/plans/all', authorizedAccessBusiness, businessSubscript
 
 // Confirm payment success
 router.post('/:businessId/confirm-payment', authorizedAccessBusiness, businessSubscriptionController.confirmPayment);
+
+// Get business subscription details
+router.get('/:businessId/details', authorizedAccessBusiness, businessSubscriptionController.getBusinessSubscriptionDetails);
+
+// Handle boost expiry
+router.post('/:businessId/boost/expiry', authorizedAccessBusiness, businessSubscriptionController.handleBoostExpiry);
+
+// Cancel boost subscription
+router.patch('/:businessId/boost/cancel', authorizedAccessBusiness, businessSubscriptionController.cancelBoostSubscription);
+
+// Cancel business subscription
+router.patch('/:businessId/business/cancel', authorizedAccessBusiness, businessSubscriptionController.cancelBusinessSubscription);
+
+// Get boost queue status
+router.get('/:businessId/boost/queue-status', authorizedAccessBusiness, businessSubscriptionController.getBoostQueueStatus);
+
+// Get boost queue position
+router.get('/:businessId/boost/queue-position', authorizedAccessBusiness, businessSubscriptionController.getBoostQueuePosition);
+
+// Get payment history for all businesses owned by the user
+router.get('/payment-history', verifyBusinessOwnerToken, businessSubscriptionController.getPaymentHistory);
+
+// Get payment history for a specific business
+router.get('/:businessId/payment-history', authorizedAccessBusiness, businessSubscriptionController.getBusinessPaymentHistory);
 
 export default router;

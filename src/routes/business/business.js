@@ -18,7 +18,8 @@ import {
   getOwnerRecentSubscriptions,
   validateBusinessWebsite,
   handleStripeWebhook,
-  getBusinessesWithReviews
+  getBusinessesWithReviews,
+  getBusinessSubscriptionDetails
 } from '../../controllers/business/business.controller.js';
 
 import { validateBusiness, validateBusinessStatus } from '../../validators/business/business.js';
@@ -42,6 +43,7 @@ router.get('/plans/current', verifyBusinessOwnerToken, getCurrentPlan);
 router.post('/plans/payment-session', verifyBusinessOwnerToken, createPlanPaymentSession);
 router.get('/subscriptions/all', verifyBusinessOwnerToken, getAllMyBusinessSubscriptions);
 router.get('/subscriptions/recent', verifyBusinessOwnerToken, getOwnerRecentSubscriptions);
+router.get('/subscriptions/:businessId/details', verifyBusinessOwnerToken, getBusinessSubscriptionDetails);
 
 router.post('/boost', verifyBusinessOwnerToken, boostBusiness);
 router.post('/boost/agree', verifyBusinessOwnerToken, agreeBoostBusiness);

@@ -15,6 +15,9 @@ import adminPaymentPlanRoutes from "./admin/paymentPlan.js";
 import adminSubscriptionRoutes from "./admin/subscription.js";
 import adminWebhookRoutes from "./admin/webhook.js";
 import adminDashboardRoutes from "./admin/dashboard.js";
+import adminBoostQueueRoutes from "./admin/boostQueue.js";
+import adminBoostExpiryRoutes from "./admin/boostExpiry.js";
+import adminNotificationRoutes from "./admin/notification.js";
 import businessAuthRoutes from "./business/auth.js";
 import businessBusinessRoutes from "./business/business.js";
 import businessReviewsRoutes from "./business/reviews.js";
@@ -23,6 +26,7 @@ import businessOwnerRoutes from "./business/owner.js";
 import businessCategoryRoutes from "./business/category.js";
 import businessReviewEmbedRoutes from "./business/reviewEmbed.js";
 import businessSubscriptionRoutes from "./business/subscription.js";
+import businessNotificationRoutes from "./business/notification.js";
 import embedRoutes from "./embed.js";
 import userAuthRoutes from "./user/auth.js";
 import userBusinessRoutes from "./user/buisness.js";
@@ -62,6 +66,9 @@ router.use("/admin/payment-plans", adminPaymentPlanRoutes);
 router.use("/admin/subscriptions", adminSubscriptionRoutes);
 router.use("/admin/webhooks", adminWebhookRoutes);
 router.use("/admin/dashboard", adminDashboardRoutes);
+router.use("/admin/boost-queue", adminBoostQueueRoutes);
+router.use("/admin/boost-expiry", adminBoostExpiryRoutes);
+router.use("/admin/notifications", adminNotificationRoutes);
 
 // Business routes
 router.use("/business/auth", businessAuthRoutes);
@@ -72,6 +79,7 @@ router.use("/business/owner", businessOwnerRoutes);
 router.use("/business/categories", businessCategoryRoutes);
 router.use("/business/review-embed", businessReviewEmbedRoutes);
 router.use("/business/subscriptions", businessSubscriptionRoutes);
+router.use("/business/notifications", businessNotificationRoutes);
 
 // Public embed routes (no authentication required) - Review embeds only
 router.use("/embed", embedRoutes);

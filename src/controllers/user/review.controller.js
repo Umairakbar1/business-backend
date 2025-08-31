@@ -20,6 +20,26 @@ export const submitReview = async (req, res) => {
       return errorResponseHelper(res, { message: 'Rating must be between 1 and 5', code: '00400' });
     }
 
+    // Check if user already has a review for this business (approved or pending)
+    const existingReview = await Review.findOne({
+      userId: userId,
+      businessId: businessId
+    });
+
+    if (existingReview) {
+      if (existingReview.status === 'pending') {
+        return errorResponseHelper(res, { 
+          message: 'You already have a pending review for this business. Please wait for approval.', 
+          code: '00400' 
+        });
+      } else if (existingReview.status === 'approved') {
+        return errorResponseHelper(res, { 
+          message: 'You have already submitted a review for this business.', 
+          code: '00400' 
+        });
+      }
+    }
+
     // Handle media uploads (images and videos)
     let media = [];
     if (req.files && req.files.length > 0) {

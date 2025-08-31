@@ -1,4 +1,5 @@
 import mongoose from 'mongoose';
+import { GLOBAL_ENUMS } from '../../config/globalConfig.js';
 
 const subscriptionSchema = new mongoose.Schema({
   business: {
@@ -23,7 +24,7 @@ const subscriptionSchema = new mongoose.Schema({
   },
   status: {
     type: String,
-    enum: ['active', 'inactive', 'canceled', 'past_due', 'unpaid', 'trialing'],
+    enum: ['active', 'inactive', 'canceled', 'past_due', 'unpaid', 'trialing', 'pending', 'upgraded'],
     default: 'active'
   },
   // For business plans (lifetime) - no expiration
@@ -60,6 +61,43 @@ const subscriptionSchema = new mongoose.Schema({
     type: Number,
     default: 0
   },
+  // Boost queue information
+  boostQueueInfo: {
+    queueId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'BoostQueue',
+      default: null
+    },
+    queuePosition: {
+      type: Number,
+      default: null
+    },
+    estimatedStartTime: {
+      type: Date,
+      default: null
+    },
+    estimatedEndTime: {
+      type: Date,
+      default: null
+    },
+    isCurrentlyActive: {
+      type: Boolean,
+      default: false
+    },
+    boostStartTime: {
+      type: Date,
+      default: null
+    },
+    boostEndTime: {
+      type: Date,
+      default: null
+    },
+    category: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Category',
+      default: null
+    }
+  },
   // Payment tracking
   paymentId: {
     type: String,
@@ -68,7 +106,7 @@ const subscriptionSchema = new mongoose.Schema({
   // Features from payment plan (for business plans)
   features: [{
     type: String,
-    enum: ['query', 'review', 'embeded']
+    enum: [GLOBAL_ENUMS.features.QUERY, GLOBAL_ENUMS.features.REVIEW, GLOBAL_ENUMS.features.EMBEDDED, GLOBAL_ENUMS.features.BOOST]
   }],
   // Validity hours for boost plans
   validityHours: {

@@ -1,5 +1,7 @@
 import Business from '../../models/business/business.js';
 import Review from '../../models/admin/review.js';
+import { successResponseHelper } from '../../helpers/utilityHelper.js';
+import { errorResponseHelper } from '../../helpers/utilityHelper.js';
 
 // Generate Review Embed Link for a Business
 export const generateReviewEmbedLink = async (req, res) => {
@@ -13,10 +15,7 @@ export const generateReviewEmbedLink = async (req, res) => {
     });
     
     if (!business) {
-      return res.status(404).json({ 
-        success: false, 
-        message: 'Business not found or access denied' 
-      });
+        return errorResponseHelper(res, { message: 'Business not found or access denied', code: '00404' });
     }
 
     // Generate embed token if not present
@@ -25,7 +24,7 @@ export const generateReviewEmbedLink = async (req, res) => {
       await business.save();
     }
 
-    const baseUrl = process.env.SITE_URL || 'https://yourdomain.com';
+    const baseUrl = process.env.SITE_URL || 'https://mybusinessads.site';
     const embedUrl = `${baseUrl}/api/embed/reviews/${business._id}/${business.reviewEmbedToken}`;
     
     // Generate HTML embed code
@@ -40,7 +39,7 @@ export const generateReviewEmbedLink = async (req, res) => {
 })();
 </script>`;
 
-    res.json({ 
+    successResponseHelper(res, { 
       success: true, 
       data: {
         businessId: business._id,
@@ -52,10 +51,9 @@ export const generateReviewEmbedLink = async (req, res) => {
       }
     });
   } catch (error) {
-    res.status(500).json({ 
-      success: false, 
+    errorResponseHelper(res, { 
       message: 'Failed to generate review embed link', 
-      error: error.message 
+      code: '00500' 
     });
   }
 };
@@ -73,10 +71,7 @@ export const getEmbedReviews = async (req, res) => {
     });
     
     if (!business) {
-      return res.status(404).json({ 
-        success: false, 
-        message: 'Business not found or invalid embed token' 
-      });
+      return errorResponseHelper(res, { message: 'Business not found or invalid embed token', code: '00404' });
     }
 
     // Build filter for approved reviews only
@@ -124,8 +119,7 @@ export const getEmbedReviews = async (req, res) => {
       ratingCounts[i] = stats.ratingDistribution.filter(r => r === i).length;
     }
 
-    res.json({ 
-      success: true, 
+    successResponseHelper(res, { 
       data: {
         business: {
           _id: business._id,
@@ -148,11 +142,7 @@ export const getEmbedReviews = async (req, res) => {
       }
     });
   } catch (error) {
-    res.status(500).json({ 
-      success: false, 
-      message: 'Failed to fetch reviews', 
-      error: error.message 
-    });
+    errorResponseHelper(res, { message: error.message, code: '00500' });
   }
 };
 
@@ -168,13 +158,10 @@ export const serveReviewWidget = async (req, res) => {
     });
     
     if (!business) {
-      return res.status(404).json({ 
-        success: false, 
-        message: 'Business not found or invalid embed token' 
-      });
+      return errorResponseHelper(res, { message: 'Business not found or invalid embed token', code: '00404' });
     }
 
-    const baseUrl = process.env.SITE_URL || 'https://yourdomain.com';
+    const baseUrl = process.env.SITE_URL || 'https://mybusinessads.site';
     
     // Generate widget JavaScript
     const widgetJS = `
@@ -351,11 +338,7 @@ export const serveReviewWidget = async (req, res) => {
     res.setHeader('Content-Type', 'application/javascript');
     res.send(widgetJS);
   } catch (error) {
-    res.status(500).json({ 
-      success: false, 
-      message: 'Failed to serve widget', 
-      error: error.message 
-    });
+      errorResponseHelper(res, { message: error.message, code: '00500' });
   }
 };
 
@@ -371,10 +354,7 @@ export const regenerateReviewEmbedToken = async (req, res) => {
     });
     
     if (!business) {
-      return res.status(404).json({ 
-        success: false, 
-        message: 'Business not found or access denied' 
-      });
+      return errorResponseHelper(res, { message: 'Business not found or access denied', code: '00404' });
     }
 
     // Generate new embed token
@@ -382,8 +362,7 @@ export const regenerateReviewEmbedToken = async (req, res) => {
     business.reviewEmbedToken = newToken;
     await business.save();
 
-    res.json({ 
-      success: true, 
+    successResponseHelper(res, { 
       message: 'Review embed token regenerated successfully',
       data: {
         businessId: business._id,
@@ -391,10 +370,6 @@ export const regenerateReviewEmbedToken = async (req, res) => {
       }
     });
   } catch (error) {
-    res.status(500).json({ 
-      success: false, 
-      message: 'Failed to regenerate embed token', 
-      error: error.message 
-    });
+    errorResponseHelper(res, { message: error.message, code: '00500' });
   }
 }; 

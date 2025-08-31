@@ -2,10 +2,140 @@ import Business from '../../models/business/business.js';
 import mongoose from 'mongoose';
 import StripeHelper from '../../helpers/stripeHelper.js';
 import BusinessSubscription from '../../models/admin/businessSubsciption.js';
+import Subscription from '../../models/admin/subscription.js';
+import PaymentPlan from '../../models/admin/paymentPlan.js';
 import { uploadImageWithThumbnail } from '../../helpers/cloudinaryHelper.js';
 import axios from 'axios';
 import Joi from 'joi';
 import { errorResponseHelper, successResponseHelper } from '../../helpers/utilityHelper.js';
+
+// Helper function to populate subscription data for a business
+const populateSubscriptionData = async (businessObj) => {
+  try {
+    // Find active business subscription
+    const businessSubscription = businessObj.businessSubscriptionId ? 
+      await Subscription.findById(businessObj.businessSubscriptionId)
+        .populate('paymentPlan', 'name description planType price currency features maxBoostPerDay validityHours isLifetime') : null;
+
+    // Find active boost subscription
+    const boostSubscription = businessObj.boostSubscriptionId ? 
+      await Subscription.findById(businessObj.boostSubscriptionId)
+        .populate('paymentPlan', 'name description planType price currency features maxBoostPerDay validityHours isLifetime') : null;
+
+    // Set business subscription data
+    if (businessSubscription && businessSubscription.status === 'active') {
+      businessObj.businessSubscription = {
+        _id: businessSubscription._id,
+        subscriptionType: businessSubscription.subscriptionType,
+        status: businessSubscription.status,
+        amount: businessSubscription.amount,
+        currency: businessSubscription.currency,
+        isLifetime: businessSubscription.isLifetime,
+        expiresAt: businessSubscription.expiresAt,
+        createdAt: businessSubscription.createdAt,
+        paymentPlan: businessSubscription.paymentPlan ? {
+          _id: businessSubscription.paymentPlan._id,
+          name: businessSubscription.paymentPlan.name,
+          description: businessSubscription.paymentPlan.description,
+          planType: businessSubscription.paymentPlan.planType,
+          price: businessSubscription.paymentPlan.price,
+          currency: businessSubscription.paymentPlan.currency,
+          features: (businessSubscription.paymentPlan.features || []).reduce((acc, feature) => {
+            acc[feature] = true;
+            return acc;
+          }, {}),
+          maxBoostPerDay: businessSubscription.paymentPlan.maxBoostPerDay,
+          validityHours: businessSubscription.paymentPlan.validityHours
+        } : null,
+        featureUsage: businessSubscription.featureUsage || null
+      };
+    } else {
+      businessObj.businessSubscription = null;
+    }
+
+    // Set boost subscription data
+    if (boostSubscription && boostSubscription.status === 'active') {
+      businessObj.boostSubscription = {
+        _id: boostSubscription._id,
+        subscriptionType: boostSubscription.subscriptionType,
+        status: boostSubscription.status,
+        amount: boostSubscription.amount,
+        currency: boostSubscription.currency,
+        isLifetime: boostSubscription.isLifetime,
+        expiresAt: boostSubscription.expiresAt,
+        createdAt: boostSubscription.createdAt,
+        paymentPlan: boostSubscription.paymentPlan ? {
+          _id: boostSubscription.paymentPlan._id,
+          name: boostSubscription.paymentPlan.name,
+          description: boostSubscription.paymentPlan.description,
+          planType: boostSubscription.paymentPlan.planType,
+          price: boostSubscription.paymentPlan.price,
+          currency: boostSubscription.paymentPlan.currency,
+          features: (boostSubscription.paymentPlan.features || []).reduce((acc, feature) => {
+            acc[feature] = true;
+            return acc;
+          }, {}),
+          maxBoostPerDay: boostSubscription.paymentPlan.maxBoostPerDay,
+          validityHours: boostSubscription.paymentPlan.validityHours
+        } : null,
+        boostUsage: boostSubscription.boostUsage || null,
+        boostQueueInfo: boostSubscription.boostQueueInfo || null
+      };
+    } else {
+      businessObj.boostSubscription = null;
+    }
+
+    // For backward compatibility, set activeSubscriptionId to business subscription if exists
+    if (businessObj.businessSubscription) {
+      businessObj.activeSubscriptionId = businessObj.businessSubscription._id;
+      businessObj.activeSubscription = businessObj.businessSubscription;
+    } else if (businessObj.boostSubscription) {
+      businessObj.activeSubscriptionId = businessObj.boostSubscription._id;
+      businessObj.activeSubscription = businessObj.boostSubscription;
+    } else {
+      businessObj.activeSubscriptionId = null;
+      businessObj.activeSubscription = null;
+    }
+
+    // Add features directly to business object
+    let businessFeatures = {};
+    
+    // Get features from business subscription if exists
+    if (businessObj.businessSubscription?.paymentPlan?.features) {
+      businessFeatures = { ...businessFeatures, ...businessObj.businessSubscription.paymentPlan.features };
+    }
+    
+    // Set features directly on business object
+    businessObj.features = businessFeatures;
+
+    // Also include legacy subscription data for backward compatibility
+    const legacySubscription = await BusinessSubscription.findOne({
+      businessId: businessObj._id,
+      status: 'active'
+    });
+
+    if (legacySubscription) {
+      businessObj.legacySubscription = {
+        _id: legacySubscription._id,
+        subscriptionType: legacySubscription.subscriptionType,
+        status: legacySubscription.status,
+        createdAt: legacySubscription.createdAt,
+        expiredAt: legacySubscription.expiredAt
+      };
+    } else {
+      businessObj.legacySubscription = null;
+    }
+
+    return businessObj;
+  } catch (error) {
+    console.error('Error populating subscription data:', error);
+    // Return business object without subscription data on error
+    businessObj.activeSubscriptionId = null;
+    businessObj.activeSubscription = null;
+    businessObj.legacySubscription = null;
+    return businessObj;
+  }
+};
 
 export const createBusiness = async (req, res) => {
   try {
@@ -206,9 +336,12 @@ export const createBusiness = async (req, res) => {
       businessObj.subcategories = [];
     }
     
+    // Populate subscription data
+    const businessWithSubscription = await populateSubscriptionData(businessObj);
+    
     return successResponseHelper(res, {
       message: 'Business created successfully',
-      data: businessObj
+      data: businessWithSubscription
     });
   } catch (error) {
     return errorResponseHelper(res, { message: 'Internal server error', code: '00500' });
@@ -391,7 +524,10 @@ export const getMyBusinesses = async (req, res) => {
           }
         }
         
-        return businessObj;
+        // Populate subscription data
+        const businessWithSubscription = await populateSubscriptionData(businessObj);
+        
+        return businessWithSubscription;
       })
     );
     
@@ -532,9 +668,12 @@ export const getBusinessById = async (req, res) => {
       reviews
     };
     
+    // Populate subscription data
+    const businessWithSubscription = await populateSubscriptionData(businessWithReviews);
+    
     return successResponseHelper(res, {
       message: 'Business retrieved successfully',
-      data: businessWithReviews
+      data: businessWithSubscription
     });
   } catch (error) {
     return errorResponseHelper(res, { message: 'Internal server error', code: '00500' });
@@ -831,9 +970,12 @@ export const updateBusiness = async (req, res) => {
       businessObj.subcategories = [];
     }
     
+    // Populate subscription data
+    const businessWithSubscription = await populateSubscriptionData(businessObj);
+    
     return successResponseHelper(res, {
       message: 'Business updated successfully',
-      data: businessObj
+      data: businessWithSubscription
     });
   } catch (error) {
     return errorResponseHelper(res, { message: 'Internal server error', code: '00500' });
@@ -969,9 +1111,12 @@ export const updateBusinessStatus = async (req, res) => {
       }
     }
     
+    // Populate subscription data
+    const businessWithSubscription = await populateSubscriptionData(businessObj);
+    
     return successResponseHelper(res, {
       message: 'Business status updated successfully',
-      data: businessObj
+      data: businessWithSubscription
     });
   } catch (error) {
     return errorResponseHelper(res, { message: 'Internal server error', code: '00500' });
@@ -992,16 +1137,27 @@ export const getAvailablePlans = async (req, res) => {
 };
 
 export const getCurrentPlan = async (req, res) => {
-  const business = await Business.findOne({ businessOwner: req.businessOwner._id });
-  if (!business) return res.status(404).json({ success: false, message: 'Business not found' });
-  return successResponseHelper(res, {
-    message: 'Current plan retrieved successfully',
-    data: {
-      plan: business.plan,
-      features: business.features,
-      status: business.status
-    }
-  });
+  try {
+    const business = await Business.findOne({ businessOwner: req.businessOwner._id });
+    if (!business) return res.status(404).json({ success: false, message: 'Business not found' });
+    
+    const businessObj = business.toObject();
+    const businessWithSubscription = await populateSubscriptionData(businessObj);
+    
+    return successResponseHelper(res, {
+      message: 'Current plan retrieved successfully',
+      data: {
+        plan: business.plan,
+        features: business.features,
+        status: business.status,
+        activeSubscriptionId: businessWithSubscription.activeSubscriptionId,
+        activeSubscription: businessWithSubscription.activeSubscription,
+        legacySubscription: businessWithSubscription.legacySubscription
+      }
+    });
+  } catch (error) {
+    return errorResponseHelper(res, { message: 'Internal server error', code: '00500' });
+  }
 };
 
 // Get businesses for query ticket creation (simplified list)
@@ -1011,12 +1167,21 @@ export const getBusinessesForQueryTicket = async (req, res) => {
       businessOwner: req.businessOwner._id,
       status: { $in: ['active', 'approved'] }
     })
-    .select('_id businessName email phoneNumber status')
+    .select('_id businessName email phoneNumber status activeSubscriptionId')
     .sort({ businessName: 1 });
+    
+    // Populate subscription data for each business
+    const businessesWithSubscriptions = await Promise.all(
+      businesses.map(async (business) => {
+        const businessObj = business.toObject();
+        const businessWithSubscription = await populateSubscriptionData(businessObj);
+        return businessWithSubscription;
+      })
+    );
     
     return successResponseHelper(res, {
       message: 'Businesses retrieved successfully',
-      data: businesses
+      data: businessesWithSubscriptions
     });
   } catch (error) {
     return errorResponseHelper(res, { message: 'Internal server error', code: '00500' });
@@ -1293,7 +1458,10 @@ export const getBusinessesWithReviews = async (req, res) => {
           };
         }
         
-        return businessObj;
+        // Populate subscription data
+        const businessWithSubscription = await populateSubscriptionData(businessObj);
+        
+        return businessWithSubscription;
       })
     );
     
@@ -1653,6 +1821,10 @@ const handleCheckoutSessionCompleted = async (session) => {
       expiredAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // 30 days from now
     });
 
+    // Update business with businessSubscriptionId
+    business.businessSubscriptionId = subscription._id;
+    await business.save();
+
     console.log('Business plan updated successfully:', businessId, plan);
   } catch (error) {
     console.error('Error handling checkout session completed:', error);
@@ -1703,8 +1875,12 @@ const handlePaymentIntentSucceeded = async (paymentIntent) => {
       existingSubscription.subscriptionType = plan;
       existingSubscription.expiredAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
       await existingSubscription.save();
+      
+      // Update business with businessSubscriptionId
+      business.businessSubscriptionId = existingSubscription._id;
+      await business.save();
     } else {
-      await BusinessSubscription.create({
+      const newSubscription = await BusinessSubscription.create({
         businessId: business._id,
         planId: null,
         status: 'active',
@@ -1712,6 +1888,10 @@ const handlePaymentIntentSucceeded = async (paymentIntent) => {
         createdAt: new Date(),
         expiredAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
       });
+      
+      // Update business with businessSubscriptionId
+      business.businessSubscriptionId = newSubscription._id;
+      await business.save();
     }
 
     console.log('Payment intent processed successfully:', paymentIntent.id);
@@ -1764,3 +1944,110 @@ const handleSubscriptionDeleted = async (subscription) => {
   console.log('Subscription deleted:', subscription.id);
   // Handle subscription cancellation
 }; 
+
+// Get detailed subscription information for a business
+export const getBusinessSubscriptionDetails = async (req, res) => {
+  try {
+    const { businessId } = req.params;
+    
+    if (!mongoose.Types.ObjectId.isValid(businessId)) {
+      return res.status(400).json({ success: false, message: 'Invalid business ID' });
+    }
+    
+    // Verify business ownership
+    const business = await Business.findOne({ 
+      _id: businessId, 
+      businessOwner: req.businessOwner._id 
+    });
+    
+    if (!business) {
+      return res.status(404).json({ success: false, message: 'Business not found or access denied' });
+    }
+    
+    // Find active subscription
+    const activeSubscription = await Subscription.findOne({
+      business: businessId,
+      status: 'active'
+    }).populate('paymentPlan', 'name description planType price currency features maxBoostPerDay validityHours isLifetime');
+    
+    // Find all subscriptions for this business
+    const allSubscriptions = await Subscription.find({
+      business: businessId
+    }).populate('paymentPlan', 'name description planType price currency features maxBoostPerDay validityHours isLifetime')
+    .sort({ createdAt: -1 });
+    
+    // Find legacy subscriptions
+    const legacySubscriptions = await BusinessSubscription.find({
+      businessId: businessId
+    }).sort({ createdAt: -1 });
+    
+    const subscriptionData = {
+      business: {
+        _id: business._id,
+        businessName: business.businessName,
+        activeSubscriptionId: business.activeSubscriptionId,
+        plan: business.plan,
+        features: business.features
+      },
+      activeSubscription: activeSubscription ? {
+        _id: activeSubscription._id,
+        subscriptionType: activeSubscription.subscriptionType,
+        status: activeSubscription.status,
+        amount: activeSubscription.amount,
+        currency: activeSubscription.currency,
+        isLifetime: activeSubscription.isLifetime,
+        expiresAt: activeSubscription.expiresAt,
+        createdAt: activeSubscription.createdAt,
+        paymentPlan: activeSubscription.paymentPlan ? {
+          _id: activeSubscription.paymentPlan._id,
+          name: activeSubscription.paymentPlan.name,
+          description: activeSubscription.paymentPlan.description,
+          planType: activeSubscription.paymentPlan.planType,
+          price: activeSubscription.paymentPlan.price,
+          currency: activeSubscription.paymentPlan.currency,
+          features: activeSubscription.paymentPlan.features || [],
+          maxBoostPerDay: activeSubscription.paymentPlan.maxBoostPerDay,
+          validityHours: activeSubscription.paymentPlan.validityHours
+        } : null,
+        boostUsage: activeSubscription.boostUsage || null,
+        featureUsage: activeSubscription.featureUsage || null
+      } : null,
+      allSubscriptions: allSubscriptions.map(sub => ({
+        _id: sub._id,
+        subscriptionType: sub.subscriptionType,
+        status: sub.status,
+        amount: sub.amount,
+        currency: sub.currency,
+        isLifetime: sub.isLifetime,
+        expiresAt: sub.expiresAt,
+        createdAt: sub.createdAt,
+        paymentPlan: sub.paymentPlan ? {
+          _id: sub.paymentPlan._id,
+          name: sub.paymentPlan.name,
+          description: sub.paymentPlan.description,
+          planType: sub.paymentPlan.planType,
+          price: sub.paymentPlan.price,
+          currency: sub.paymentPlan.currency,
+          features: sub.paymentPlan.features || [],
+          maxBoostPerDay: sub.paymentPlan.maxBoostPerDay,
+          validityHours: sub.paymentPlan.validityHours
+        } : null
+      })),
+      legacySubscriptions: legacySubscriptions.map(sub => ({
+        _id: sub._id,
+        subscriptionType: sub.subscriptionType,
+        status: sub.status,
+        createdAt: sub.createdAt,
+        expiredAt: sub.expiredAt
+      }))
+    };
+    
+    return successResponseHelper(res, {
+      message: 'Business subscription details retrieved successfully',
+      data: subscriptionData
+    });
+  } catch (error) {
+    console.error('Error getting business subscription details:', error);
+    return errorResponseHelper(res, { message: 'Internal server error', code: '00500' });
+  }
+};

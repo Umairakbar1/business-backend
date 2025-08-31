@@ -1,4 +1,5 @@
 import mongoose from 'mongoose';
+import { GLOBAL_ENUMS } from '../../config/globalConfig.js';
 
 /**
  * Payment Model (Admin side)
@@ -94,7 +95,7 @@ const paymentSchema = new mongoose.Schema({
   // Features and limits at time of payment
   features: [{
     type: String,
-    enum: ['query', 'review', 'embeded']
+    enum: [GLOBAL_ENUMS.features.QUERY, GLOBAL_ENUMS.features.REVIEW, GLOBAL_ENUMS.features.EMBEDDED, GLOBAL_ENUMS.features.BOOST]
   }],
   maxBoostPerDay: {
     type: Number,

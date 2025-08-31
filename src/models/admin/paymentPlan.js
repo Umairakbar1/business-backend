@@ -1,4 +1,5 @@
 import mongoose from 'mongoose';
+import { GLOBAL_ENUMS } from '../../config/globalConfig.js';
 
 /**
  * Payment Plan Schema
@@ -38,7 +39,7 @@ const paymentPlanSchema = new mongoose.Schema({
 
   features: [{
     type: String,
-    enum: ['query', 'review', 'embeded'],
+    enum: [GLOBAL_ENUMS.features.QUERY, GLOBAL_ENUMS.features.REVIEW, GLOBAL_ENUMS.features.EMBEDDED, GLOBAL_ENUMS.features.BOOST],
     required: true
   }],
   stripeProductId: {

@@ -451,18 +451,33 @@ export const getBusinessDetails = async (req, res) => {
     }
 
     // Get approved reviews with user details
-    const reviews = await Review.find({
+    const approvedReviews = await Review.find({
       businessId: id,
       status: 'approved'
     })
       .populate('userId', 'name email profilePhoto')
       .populate('businessId', 'businessName _id')
       .populate('approvedBy', 'name email')
+      .populate('replies.admin.authorId', 'firstName lastName email')
+      .populate('replies.business.authorId', 'businessName contactPerson email')
       .sort({ createdAt: -1 })
       .limit(10); // Limit to latest 10 reviews for performance
 
+    // Get pending reviews with user details
+    const pendingReviews = await Review.find({
+      businessId: id,
+      status: 'pending'
+    })
+      .populate('userId', 'name email profilePhoto')
+      .populate('businessId', 'businessName _id')
+      .populate('approvedBy', 'name email')
+      .populate('replies.admin.authorId', 'firstName lastName email')
+      .populate('replies.business.authorId', 'businessName contactPerson email')
+      .sort({ createdAt: -1 });
+
     // Get current user's review if user is authenticated
     let currentUserReview = null;
+    let userHasPendingReview = false;
     if (userId) {
       try {
         currentUserReview = await Review.findOne({
@@ -471,11 +486,30 @@ export const getBusinessDetails = async (req, res) => {
         })
           .populate('userId', 'name email profilePhoto')
           .populate('businessId', 'businessName _id')
-          .populate('approvedBy', 'name email');
+          .populate('approvedBy', 'name email')
+          .populate('replies.admin.authorId', 'firstName lastName email')
+          .populate('replies.business.authorId', 'businessName contactPerson email');
+        
+        // Check if user has a pending review
+        if (currentUserReview && currentUserReview.status === 'pending') {
+          userHasPendingReview = true;
+        }
       } catch (error) {
         console.error('Error fetching current user review:', error);
       }
     }
+
+    // Get all active reviews (approved and pending) for the business
+    const reviews = await Review.find({
+      businessId: id,
+      status: { $in: ['approved', 'pending'] }
+    })
+      .populate('userId', 'name email profilePhoto')
+      .populate('businessId', 'businessName _id')
+      .populate('approvedBy', 'name email')
+      .populate('replies.admin.authorId', 'firstName lastName email')
+      .populate('replies.business.authorId', 'businessName contactPerson email')
+      .sort({ createdAt: -1 });
 
     res.json({
       success: true,
@@ -487,8 +521,11 @@ export const getBusinessDetails = async (req, res) => {
         avgRating,
         totalReviews,
         reviewBreakdown: breakdown,
-        reviews,
+        approvedReviews,
+        pendingReviews,
         currentUserReview,
+        userHasPendingReview,
+        reviews, // Array of all active reviews (approved + pending)
       },
     });
   } catch (error) {
@@ -514,6 +551,8 @@ export const getBusinessReviews = async (req, res) => {
     })
       .populate('userId', 'name email profilePhoto')
       .populate('approvedBy', 'name email')
+      .populate('replies.admin.authorId', 'firstName lastName email')
+      .populate('replies.business.authorId', 'businessName contactPerson email')
       .sort(sort)
       .skip((Number(page) - 1) * Number(limit))
       .limit(Number(limit));

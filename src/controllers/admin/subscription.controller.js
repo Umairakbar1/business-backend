@@ -3,6 +3,24 @@ import PaymentPlan from '../../models/admin/paymentPlan.js';
 import Business from '../../models/business/business.js';
 import StripeHelper from '../../helpers/stripeHelper.js';
 
+/**
+ * Subscription Controller
+ * 
+ * Handles two types of subscriptions:
+ * 
+ * 1. BUSINESS SUBSCRIPTIONS (planType: 'business'):
+ *    - Lifetime subscriptions with no expiry date
+ *    - Include business features (query, review, embedded)
+ *    - Have daily boost limits (maxBoostPerDay)
+ *    - No need to update boost functionality on purchase
+ * 
+ * 2. BOOST SUBSCRIPTIONS (planType: 'boost'):
+ *    - Temporary subscriptions with expiry time (validityHours)
+ *    - No business features, only boost functionality
+ *    - No daily limits, just active until expiry
+ *    - Include queue management and expiry handling
+ */
+
 class SubscriptionController {
   /**
    * Create a new subscription
@@ -72,7 +90,10 @@ class SubscriptionController {
         amount: paymentPlan.price,
         currency: paymentPlan.currency,
         isLifetime: paymentPlan.planType === 'business', // Business plans are lifetime
-        expiresAt: paymentPlan.planType === 'boost' ? new Date(Date.now() + 24 * 60 * 60 * 1000) : null, // Boost plans expire in 24 hours
+        expiresAt: paymentPlan.planType === 'boost' ? new Date(Date.now() + (paymentPlan.validityHours || 24) * 60 * 60 * 1000) : null, // Boost plans expire based on validityHours
+        maxBoostPerDay: paymentPlan.planType === 'business' ? (paymentPlan.maxBoostPerDay || 0) : 0, // Only business plans have daily boost limits
+        validityHours: paymentPlan.planType === 'boost' ? (paymentPlan.validityHours || 24) : null, // Only boost plans have validity hours
+        features: paymentPlan.features, // Copy features from payment plan
         metadata: {
           planName: paymentPlan.name,
           businessName: business.businessName
@@ -242,9 +263,16 @@ class SubscriptionController {
       // Update in database
       subscription.status = 'active';
       
-      // For boost plans, extend expiration by 24 hours
+      // For boost plans, extend expiration based on validity hours
       if (subscription.subscriptionType === 'boost') {
-        subscription.expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
+        const validityHours = subscription.validityHours || 24;
+        subscription.expiresAt = new Date(Date.now() + validityHours * 60 * 60 * 1000);
+      }
+      
+      // For business plans, no expiration date needed (lifetime)
+      if (subscription.subscriptionType === 'business') {
+        subscription.expiresAt = null;
+        subscription.isLifetime = true;
       }
       
       await subscription.save();
@@ -309,6 +337,44 @@ class SubscriptionController {
     try {
       const { businessId } = req.params;
 
+      // First check for business subscription (lifetime with daily boost limits)
+      const businessSubscription = await Subscription.findOne({
+        business: businessId,
+        subscriptionType: 'business',
+        status: 'active'
+      }).populate('paymentPlan');
+
+      if (businessSubscription) {
+        // Business plans have lifetime access with daily boost limits
+        const now = new Date();
+        const lastReset = new Date(businessSubscription.boostUsage.lastResetDate);
+        const currentDay = now.getDate();
+        const lastResetDay = lastReset.getDate();
+        
+        // Reset counter if new day
+        if (currentDay !== lastResetDay || now.getMonth() !== lastReset.getMonth() || now.getFullYear() !== lastReset.getFullYear()) {
+          businessSubscription.boostUsage.currentDay = 0;
+          businessSubscription.boostUsage.lastResetDate = now;
+          await businessSubscription.save();
+        }
+        
+        const maxBoosts = businessSubscription.maxBoostPerDay || 0;
+        const canUse = businessSubscription.boostUsage.currentDay < maxBoosts;
+
+        return res.status(200).json({
+          success: true,
+          canUseBoost: canUse,
+          subscriptionType: 'business',
+          data: {
+            currentUsage: businessSubscription.boostUsage.currentDay,
+            maxBoosts: maxBoosts,
+            resetDate: businessSubscription.boostUsage.lastResetDate,
+            isLifetime: true
+          }
+        });
+      }
+
+      // Check for boost subscription (temporary with expiry)
       const boostSubscription = await Subscription.findOne({
         business: businessId,
         subscriptionType: 'boost',
@@ -319,33 +385,28 @@ class SubscriptionController {
         return res.status(200).json({
           success: true,
           canUseBoost: false,
-          message: 'No active boost subscription found'
+          message: 'No active subscription found'
         });
       }
 
-      // Check if boost is available (daily limit)
-      const now = new Date();
-      const lastReset = new Date(boostSubscription.boostUsage.lastResetDate);
-      const currentDay = now.getDate();
-      const lastResetDay = lastReset.getDate();
-      
-      // Reset counter if new day
-      if (currentDay !== lastResetDay || now.getMonth() !== lastReset.getMonth() || now.getFullYear() !== lastReset.getFullYear()) {
-        boostSubscription.boostUsage.currentDay = 0;
-        boostSubscription.boostUsage.lastResetDate = now;
-        await boostSubscription.save();
+      // Check if boost subscription is expired
+      if (boostSubscription.expiresAt && new Date() > boostSubscription.expiresAt) {
+        return res.status(200).json({
+          success: true,
+          canUseBoost: false,
+          message: 'Boost subscription has expired'
+        });
       }
-      
-      const maxBoosts = boostSubscription.paymentPlan.maxBoostPerDay || 0;
-      const canUse = boostSubscription.boostUsage.currentDay < maxBoosts;
 
-      res.status(200).json({
+      // Boost subscriptions don't have daily limits, they just need to be active and not expired
+      return res.status(200).json({
         success: true,
-        canUseBoost: canUse,
+        canUseBoost: true,
+        subscriptionType: 'boost',
         data: {
-          currentUsage: boostSubscription.boostUsage.currentDay,
-          maxBoosts: maxBoosts,
-          resetDate: boostSubscription.boostUsage.lastResetDate
+          expiresAt: boostSubscription.expiresAt,
+          validityHours: boostSubscription.validityHours,
+          isLifetime: false
         }
       });
     } catch (error) {
@@ -365,6 +426,51 @@ class SubscriptionController {
     try {
       const { businessId } = req.params;
 
+      // First check for business subscription (lifetime with daily boost limits)
+      const businessSubscription = await Subscription.findOne({
+        business: businessId,
+        subscriptionType: 'business',
+        status: 'active'
+      }).populate('paymentPlan');
+
+      if (businessSubscription) {
+        // Business plans have lifetime access with daily boost limits
+        const now = new Date();
+        const lastReset = new Date(businessSubscription.boostUsage.lastResetDate);
+        const currentDay = now.getDate();
+        const lastResetDay = lastReset.getDate();
+        
+        // Reset counter if new day
+        if (currentDay !== lastResetDay || now.getMonth() !== lastReset.getMonth() || now.getFullYear() !== lastReset.getFullYear()) {
+          businessSubscription.boostUsage.currentDay = 0;
+          businessSubscription.boostUsage.lastResetDate = now;
+          await businessSubscription.save();
+        }
+        
+        const maxBoosts = businessSubscription.maxBoostPerDay || 0;
+        const canUse = businessSubscription.boostUsage.currentDay < maxBoosts;
+        
+        if (!canUse) {
+          return res.status(400).json({
+            success: false,
+            message: 'Daily boost limit reached for business subscription'
+          });
+        }
+
+        await businessSubscription.incrementBoostUsage();
+
+        return res.status(200).json({
+          success: true,
+          message: 'Boost used successfully (business subscription)',
+          subscriptionType: 'business',
+          data: {
+            currentUsage: businessSubscription.boostUsage.currentDay,
+            maxBoosts: maxBoosts
+          }
+        });
+      }
+
+      // Check for boost subscription (temporary with expiry)
       const boostSubscription = await Subscription.findOne({
         business: businessId,
         subscriptionType: 'boost',
@@ -374,40 +480,27 @@ class SubscriptionController {
       if (!boostSubscription) {
         return res.status(404).json({
           success: false,
-          message: 'No active boost subscription found'
+          message: 'No active subscription found'
         });
       }
 
-      // Check if boost is available (daily limit)
-      const now = new Date();
-      const lastReset = new Date(boostSubscription.boostUsage.lastResetDate);
-      const currentDay = now.getDate();
-      const lastResetDay = lastReset.getDate();
-      
-      // Reset counter if new day
-      if (currentDay !== lastResetDay || now.getMonth() !== lastReset.getMonth() || now.getFullYear() !== lastReset.getFullYear()) {
-        boostSubscription.boostUsage.currentDay = 0;
-        boostSubscription.boostUsage.lastResetDate = now;
-        await boostSubscription.save();
-      }
-      
-      const maxBoosts = boostSubscription.paymentPlan.maxBoostPerDay || 0;
-      const canUse = boostSubscription.boostUsage.currentDay < maxBoosts;
-      
-      if (!canUse) {
+      // Check if boost subscription is expired
+      if (boostSubscription.expiresAt && new Date() > boostSubscription.expiresAt) {
         return res.status(400).json({
           success: false,
-          message: 'Daily boost limit reached'
+          message: 'Boost subscription has expired'
         });
       }
 
-      await boostSubscription.incrementBoostUsage();
-
-      res.status(200).json({
+      // Boost subscriptions don't have daily limits, they just need to be active and not expired
+      // For boost subscriptions, we don't increment usage since they don't have daily limits
+      return res.status(200).json({
         success: true,
-        message: 'Boost used successfully',
+        message: 'Boost used successfully (boost subscription)',
+        subscriptionType: 'boost',
         data: {
-          currentUsage: boostSubscription.boostUsage.currentDay
+          expiresAt: boostSubscription.expiresAt,
+          validityHours: boostSubscription.validityHours
         }
       });
     } catch (error) {
@@ -415,6 +508,64 @@ class SubscriptionController {
       res.status(500).json({
         success: false,
         message: 'Failed to use boost',
+        error: error.message
+      });
+    }
+  }
+
+  /**
+   * Check and update expired boosts for all businesses
+   */
+  static async checkAndUpdateExpiredBoosts(req, res) {
+    try {
+      const BoostExpiryService = (await import('../../services/boostExpiryService.js')).default;
+      const result = await BoostExpiryService.checkAndUpdateExpiredBoosts();
+      
+      res.status(200).json(result);
+    } catch (error) {
+      console.error('Error checking and updating expired boosts:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to check and update expired boosts',
+        error: error.message
+      });
+    }
+  }
+
+  /**
+   * Get boost expiry statistics
+   */
+  static async getBoostExpiryStats(req, res) {
+    try {
+      const BoostExpiryService = (await import('../../services/boostExpiryService.js')).default;
+      const result = await BoostExpiryService.getBoostExpiryStats();
+      
+      res.status(200).json(result);
+    } catch (error) {
+      console.error('Error getting boost expiry stats:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to get boost expiry statistics',
+        error: error.message
+      });
+    }
+  }
+
+  /**
+   * Manually expire a specific business boost
+   */
+  static async expireBusinessBoost(req, res) {
+    try {
+      const { businessId } = req.params;
+      const BoostExpiryService = (await import('../../services/boostExpiryService.js')).default;
+      const result = await BoostExpiryService.expireBusinessBoost(businessId);
+      
+      res.status(200).json(result);
+    } catch (error) {
+      console.error('Error manually expiring business boost:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to manually expire business boost',
         error: error.message
       });
     }

@@ -1,7 +1,10 @@
 import Subscription from '../../models/admin/subscription.js';
 import PaymentPlan from '../../models/admin/paymentPlan.js';
 import Business from '../../models/business/business.js';
+import BoostQueue from '../../models/business/boostQueue.js';
 import StripeHelper from '../../helpers/stripeHelper.js';
+import { errorResponseHelper, successResponseHelper } from '../../helpers/utilityHelper.js';
+import { sendSubscriptionNotifications, sendPaymentNotifications } from '../../helpers/notificationHelper.js';
 
 class BusinessSubscriptionController {
   /**
@@ -12,28 +15,95 @@ class BusinessSubscriptionController {
       const { businessId } = req.params;
       const { paymentPlanId } = req.body;
 
+      console.log('=== SUBSCRIPTION DEBUG ===');
+      console.log('Request method:', req.method);
+      console.log('Request URL:', req.url);
+      console.log('Request headers:', req.headers);
+      console.log('Request body:', req.body);
+      console.log('Request params:', req.params);
+      console.log('Business ID from params:', businessId);
+      console.log('Payment Plan ID from body:', paymentPlanId);
+      console.log('Full body object:', JSON.stringify(req.body, null, 2));
+      console.log('=== END DEBUG ===');
+
+      // Validate required fields
+      if (!paymentPlanId) {
+        return errorResponseHelper(res, {
+          success: false,
+          message: 'Payment plan ID is required',
+          code: 'MISSING_PAYMENT_PLAN_ID'
+        });
+      }
+
       // Verify business exists and user has access
       const business = await Business.findById(businessId);
       if (!business) {
-        return res.status(404).json({
+        console.log('Business not found:', businessId);
+        return errorResponseHelper(res, {
           success: false,
-          message: 'Business not found'
+          message: 'Business not found',
+          code: 'BUSINESS_NOT_FOUND'
+        });
+      }
+
+      // Verify business ownership
+      if (business.businessOwner.toString() !== req.businessOwner._id.toString()) {
+        console.log('Business ownership mismatch:', {
+          businessOwner: business.businessOwner.toString(),
+          tokenOwner: req.businessOwner._id.toString()
+        });
+        return errorResponseHelper(res, {
+          success: false,
+          message: 'Access denied. You can only manage your own businesses.',
+          code: 'ACCESS_DENIED'
+        });
+      }
+
+      console.log('Business found and ownership verified:', business.businessName);
+      console.log('Business object fields:', {
+        _id: business._id,
+        businessName: business.businessName,
+        businessOwner: business.businessOwner,
+        owner: business.owner,
+        email: business.email
+      });
+
+      // Validate required business fields
+      if (!business.businessOwner) {
+        return errorResponseHelper(res, {
+          success: false,
+          message: 'Business owner information is missing',
+          code: 'MISSING_BUSINESS_OWNER'
+        });
+      }
+
+      if (!business.email) {
+        return errorResponseHelper(res, {
+          success: false,
+          message: 'Business email is missing',
+          code: 'MISSING_BUSINESS_EMAIL'
         });
       }
 
       // Get payment plan
       const paymentPlan = await PaymentPlan.findById(paymentPlanId);
       if (!paymentPlan) {
-        return res.status(404).json({
+        console.log('Payment plan not found:', paymentPlanId);
+        return errorResponseHelper(res, {
           success: false,
-          message: 'Payment plan not found'
+          message: 'Payment plan not found',
+          code: 'PAYMENT_PLAN_NOT_FOUND'
         });
       }
 
+      console.log('Payment plan found:', paymentPlan.name);
+
       if (!paymentPlan.isActive) {
-        return res.status(400).json({
+        console.log('Payment plan is not active:', paymentPlan.name);
+        return errorResponseHelper(res, {
           success: false,
-          message: 'Payment plan is not active'
+          message: 'Payment plan is not active',
+          code: 'PAYMENT_PLAN_INACTIVE'
         });
       }
 
@@ -45,13 +115,13 @@ class BusinessSubscriptionController {
       });
 
       if (existingSubscription) {
-        return res.status(400).json({
+        return errorResponseHelper(res, {
           success: false,
           message: `Business already has an active ${paymentPlan.planType} subscription`
         });
       }
 
-      // Create or get Stripe customer
+            // Create or get Stripe customer
       let stripeCustomer;
       try {
         if (business.stripeCustomerId) {
@@ -62,7 +132,7 @@ class BusinessSubscriptionController {
             email: business.email,
             name: business.businessName,
             businessId: business._id.toString(),
-            userId: business.owner.toString()
+            userId: business.businessOwner.toString()
           });
           
           // Update business with Stripe customer ID
@@ -70,17 +140,27 @@ class BusinessSubscriptionController {
           await business.save();
         }
       } catch (error) {
+        console.log('Error with existing Stripe customer, creating new one:', error.message);
         // Create new customer if retrieval fails
         stripeCustomer = await StripeHelper.createCustomer({
           email: business.email,
           name: business.businessName,
           businessId: business._id.toString(),
-          userId: business.owner.toString()
+          userId: business.businessOwner.toString()
         });
         
         business.stripeCustomerId = stripeCustomer.id;
         await business.save();
       }
+
+      console.log('Creating Stripe payment intent with:', {
+        amount: paymentPlan.price,
+        currency: paymentPlan.currency,
+        customerId: stripeCustomer.id,
+        businessId: business._id.toString(),
+        planType: paymentPlan.planType,
+        planId: paymentPlanId
+      });
 
       // Create payment intent for one-time payment
       const paymentIntent = await StripeHelper.createPaymentIntent({
@@ -88,7 +168,20 @@ class BusinessSubscriptionController {
         currency: paymentPlan.currency,
         customerId: stripeCustomer.id,
         businessId: business._id.toString(),
-        planType: paymentPlan.planType
+        planType: paymentPlan.planType,
+        planId: paymentPlanId,
+        receiptEmail: business.email
+      });
+
+      console.log('Payment intent created successfully:', paymentIntent.id);
+
+      console.log('Creating subscription in database with:', {
+        business: businessId,
+        paymentPlan: paymentPlanId,
+        subscriptionType: paymentPlan.planType,
+        stripeCustomerId: stripeCustomer.id,
+        amount: paymentPlan.price,
+        currency: paymentPlan.currency
       });
 
       // Create subscription in database
@@ -97,11 +190,15 @@ class BusinessSubscriptionController {
         paymentPlan: paymentPlanId,
         subscriptionType: paymentPlan.planType,
         stripeCustomerId: stripeCustomer.id,
-        status: 'pending', // Will be updated to 'active' after payment confirmation
+        status: 'inactive', // Will be updated to 'active' after payment confirmation
         amount: paymentPlan.price,
         currency: paymentPlan.currency,
         isLifetime: paymentPlan.planType === 'business', // Business plans are lifetime
         expiresAt: paymentPlan.planType === 'boost' ? new Date(Date.now() + 24 * 60 * 60 * 1000) : null, // Boost plans expire in 24 hours
+        paymentId: paymentIntent.id, // Use payment intent ID as payment ID
+        features: paymentPlan.features || [], // Include features from payment plan
+        maxBoostPerDay: paymentPlan.maxBoostPerDay || 0, // Include max boost per day
+        validityHours: paymentPlan.validityHours || null, // Include validity hours for boost plans
         metadata: {
           planName: paymentPlan.name,
           businessName: business.businessName
@@ -109,8 +206,9 @@ class BusinessSubscriptionController {
       });
 
       await subscription.save();
+      console.log('Subscription saved successfully:', subscription._id);
 
-      res.status(201).json({
+        successResponseHelper(res, {
         success: true,
         message: 'Subscription created successfully. Please complete payment.',
         data: {
@@ -121,7 +219,7 @@ class BusinessSubscriptionController {
       });
     } catch (error) {
       console.error('Error creating subscription:', error);
-      res.status(500).json({
+      errorResponseHelper(res, {
         success: false,
         message: 'Failed to create subscription',
         error: error.message
@@ -140,7 +238,7 @@ class BusinessSubscriptionController {
       // Verify business exists
       const business = await Business.findById(businessId);
       if (!business) {
-        return res.status(404).json({
+        return errorResponseHelper(res, {
           success: false,
           message: 'Business not found'
         });
@@ -149,14 +247,14 @@ class BusinessSubscriptionController {
       // Get new payment plan
       const newPaymentPlan = await PaymentPlan.findById(newPaymentPlanId);
       if (!newPaymentPlan) {
-        return res.status(404).json({
+        return errorResponseHelper(res, {
           success: false,
           message: 'Payment plan not found'
         });
       }
 
       if (newPaymentPlan.planType !== 'business') {
-        return res.status(400).json({
+        return errorResponseHelper(res, {
           success: false,
           message: 'Can only upgrade to business plans'
         });
@@ -170,7 +268,7 @@ class BusinessSubscriptionController {
       });
 
       if (!currentSubscription) {
-        return res.status(400).json({
+        return errorResponseHelper(res, {
           success: false,
           message: 'No active business subscription found to upgrade'
         });
@@ -191,7 +289,7 @@ class BusinessSubscriptionController {
         paymentPlan: newPaymentPlanId,
         subscriptionType: 'business',
         stripeCustomerId: currentSubscription.stripeCustomerId,
-        status: 'pending',
+        status: 'inactive',
         amount: newPaymentPlan.price,
         currency: newPaymentPlan.currency,
         isLifetime: true,
@@ -204,7 +302,7 @@ class BusinessSubscriptionController {
 
       await newSubscription.save();
 
-      res.status(200).json({
+        successResponseHelper(res, {
         success: true,
         message: 'Business plan upgrade initiated. Please complete payment.',
         data: {
@@ -216,7 +314,7 @@ class BusinessSubscriptionController {
       });
     } catch (error) {
       console.error('Error upgrading business plan:', error);
-      res.status(500).json({
+      errorResponseHelper(res, {
         success: false,
         message: 'Failed to upgrade business plan',
         error: error.message
@@ -234,7 +332,7 @@ class BusinessSubscriptionController {
       // Verify business exists
       const business = await Business.findById(businessId);
       if (!business) {
-        return res.status(404).json({
+        return errorResponseHelper(res, {
           success: false,
           message: 'Business not found'
         });
@@ -248,7 +346,7 @@ class BusinessSubscriptionController {
       const businessSubscriptions = subscriptions.filter(sub => sub.subscriptionType === 'business');
       const boostSubscriptions = subscriptions.filter(sub => sub.subscriptionType === 'boost');
 
-      res.status(200).json({
+          successResponseHelper(res, {
         success: true,
         message: 'Business subscriptions retrieved successfully',
         data: {
@@ -259,7 +357,7 @@ class BusinessSubscriptionController {
       });
     } catch (error) {
       console.error('Error fetching business subscriptions:', error);
-      res.status(500).json({
+      errorResponseHelper(res, {
         success: false,
         message: 'Failed to fetch business subscriptions',
         error: error.message
@@ -276,7 +374,7 @@ class BusinessSubscriptionController {
       const businessOwnerId = req.businessOwner?._id || req.user?._id;
       
       if (!businessOwnerId) {
-        return res.status(401).json({
+        return errorResponseHelper(res, {
           success: false,
           message: 'Unauthorized access'
         });
@@ -287,7 +385,7 @@ class BusinessSubscriptionController {
         .select('_id businessName businessCategory businessType status createdAt');
 
       if (businesses.length === 0) {
-        return res.status(200).json({
+        return errorResponseHelper(res, {
           success: true,
           message: 'No businesses found for this user',
           data: {
@@ -352,7 +450,7 @@ class BusinessSubscriptionController {
         };
       });
 
-      res.status(200).json({
+      successResponseHelper(res, {
         success: true,
         message: 'All business subscriptions retrieved successfully',
         data: {
@@ -370,15 +468,15 @@ class BusinessSubscriptionController {
             totalExpiredPlans: subscriptions.filter(sub => 
               sub.status === 'expired' || (sub.expiresAt && new Date() > sub.expiresAt)
             ).length,
-            totalPendingPlans: subscriptions.filter(sub => 
-              sub.status === 'pending'
+            totalInactivePlans: subscriptions.filter(sub => 
+              sub.status === 'inactive'
             ).length
           }
         }
       });
     } catch (error) {
       console.error('Error fetching all business subscriptions:', error);
-      res.status(500).json({
+      errorResponseHelper(res, {
         success: false,
         message: 'Failed to fetch all business subscriptions',
         error: error.message
@@ -400,21 +498,21 @@ class BusinessSubscriptionController {
       }).populate('paymentPlan', 'name planType price features maxBusinesses maxReviews');
 
       if (!activeSubscription) {
-        return res.status(200).json({
+        return errorResponseHelper(res, {
           success: true,
           hasActivePlan: false,
           message: 'No active business plan found'
         });
       }
 
-      res.status(200).json({
+        successResponseHelper(res, {
         success: true,
         hasActivePlan: true,
         data: activeSubscription
       });
     } catch (error) {
       console.error('Error fetching active business plan:', error);
-      res.status(500).json({
+      errorResponseHelper(res, {
         success: false,
         message: 'Failed to fetch active business plan',
         error: error.message
@@ -436,7 +534,7 @@ class BusinessSubscriptionController {
       }).populate('paymentPlan', 'name planType price features maxBoostPerDay');
 
       if (!activeSubscription) {
-        return res.status(200).json({
+        return errorResponseHelper(res, {
           success: true,
           hasActivePlan: false,
           message: 'No active boost plan found'
@@ -449,21 +547,21 @@ class BusinessSubscriptionController {
         activeSubscription.status = 'inactive';
         await activeSubscription.save();
         
-        return res.status(200).json({
+        return errorResponseHelper(res, {
           success: true,
           hasActivePlan: false,
           message: 'Boost plan has expired'
         });
       }
 
-      res.status(200).json({
+        successResponseHelper(res, {
         success: true,
         hasActivePlan: true,
         data: activeSubscription
       });
     } catch (error) {
       console.error('Error fetching active boost plan:', error);
-      res.status(500).json({
+      errorResponseHelper(res, {
         success: false,
         message: 'Failed to fetch active boost plan',
         error: error.message
@@ -485,7 +583,7 @@ class BusinessSubscriptionController {
       }).populate('paymentPlan');
 
       if (!boostSubscription) {
-        return res.status(200).json({
+        return errorResponseHelper(res, {
           success: true,
           canUseBoost: false,
           message: 'No active boost subscription found'
@@ -497,7 +595,7 @@ class BusinessSubscriptionController {
         boostSubscription.status = 'inactive';
         await boostSubscription.save();
         
-        return res.status(200).json({
+        return errorResponseHelper(res, {
           success: true,
           canUseBoost: false,
           message: 'Boost plan has expired'
@@ -520,7 +618,7 @@ class BusinessSubscriptionController {
       const maxBoosts = boostSubscription.paymentPlan.maxBoostPerDay || 0;
       const canUse = boostSubscription.boostUsage.currentDay < maxBoosts;
 
-      res.status(200).json({
+          successResponseHelper(res, {
         success: true,
         canUseBoost: canUse,
         data: {
@@ -532,7 +630,7 @@ class BusinessSubscriptionController {
       });
     } catch (error) {
       console.error('Error checking boost availability:', error);
-      res.status(500).json({
+      errorResponseHelper(res, {
         success: false,
         message: 'Failed to check boost availability',
         error: error.message
@@ -554,7 +652,7 @@ class BusinessSubscriptionController {
       });
 
       if (!boostSubscription) {
-        return res.status(404).json({
+        return errorResponseHelper(res, {
           success: false,
           message: 'No active boost subscription found'
         });
@@ -565,7 +663,7 @@ class BusinessSubscriptionController {
         boostSubscription.status = 'inactive';
         await boostSubscription.save();
         
-        return res.status(400).json({
+        return errorResponseHelper(res, {
           success: false,
           message: 'Boost plan has expired'
         });
@@ -588,7 +686,7 @@ class BusinessSubscriptionController {
       const canUse = boostSubscription.boostUsage.currentDay < maxBoosts;
       
       if (!canUse) {
-        return res.status(400).json({
+        return errorResponseHelper(res, {
           success: false,
           message: 'Daily boost limit reached'
         });
@@ -596,7 +694,7 @@ class BusinessSubscriptionController {
 
       await boostSubscription.incrementBoostUsage();
 
-      res.status(200).json({
+        successResponseHelper(res, {
         success: true,
         message: 'Boost used successfully',
         data: {
@@ -606,7 +704,7 @@ class BusinessSubscriptionController {
       });
     } catch (error) {
       console.error('Error using boost:', error);
-      res.status(500).json({
+      errorResponseHelper(res, {
         success: false,
         message: 'Failed to use boost',
         error: error.message
@@ -627,7 +725,7 @@ class BusinessSubscriptionController {
       });
 
       if (!subscription) {
-        return res.status(404).json({
+        return errorResponseHelper(res, {
           success: false,
           message: 'Subscription not found'
         });
@@ -636,14 +734,14 @@ class BusinessSubscriptionController {
       subscription.status = 'inactive';
       await subscription.save();
 
-      res.status(200).json({
+        successResponseHelper(res, {
         success: true,
         message: 'Subscription canceled successfully',
         data: subscription
       });
     } catch (error) {
       console.error('Error canceling subscription:', error);
-      res.status(500).json({
+      errorResponseHelper(res, {
         success: false,
         message: 'Failed to cancel subscription',
         error: error.message
@@ -662,7 +760,7 @@ class BusinessSubscriptionController {
       // Verify business exists
       const business = await Business.findById(businessId);
       if (!business) {
-        return res.status(404).json({
+        return errorResponseHelper(res, {
           success: false,
           message: 'Business not found'
         });
@@ -680,7 +778,7 @@ class BusinessSubscriptionController {
         status: 'active'
       }).populate('paymentPlan', 'name planType price');
 
-      res.status(200).json({
+          successResponseHelper(res, {
         success: true,
         message: 'Available payment plans retrieved successfully',
         data: {
@@ -690,7 +788,7 @@ class BusinessSubscriptionController {
       });
     } catch (error) {
       console.error('Error fetching available plans:', error);
-      res.status(500).json({
+      errorResponseHelper(res, {
         success: false,
         message: 'Failed to fetch available plans',
         error: error.message
@@ -708,7 +806,7 @@ class BusinessSubscriptionController {
       // Verify business exists
       const business = await Business.findById(businessId);
       if (!business) {
-        return res.status(404).json({
+        return errorResponseHelper(res, {
           success: false,
           message: 'Business not found'
         });
@@ -734,7 +832,7 @@ class BusinessSubscriptionController {
       }).populate('paymentPlan', 'name planType price features maxBusinesses maxReviews')
         .sort({ createdAt: -1 });
 
-      res.status(200).json({
+          successResponseHelper(res, {
         success: true,
         message: 'Business payment plans retrieved successfully',
         data: {
@@ -746,7 +844,7 @@ class BusinessSubscriptionController {
       });
     } catch (error) {
       console.error('Error fetching business payment plans:', error);
-      res.status(500).json({
+      errorResponseHelper(res, {
         success: false,
         message: 'Failed to fetch business payment plans',
         error: error.message
@@ -764,7 +862,7 @@ class BusinessSubscriptionController {
       // Verify business exists
       const business = await Business.findById(businessId);
       if (!business) {
-        return res.status(404).json({
+        return errorResponseHelper(res, {
           success: false,
           message: 'Business not found'
         });
@@ -811,7 +909,7 @@ class BusinessSubscriptionController {
         };
       });
 
-      res.status(200).json({
+            successResponseHelper(res, {
         success: true,
         message: 'Boost payment plans retrieved successfully',
         data: {
@@ -825,7 +923,7 @@ class BusinessSubscriptionController {
       });
     } catch (error) {
       console.error('Error fetching boost payment plans:', error);
-      res.status(500).json({
+      errorResponseHelper(res, {
         success: false,
         message: 'Failed to fetch boost payment plans',
         error: error.message
@@ -843,7 +941,7 @@ class BusinessSubscriptionController {
       // Verify business exists
       const business = await Business.findById(businessId);
       if (!business) {
-        return res.status(404).json({
+        return errorResponseHelper(res, {
           success: false,
           message: 'Business not found'
         });
@@ -876,7 +974,7 @@ class BusinessSubscriptionController {
       }).populate('paymentPlan', 'name planType price features maxBusinesses maxReviews maxBoostPerDay')
         .sort({ createdAt: -1 });
 
-      res.status(200).json({
+      successResponseHelper(res, {
         success: true,
         message: 'All payment plans retrieved successfully',
         data: {
@@ -901,7 +999,7 @@ class BusinessSubscriptionController {
       });
     } catch (error) {
       console.error('Error fetching all payment plans:', error);
-      res.status(500).json({
+      errorResponseHelper(res, {
         success: false,
         message: 'Failed to fetch all payment plans',
         error: error.message
@@ -922,7 +1020,7 @@ class BusinessSubscriptionController {
       });
 
       if (!subscription) {
-        return res.status(404).json({
+        return errorResponseHelper(res, {
           success: false,
           message: 'Subscription not found'
         });
@@ -936,27 +1034,27 @@ class BusinessSubscriptionController {
           subscription.status = 'active';
           await subscription.save();
 
-          res.status(200).json({
+          successResponseHelper(res, {
             success: true,
             message: 'Payment confirmed and subscription activated',
             data: subscription
           });
         } else {
-          res.status(400).json({
+          errorResponseHelper(res, {
             success: false,
             message: 'Payment not completed successfully'
           });
         }
       } catch (stripeError) {
         console.error('Stripe verification error:', stripeError);
-        res.status(500).json({
+        errorResponseHelper(res, {
           success: false,
           message: 'Failed to verify payment with Stripe'
         });
       }
     } catch (error) {
       console.error('Error confirming payment:', error);
-      res.status(500).json({
+      errorResponseHelper(res, {
         success: false,
         message: 'Failed to confirm payment',
         error: error.message
@@ -971,36 +1069,96 @@ class BusinessSubscriptionController {
     try {
       // Get the business owner ID from the authenticated user
       const businessOwnerId = req.businessOwner?._id || req.user?._id;
+      const { page = 1, limit = 10, queryText, status, sort = 'createdAt', sortBy = 'desc', startDate, endDate } = req.query;
       
       if (!businessOwnerId) {
-        return res.status(401).json({
+        return errorResponseHelper(res, {
           success: false,
           message: 'Unauthorized access'
         });
       }
 
-      // Find all businesses owned by this user
-      const businesses = await Business.find({ businessOwner: businessOwnerId })
+      // Build business query with filters
+      const businessQuery = { businessOwner: businessOwnerId };
+      
+      if (queryText) {
+        businessQuery.$or = [
+          { businessName: { $regex: queryText, $options: 'i' } },
+          { businessCategory: { $regex: queryText, $options: 'i' } },
+          { businessType: { $regex: queryText, $options: 'i' } }
+        ];
+      }
+
+      if (status) {
+        businessQuery.status = status;
+      }
+
+      // Build subscription query with filters
+      const subscriptionQuery = { 
+        business: { $in: [] }, // Will be populated after getting businesses
+        subscriptionType: 'business'
+      };
+
+      if (startDate || endDate) {
+        subscriptionQuery.createdAt = {};
+        if (startDate) {
+          subscriptionQuery.createdAt.$gte = new Date(startDate);
+        }
+        if (endDate) {
+          subscriptionQuery.createdAt.$lte = new Date(endDate);
+        }
+      }
+
+      // Find all businesses owned by this user with filters
+      const businesses = await Business.find(businessQuery)
         .select('_id businessName businessCategory businessType status createdAt businessLogo businessAddress');
 
       if (businesses.length === 0) {
-        return res.status(200).json({
+        return errorResponseHelper(res, {
           success: true,
           message: 'No businesses found for this user',
-          data: []
+          data: {
+            businesses: [],
+            allSubscriptions: [],
+            summary: {
+              totalBusinesses: 0,
+              totalSubscriptions: 0,
+              totalActiveSubscriptions: 0,
+              totalExpiredSubscriptions: 0,
+              totalInactiveSubscriptions: 0
+            },
+            pagination: {
+              currentPage: parseInt(page),
+              totalPages: 0,
+              totalItems: 0,
+              itemsPerPage: parseInt(limit)
+            }
+          }
         });
       }
 
       const businessIds = businesses.map(b => b._id);
+      subscriptionQuery.business.$in = businessIds;
 
-      // Find all business plan subscriptions for these businesses with populated data
-      const allSubscriptions = await Subscription.find({ 
-        business: { $in: businessIds },
-        subscriptionType: 'business'
-      })
+      // Apply pagination to subscriptions
+      const pageNum = parseInt(page);
+      const limitNum = parseInt(limit);
+      const skip = (pageNum - 1) * limitNum;
+
+      // Build sort object
+      const sortObj = {};
+      sortObj[sort] = sortBy === 'desc' ? -1 : 1;
+
+      // Get total count for pagination
+      const totalSubscriptions = await Subscription.countDocuments(subscriptionQuery);
+
+      // Find all business plan subscriptions for these businesses with populated data and pagination
+      const allSubscriptions = await Subscription.find(subscriptionQuery)
         .populate('business', 'businessName businessCategory businessType status businessLogo businessAddress businessOwner')
         .populate('paymentPlan', 'name planType price features maxBusinesses maxReviews validityDays description')
-        .sort({ createdAt: -1 });
+        .sort(sortObj)
+        .skip(skip)
+        .limit(limitNum);
 
       // Organize data by business with their subscriptions
       const organizedData = businesses.map(business => {
@@ -1016,8 +1174,8 @@ class BusinessSubscriptionController {
           sub.status === 'expired' || (sub.expiresAt && new Date() > sub.expiresAt)
         );
 
-        const pendingSubscriptions = businessSubscriptions.filter(sub => 
-          sub.status === 'pending'
+        const inactiveSubscriptions = businessSubscriptions.filter(sub => 
+          sub.status === 'inactive'
         );
 
         return {
@@ -1035,7 +1193,7 @@ class BusinessSubscriptionController {
           subscriptionCount: businessSubscriptions.length,
           activeSubscriptions: activeSubscriptions,
           expiredSubscriptions: expiredSubscriptions,
-          pendingSubscriptions: pendingSubscriptions,
+          inactiveSubscriptions: inactiveSubscriptions,
           hasActiveSubscription: activeSubscriptions.length > 0,
           currentActiveSubscription: activeSubscriptions[0] || null
         };
@@ -1046,9 +1204,9 @@ class BusinessSubscriptionController {
       const totalExpiredSubscriptions = allSubscriptions.filter(sub => 
         sub.status === 'expired' || (sub.expiresAt && new Date() > sub.expiresAt)
       ).length;
-      const totalPendingSubscriptions = allSubscriptions.filter(sub => sub.status === 'pending').length;
+      const totalInactiveSubscriptions = allSubscriptions.filter(sub => sub.status === 'inactive').length;
 
-      res.status(200).json({
+      successResponseHelper(res, {
         success: true,
         message: 'All business plan subscriptions retrieved successfully',
         data: {
@@ -1059,14 +1217,22 @@ class BusinessSubscriptionController {
             totalSubscriptions: allSubscriptions.length,
             totalActiveSubscriptions,
             totalExpiredSubscriptions,
-            totalPendingSubscriptions,
+            totalInactiveSubscriptions,
             averageSubscriptionsPerBusiness: businesses.length > 0 ? (allSubscriptions.length / businesses.length).toFixed(2) : 0
+          },
+          pagination: {
+            currentPage: pageNum,
+            totalPages: Math.ceil(totalSubscriptions / limitNum),
+            totalItems: totalSubscriptions,
+            itemsPerPage: limitNum,
+            hasNextPage: pageNum < Math.ceil(totalSubscriptions / limitNum),
+            hasPrevPage: pageNum > 1
           }
         }
       });
     } catch (error) {
       console.error('Error fetching all business plan subscriptions:', error);
-      res.status(500).json({
+      errorResponseHelper(res, {
         success: false,
         message: 'Failed to fetch all business plan subscriptions',
         error: error.message
@@ -1081,20 +1247,52 @@ class BusinessSubscriptionController {
     try {
       // Get the business owner ID from the authenticated user
       const businessOwnerId = req.businessOwner?._id || req.user?._id;
+      const { page = 1, limit = 10, queryText, status, sort = 'createdAt', sortBy = 'desc', startDate, endDate } = req.query;
       
       if (!businessOwnerId) {
-        return res.status(401).json({
+        return errorResponseHelper(res, {
           success: false,
           message: 'Unauthorized access'
         });
       }
 
-      // Find all businesses owned by this user
-      const businesses = await Business.find({ businessOwner: businessOwnerId })
-        .select('_id businessName businessCategory businessType status createdAt businessLogo businessAddress');
+      // Build business query with filters
+      const businessQuery = { businessOwner: businessOwnerId };
+      
+      if (queryText) {
+        businessQuery.$or = [
+          { businessName: { $regex: queryText, $options: 'i' } },
+          { businessCategory: { $regex: queryText, $options: 'i' } },
+          { businessType: { $regex: queryText, $options: 'i' } }
+        ];
+      }
+
+      if (status) {
+        businessQuery.status = status;
+      }
+
+      // Build subscription query with filters
+      const subscriptionQuery = { 
+        business: { $in: [] }, // Will be populated after getting businesses
+        subscriptionType: 'boost'
+      };
+
+      if (startDate || endDate) {
+        subscriptionQuery.createdAt = {};
+        if (startDate) {
+          subscriptionQuery.createdAt.$gte = new Date(startDate);
+        }
+        if (endDate) {
+          subscriptionQuery.createdAt.$lte = new Date(endDate);
+        }
+      }
+
+      // Find all businesses owned by this user with filters
+      const businesses = await Business.find(businessQuery)
+        .select('_id businessName businessCategory businessType status createdAt businessLogo businessAddress businessOwner');
 
       if (businesses.length === 0) {
-        return res.status(200).json({
+        return errorResponseHelper(res, {
           success: true,
           message: 'No businesses found for this user',
           data: {
@@ -1105,21 +1303,41 @@ class BusinessSubscriptionController {
               totalSubscriptions: 0,
               totalActiveSubscriptions: 0,
               totalExpiredSubscriptions: 0
+            },
+            pagination: {
+              currentPage: parseInt(page),
+              totalPages: 0,
+              totalItems: 0,
+              itemsPerPage: parseInt(limit)
             }
           }
         });
       }
 
       const businessIds = businesses.map(b => b._id);
+      subscriptionQuery.business.$in = businessIds;
 
-      // Find all boost subscriptions for these businesses with populated data
-      const allSubscriptions = await Subscription.find({ 
-        business: { $in: businessIds },
-        subscriptionType: 'boost'
-      })
-        .populate('business', 'businessName businessCategory businessType status businessLogo businessAddress businessOwner')
+      // Apply pagination to subscriptions
+      const pageNum = parseInt(page);
+      const limitNum = parseInt(limit);
+      const skip = (pageNum - 1) * limitNum;
+
+      // Build sort object
+      const sortObj = {};
+      sortObj[sort] = sortBy === 'desc' ? -1 : 1;
+
+      // Get total count for pagination
+      const totalSubscriptions = await Subscription.countDocuments(subscriptionQuery);
+
+      // Find all boost subscriptions for these businesses with populated data and pagination
+      const allSubscriptions = await Subscription.find(subscriptionQuery)
+        .populate('business', 'businessName businessCategory businessType status businessLogo businessAddress businessOwner createdAt')
         .populate('paymentPlan', 'name planType price features maxBoostPerDay validityDays description')
-        .sort({ createdAt: -1 });
+        .sort(sortObj)
+        .skip(skip)
+        .limit(limitNum);
+
+
 
       // Organize data by business with their boost subscriptions
       const organizedData = businesses.map(business => {
@@ -1130,13 +1348,21 @@ class BusinessSubscriptionController {
         const activeBoostSubscriptions = businessBoostSubscriptions.filter(sub => 
           sub.status === 'active'
         );
-        
+
+        const pendingBoostSubscriptions = businessBoostSubscriptions.filter(sub => 
+          sub.status === 'pending'
+        );
+
+        const cancelledBoostSubscriptions = businessBoostSubscriptions.filter(sub => 
+          sub.status === 'cancelled'
+        );
         const expiredBoostSubscriptions = businessBoostSubscriptions.filter(sub => 
           sub.status === 'expired' || (sub.expiresAt && new Date() > sub.expiresAt)
         );
 
-        const pendingBoostSubscriptions = businessBoostSubscriptions.filter(sub => 
-          sub.status === 'pending'
+
+        const inactiveBoostSubscriptions = businessBoostSubscriptions.filter(sub => 
+          sub.status === 'inactive'
         );
 
         return {
@@ -1153,8 +1379,10 @@ class BusinessSubscriptionController {
           boostSubscriptions: businessBoostSubscriptions,
           subscriptionCount: businessBoostSubscriptions.length,
           activeBoostSubscriptions: activeBoostSubscriptions,
-          expiredBoostSubscriptions: expiredBoostSubscriptions,
           pendingBoostSubscriptions: pendingBoostSubscriptions,
+          cancelledBoostSubscriptions: cancelledBoostSubscriptions,
+          expiredBoostSubscriptions: expiredBoostSubscriptions,
+          inactiveBoostSubscriptions: inactiveBoostSubscriptions,
           hasActiveBoostSubscription: activeBoostSubscriptions.length > 0,
           currentActiveBoostSubscription: activeBoostSubscriptions[0] || null
         };
@@ -1162,12 +1390,15 @@ class BusinessSubscriptionController {
 
       // Calculate summary statistics
       const totalActiveBoostSubscriptions = allSubscriptions.filter(sub => sub.status === 'active').length;
+      const totalPendingBoostSubscriptions = allSubscriptions.filter(sub => sub.status === 'pending').length;
+      const totalCancelledBoostSubscriptions = allSubscriptions.filter(sub => sub.status === 'cancelled').length;
+
       const totalExpiredBoostSubscriptions = allSubscriptions.filter(sub => 
         sub.status === 'expired' || (sub.expiresAt && new Date() > sub.expiresAt)
       ).length;
-      const totalPendingBoostSubscriptions = allSubscriptions.filter(sub => sub.status === 'pending').length;
+      const totalInactiveBoostSubscriptions = allSubscriptions.filter(sub => sub.status === 'inactive').length;
 
-      res.status(200).json({
+      successResponseHelper(res, {
         success: true,
         message: 'All boost subscriptions retrieved successfully',
         data: {
@@ -1177,17 +1408,1933 @@ class BusinessSubscriptionController {
             totalBusinesses: businesses.length,
             totalSubscriptions: allSubscriptions.length,
             totalActiveBoostSubscriptions: totalActiveBoostSubscriptions,
-            totalExpiredBoostSubscriptions: totalExpiredBoostSubscriptions,
             totalPendingBoostSubscriptions: totalPendingBoostSubscriptions,
+            totalCancelledBoostSubscriptions: totalCancelledBoostSubscriptions,
+            totalExpiredBoostSubscriptions: totalExpiredBoostSubscriptions,
+            totalInactiveBoostSubscriptions: totalInactiveBoostSubscriptions,
             averageBoostSubscriptionsPerBusiness: businesses.length > 0 ? (allSubscriptions.length / businesses.length).toFixed(2) : 0
+          },
+          pagination: {
+            currentPage: pageNum,
+            totalPages: Math.ceil(totalSubscriptions / limitNum),
+            totalItems: totalSubscriptions,
+            itemsPerPage: limitNum,
+            hasNextPage: pageNum < Math.ceil(totalSubscriptions / limitNum),
+            hasPrevPage: pageNum > 1
           }
         }
       });
     } catch (error) {
       console.error('Error fetching all boost subscriptions:', error);
-      res.status(500).json({
+      errorResponseHelper(res, {
         success: false,
         message: 'Failed to fetch all boost subscriptions',
+        error: error.message
+      });
+    }
+  }
+
+  /**
+   * Get business subscription details with plan information
+   */
+  static async getBusinessSubscriptionDetails(req, res) {
+    try {
+      const { businessId } = req.params;
+
+      // Verify business exists and user has access
+      const business = await Business.findById(businessId);
+      if (!business) {
+        return errorResponseHelper(res, {
+          success: false,
+          message: 'Business not found'
+        });
+      }
+
+      // Get active subscription with populated plan details
+      let subscriptionDetails = null;
+      if (business.activeSubscriptionId) {
+        const subscription = await Subscription.findById(business.activeSubscriptionId)
+          .populate('paymentPlan', 'name description planType price features maxBoostPerDay validityHours');
+        
+        if (subscription) {
+          subscriptionDetails = {
+            _id: subscription._id,
+            subscriptionType: subscription.subscriptionType,
+            status: subscription.status,
+            amount: subscription.amount,
+            currency: subscription.currency,
+            createdAt: subscription.createdAt,
+            expiresAt: subscription.expiresAt,
+            isLifetime: subscription.isLifetime,
+            plan: subscription.paymentPlan,
+            boostUsage: subscription.boostUsage,
+            maxBoostPerDay: subscription.maxBoostPerDay
+          };
+        }
+      }
+
+      successResponseHelper(res, {
+        success: true,
+        message: 'Business subscription details retrieved successfully',
+        data: {
+          business: {
+            _id: business._id,
+            businessName: business.businessName,
+            isBoosted: business.isBoosted,
+            boostExpiryAt: business.boostExpiryAt,
+            activeSubscriptionId: business.activeSubscriptionId
+          },
+          subscription: subscriptionDetails
+        }
+      });
+    } catch (error) {
+      console.error('Error fetching business subscription details:', error);
+      errorResponseHelper(res, {
+        success: false,
+        message: 'Failed to fetch business subscription details',
+        error: error.message
+      });
+    }
+  }
+
+  /**
+   * Handle boost expiry and update business status
+   */
+  static async handleBoostExpiry(req, res) {
+    try {
+      const { businessId } = req.params;
+
+      // Verify business exists and user has access
+      const business = await Business.findById(businessId);
+      if (!business) {
+        return errorResponseHelper(res, {
+          success: false,
+          message: 'Business not found'
+        });
+      }
+
+      // Check if boost has expired
+      if (business.isBoosted && business.boostExpiryAt && new Date() > business.boostExpiryAt) {
+        // Update business boost status - remove all boost references
+        business.isBoosted = false;
+        business.isBoostActive = false;
+        business.boostExpiryAt = null;
+        business.boostSubscriptionId = null;
+        // Keep activeSubscriptionId if there's a business subscription
+        if (!business.businessSubscriptionId) {
+          business.activeSubscriptionId = null;
+        }
+        await business.save();
+
+        // Update subscription status
+        if (business.boostSubscriptionId) {
+          const subscription = await Subscription.findById(business.boostSubscriptionId);
+          if (subscription && subscription.subscriptionType === 'boost') {
+            subscription.status = 'expired';
+            await subscription.save();
+          }
+        }
+
+        // Remove from boost queue
+        const boostQueue = await BoostQueue.findOne({ 
+          'currentlyActive.business': businessId 
+        });
+        if (boostQueue) {
+          await boostQueue.removeFromQueue(businessId);
+        }
+
+        successResponseHelper(res, {
+          success: true,
+          message: 'Boost expired and business status updated',
+          data: {
+            business: {
+              _id: business._id,
+              businessName: business.businessName,
+              isBoosted: business.isBoosted,
+              isBoostActive: business.isBoostActive,
+              boostExpiryAt: business.boostExpiryAt,
+              boostSubscriptionId: business.boostSubscriptionId,
+              activeSubscriptionId: business.activeSubscriptionId
+            }
+          }
+        });
+      } else {
+        res.status(200).json({
+          success: true,
+          message: 'Boost is still active',
+          data: {
+            business: {
+              _id: business._id,
+              businessName: business.businessName,
+              isBoosted: business.isBoosted,
+              isBoostActive: business.isBoostActive,
+              boostExpiryAt: business.boostExpiryAt
+            }
+          }
+        });
+      }
+    } catch (error) {
+      console.error('Error handling boost expiry:', error);
+      errorResponseHelper(res, {
+        success: false,
+        message: 'Failed to handle boost expiry',
+        error: error.message
+      });
+    }
+  }
+
+  /**
+   * Confirm payment and activate subscription
+   */
+  static async confirmPayment(req, res) {
+    try {
+      const { businessId } = req.params;
+      const { paymentIntentId, subscriptionId } = req.body;
+
+      // Verify business exists and user has access
+      const business = await Business.findById(businessId);
+      if (!business) {
+        return errorResponseHelper(res, {
+          success: false,
+          message: 'Business not found'
+        });
+      }
+
+      // Verify subscription exists
+      const subscription = await Subscription.findById(subscriptionId);
+      if (!subscription) {
+        return errorResponseHelper(res, {
+          success: false,
+          message: 'Subscription not found'
+        });
+      }
+
+      // Verify payment intent
+      const paymentIntent = await StripeHelper.getPaymentIntent(paymentIntentId);
+      if (!paymentIntent || paymentIntent.status !== 'succeeded') {
+        return errorResponseHelper(res, {
+          success: false,
+          message: 'Payment not completed'
+        });
+      }
+
+      // Update subscription status
+      subscription.status = 'active';
+      subscription.paymentId = paymentIntentId;
+      
+      // Set expiry for boost plans
+      if (subscription.subscriptionType === 'boost') {
+        const paymentPlan = await PaymentPlan.findById(subscription.paymentPlan);
+        if (paymentPlan && paymentPlan.validityHours) {
+          subscription.expiresAt = new Date(Date.now() + paymentPlan.validityHours * 60 * 60 * 1000);
+        }
+        
+        // Handle boost queue activation
+        if (subscription.boostQueueInfo && subscription.boostQueueInfo.queueId) {
+          const boostQueue = await BoostQueue.findById(subscription.boostQueueInfo.queueId);
+          if (boostQueue) {
+            // Check if this business is already active (immediately activated)
+            const activeBusiness = boostQueue.queue.find(item => 
+              item.business.toString() === businessId && item.status === 'active'
+            );
+            
+            if (activeBusiness) {
+              // Business is already active, update subscription info
+              subscription.boostQueueInfo.isCurrentlyActive = true;
+              subscription.boostQueueInfo.boostStartTime = activeBusiness.boostStartTime;
+              subscription.boostQueueInfo.boostEndTime = activeBusiness.boostEndTime;
+              subscription.boostQueueInfo.queuePosition = 0;
+              
+                              // Update business boost status
+                business.isBoosted = true;
+                business.isBoostActive = true;
+                business.boostExpiryAt = activeBusiness.boostEndTime;
+            } else {
+              // Check if this business is next in queue
+              const nextBusiness = boostQueue.queue.find(item => item.status === 'pending');
+              if (nextBusiness && nextBusiness.business.toString() === businessId) {
+                // Activate this business's boost
+                await boostQueue.activateNext();
+                
+                // Update subscription with active status
+                subscription.boostQueueInfo.isCurrentlyActive = true;
+                subscription.boostQueueInfo.boostStartTime = boostQueue.currentlyActive.boostStartTime;
+                subscription.boostQueueInfo.boostEndTime = boostQueue.currentlyActive.boostEndTime;
+                subscription.boostQueueInfo.queuePosition = 0;
+                
+                // Update business boost status
+                business.isBoosted = true;
+                business.isBoostActive = true;
+                business.boostExpiryAt = boostQueue.currentlyActive.boostEndTime;
+              }
+            }
+          }
+        }
+      }
+
+      await subscription.save();
+
+      // Update business with subscription details based on type
+      if (subscription.subscriptionType === 'business') {
+        // Check if this is an upgrade (has upgrade metadata)
+        if (subscription.metadata && subscription.metadata.upgradeFrom) {
+          // This is an upgrade - cancel the old subscription
+          const oldSubscription = await Subscription.findOne({
+            business: businessId,
+            subscriptionType: 'business',
+            status: 'active',
+            'metadata.upgradeFromId': subscription.metadata.upgradeFromId
+          });
+          
+          if (oldSubscription) {
+            oldSubscription.status = 'upgraded';
+            oldSubscription.metadata = {
+              ...oldSubscription.metadata,
+              upgradedTo: subscription._id,
+              upgradedAt: new Date(),
+              upgradeReason: 'user_requested'
+            };
+            await oldSubscription.save();
+            console.log(`Old subscription ${oldSubscription._id} marked as upgraded`);
+          }
+        }
+        
+        business.businessSubscriptionId = subscription._id;
+        business.activeSubscriptionId = subscription._id;
+      } else if (subscription.subscriptionType === 'boost') {
+        business.boostSubscriptionId = subscription._id;
+        business.activeSubscriptionId = subscription._id;
+        
+        // For boost subscriptions, check if boost is currently active
+        if (subscription.boostQueueInfo && subscription.boostQueueInfo.isCurrentlyActive) {
+          business.isBoosted = true;
+          business.isBoostActive = true;
+          business.boostExpiryAt = subscription.expiresAt;
+        } else {
+          // Boost is in queue or not yet active
+          business.isBoosted = false;
+          business.isBoostActive = false;
+          business.boostExpiryAt = null;
+        }
+      }
+      business.stripeCustomerId = subscription.stripeCustomerId;
+
+      await business.save();
+
+      // Send notifications based on subscription type
+      try {
+        const paymentPlan = await PaymentPlan.findById(subscription.paymentPlan);
+        
+        if (subscription.subscriptionType === 'business') {
+          // Send business subscription notification
+          await sendSubscriptionNotifications.businessSubscriptionCreated(businessId, {
+            subscriptionId: subscription._id.toString(),
+            planName: paymentPlan.name,
+            amount: subscription.amount,
+            currency: subscription.currency
+          });
+
+          // If this is an upgrade, send upgrade notification
+          if (subscription.metadata && subscription.metadata.upgradeFrom) {
+            await sendSubscriptionNotifications.businessSubscriptionUpgraded(businessId, {
+              subscriptionId: subscription._id.toString(),
+              oldPlanName: subscription.metadata.upgradeFrom,
+              newPlanName: paymentPlan.name,
+              priceDifference: subscription.metadata.priceDifference
+            });
+          }
+        } else if (subscription.subscriptionType === 'boost') {
+          // Send boost subscription notification
+          await sendSubscriptionNotifications.boostSubscriptionCreated(businessId, {
+            subscriptionId: subscription._id.toString(),
+            planName: paymentPlan.name,
+            validityHours: paymentPlan.validityHours,
+            categoryName: subscription.metadata?.categoryName || 'Unknown Category'
+          });
+        }
+
+        // Send payment success notification
+        await sendPaymentNotifications.paymentSuccessful(businessId, {
+          paymentId: paymentIntentId,
+          amount: subscription.amount,
+          currency: subscription.currency,
+          planName: paymentPlan.name
+        });
+      } catch (notificationError) {
+        console.error('Failed to send notifications:', notificationError);
+        // Don't fail the main operation if notifications fail
+      }
+
+      res.status(200).json({
+        success: true,
+        message: 'Payment confirmed and subscription activated',
+        data: {
+          subscription,
+          business: {
+            _id: business._id,
+            businessName: business.businessName,
+            isBoosted: business.isBoosted,
+            isBoostActive: business.isBoostActive,
+            boostExpiryAt: business.boostExpiryAt,
+            businessSubscriptionId: business.businessSubscriptionId,
+            boostSubscriptionId: business.boostSubscriptionId,
+            activeSubscriptionId: business.activeSubscriptionId
+          }
+        }
+      });
+    } catch (error) {
+      console.error('Error confirming payment:', error);
+      errorResponseHelper(res, {
+        success: false,
+        message: 'Failed to confirm payment',
+        error: error.message
+      });
+    }
+  }
+
+  /**
+   * Subscribe to boost plan with queue management
+   */
+  static async subscribeToBoostPlan(req, res) {
+    try {
+      const { businessId } = req.params;
+      const { paymentPlanId } = req.body;
+
+      // Validate required fields
+      if (!paymentPlanId) {
+          return errorResponseHelper(res, {
+          success: false,
+          message: 'Payment plan ID is required',
+          code: 'MISSING_PAYMENT_PLAN_ID'
+        });
+      }
+
+      // Verify business exists and user has access
+      const business = await Business.findById(businessId).populate('category', 'title name _id');
+      if (!business) {
+        return errorResponseHelper(res, {
+          success: false,
+          message: 'Business not found',
+          code: 'BUSINESS_NOT_FOUND'
+        });
+      }
+
+      // Validate that business has a category
+      if (!business.category || !business.category._id) {
+        console.log('Business category validation failed:', {
+          businessId: business._id,
+          hasCategory: !!business.category,
+          categoryId: business.category?._id,
+          categoryData: business.category
+        });
+        return errorResponseHelper(res, {
+          success: false,
+          message: 'Business category is required for boost subscriptions. Please update your business profile and select a category before purchasing a boost.',
+          code: 'BUSINESS_CATEGORY_REQUIRED',
+          data: {
+            businessId: business._id,
+            businessName: business.businessName,
+            action: 'update_business_category'
+          }
+        });
+      }
+
+      // Validate that category has a title
+      if (!business.category.title) {
+        console.log('Business category title validation failed:', {
+          businessId: business._id,
+          categoryId: business.category._id,
+          categoryTitle: business.category.title,
+          categoryData: business.category
+        });
+        return errorResponseHelper(res, {
+          success: false,
+          message: 'Business category information is incomplete. Please contact support.',
+          code: 'CATEGORY_INFO_INCOMPLETE'
+        });
+      }
+
+      // Verify business ownership
+      if (business.businessOwner.toString() !== req.businessOwner._id.toString()) {
+        return errorResponseHelper(res, {
+          success: false,
+          message: 'Access denied. You can only manage your own businesses.',
+          code: 'ACCESS_DENIED'
+        });
+      }
+
+      // Get payment plan
+      const paymentPlan = await PaymentPlan.findById(paymentPlanId);
+      if (!paymentPlan) {
+        return errorResponseHelper(res, {
+          success: false,
+          message: 'Payment plan not found',
+          code: 'PAYMENT_PLAN_NOT_FOUND'
+        });
+      }
+
+      // Verify it's a boost plan
+      if (paymentPlan.planType !== 'boost') {
+        return errorResponseHelper(res, {
+          success: false,
+          message: 'This endpoint is only for boost plans',
+          code: 'INVALID_PLAN_TYPE'
+        });
+      }
+
+      if (!paymentPlan.isActive) {
+        return errorResponseHelper(res, {
+          success: false,
+          message: 'Payment plan is not active',
+          code: 'PAYMENT_PLAN_INACTIVE'
+        });
+      }
+
+      // Check if business already has an active or pending boost subscription
+      const existingBoostSubscription = await Subscription.findOne({
+        business: businessId,
+        subscriptionType: 'boost',
+        status: { $in: ['active', 'pending'] }
+      });
+
+      if (existingBoostSubscription) {
+        return errorResponseHelper(res, {
+          success: false,
+          message: 'Business already has an active or pending boost subscription. Please cancel the existing one first.',
+          data: {
+            existingSubscription: {
+              _id: existingBoostSubscription._id,
+              status: existingBoostSubscription.status,
+              createdAt: existingBoostSubscription.createdAt
+            }
+          }
+        });
+      }
+
+      // Create or get Stripe customer
+      let stripeCustomer;
+      try {
+        if (business.stripeCustomerId) {
+          stripeCustomer = await StripeHelper.getCustomer(business.stripeCustomerId);
+        } else {
+          stripeCustomer = await StripeHelper.createCustomer({
+            email: business.email,
+            name: business.businessName,
+            businessId: business._id.toString(),
+            userId: business.businessOwner.toString()
+          });
+          
+          business.stripeCustomerId = stripeCustomer.id;
+          await business.save();
+        }
+      } catch (error) {
+        console.log('Error with existing Stripe customer, creating new one:', error.message);
+        stripeCustomer = await StripeHelper.createCustomer({
+          email: business.email,
+          name: business.businessName,
+          businessId: business._id.toString(),
+          userId: business.businessOwner.toString()
+        });
+        
+        business.stripeCustomerId = stripeCustomer.id;
+        await business.save();
+      }
+
+      // Create payment intent
+      const paymentIntent = await StripeHelper.createPaymentIntent({
+        amount: paymentPlan.price,
+        currency: paymentPlan.currency,
+        customerId: stripeCustomer.id,
+        businessId: business._id.toString(),
+        planType: 'boost',
+        planId: paymentPlanId,
+        receiptEmail: business.email
+      });
+
+      // Create subscription in database
+      const subscription = new Subscription({
+        business: businessId,
+        paymentPlan: paymentPlanId,
+        subscriptionType: 'boost',
+        stripeCustomerId: stripeCustomer.id,
+        status: 'inactive', // Will be updated to 'active' after payment confirmation
+        amount: paymentPlan.price,
+        currency: paymentPlan.currency,
+        isLifetime: false,
+        expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000), // Boost plans expire in 24 hours
+        paymentId: paymentIntent.id,
+        features: paymentPlan.features || [],
+        maxBoostPerDay: paymentPlan.maxBoostPerDay || 0,
+        validityHours: paymentPlan.validityHours || 24,
+        boostQueueInfo: {
+          category: business.category._id,
+          estimatedStartTime: null,
+          estimatedEndTime: null,
+          isCurrentlyActive: false
+        },
+        metadata: {
+          planName: paymentPlan.name,
+          businessName: business.businessName,
+          categoryName: business.category.title
+        }
+      });
+
+      await subscription.save();
+
+      // Update business with boost subscription ID but keep boost status false until active
+      business.boostSubscriptionId = subscription._id;
+      business.activeSubscriptionId = subscription._id;
+      business.isBoosted = false; // Will be set to true when boost actually starts
+      business.isBoostActive = false; // Will be set to true when boost actually starts
+      await business.save();
+
+      // Get or create boost queue for this category
+      let boostQueue = await BoostQueue.findOne({ category: business.category._id });
+      
+      if (!boostQueue) {
+        console.log('Creating new boost queue for category:', {
+          categoryId: business.category._id,
+          categoryName: business.category.title,
+          businessCategory: business.category
+        });
+        
+        try {
+          boostQueue = new BoostQueue({
+            category: business.category._id,
+            categoryName: business.category.title,
+            queue: [],
+            currentlyActive: {
+              business: null,
+              boostStartTime: null,
+              boostEndTime: null,
+              subscription: null
+            }
+          });
+          await boostQueue.save();
+          console.log('Boost queue created successfully');
+        } catch (error) {
+          console.error('Error creating boost queue:', error);
+          console.error('Boost queue data:', {
+            category: business.category._id,
+            categoryName: business.category.title,
+            businessCategoryType: typeof business.category,
+            businessCategoryKeys: Object.keys(business.category || {})
+          });
+          throw error;
+        }
+      }
+
+      // Check if there's already a business in queue or currently active for this category
+      const hasActiveOrQueuedBusiness = boostQueue.currentlyActive.business || 
+                                       boostQueue.queue.some(item => item.status === 'pending');
+
+      if (hasActiveOrQueuedBusiness) {
+        // Add business to queue since there's already a business in this category
+        const queueData = {
+          business: business._id,
+          businessName: business.businessName,
+          businessOwner: business.businessOwner,
+          subscription: subscription._id,
+          paymentIntentId: paymentIntent.id
+        };
+
+        await boostQueue.addToQueue(queueData);
+      } else {
+        // No business in queue or currently active, activate this business immediately
+        const now = new Date();
+        const boostEndTime = new Date(now.getTime() + 24 * 60 * 60 * 1000); // 24 hours
+
+        // Set as currently active
+        boostQueue.currentlyActive = {
+          business: business._id,
+          boostStartTime: now,
+          boostEndTime: boostEndTime,
+          subscription: subscription._id
+        };
+
+        // Add to queue as active
+        const queueData = {
+          business: business._id,
+          businessName: business.businessName,
+          businessOwner: business.businessOwner,
+          subscription: subscription._id,
+          paymentIntentId: paymentIntent.id,
+          status: 'active',
+          position: 1,
+          boostStartTime: now,
+          boostEndTime: boostEndTime,
+          estimatedStartTime: now,
+          estimatedEndTime: boostEndTime
+        };
+
+        boostQueue.queue.push(queueData);
+        await boostQueue.save();
+
+        // Update subscription status to active
+        subscription.status = 'active';
+        await subscription.save();
+
+        // Update business boost status to active since boost starts immediately
+        business.isBoosted = true;
+        business.isBoostActive = true;
+        business.boostExpiryAt = boostEndTime;
+        await business.save();
+      }
+
+      // Update subscription with queue info
+      const queueItem = boostQueue.queue[boostQueue.queue.length - 1];
+      subscription.boostQueueInfo = {
+        queueId: boostQueue._id,
+        queuePosition: queueItem.position,
+        estimatedStartTime: queueItem.estimatedStartTime,
+        estimatedEndTime: queueItem.estimatedEndTime,
+        isCurrentlyActive: queueItem.status === 'active',
+        category: business.category._id
+      };
+
+      await subscription.save();
+
+      // Update business boost status based on queue position
+      if (queueItem.status === 'active') {
+        // Business is immediately active
+        business.isBoosted = true;
+        business.isBoostActive = true;
+        business.boostExpiryAt = queueItem.boostEndTime;
+      } else {
+        // Business is in queue - keep boost status false until it starts
+        business.isBoosted = false;
+        business.isBoostActive = false;
+        business.boostExpiryAt = null;
+      }
+      await business.save();
+
+      // Prepare response based on whether business was queued or activated immediately
+      const isImmediatelyActivated = queueItem.status === 'active';
+      const message = isImmediatelyActivated 
+        ? 'Boost subscription activated immediately. Your business is now boosted!'
+        : 'Boost subscription created successfully. Please complete payment.';
+
+      successResponseHelper(res, {
+        success: true,
+        message: message,
+        data: {
+          subscription,
+          clientSecret: paymentIntent.client_secret,
+          paymentIntentId: paymentIntent.id,
+                      queueInfo: {
+              position: queueItem.position,
+              estimatedStartTime: queueItem.estimatedStartTime,
+              estimatedEndTime: queueItem.estimatedEndTime,
+              categoryName: business.category.title,
+              isCurrentlyActive: isImmediatelyActivated,
+              status: queueItem.status
+            }
+        }
+      });
+    } catch (error) {
+      console.error('Error creating boost subscription:', error);
+      errorResponseHelper(res, {
+        success: false,
+        message: 'Failed to create boost subscription',
+        error: error.message
+      });
+    }
+  }
+
+  /**
+   * Cancel boost subscription
+   */
+  static async cancelBoostSubscription(req, res) {
+    try {
+      const { businessId } = req.params;
+
+      // Verify business exists and user has access
+      const business = await Business.findById(businessId);
+      if (!business) {
+        return errorResponseHelper(res, {
+          success: false,
+          message: 'Business not found'
+        });
+      }
+
+      // Verify business ownership
+      if (business.businessOwner.toString() !== req.businessOwner._id.toString()) {
+        return errorResponseHelper(res, {
+          success: false,
+          message: 'Access denied. You can only manage your own businesses.'
+        });
+      }
+
+      // Find boost subscription (active or pending)
+      const subscription = await Subscription.findOne({
+        business: businessId,
+        subscriptionType: 'boost',
+        status: { $in: ['active', 'pending'] }
+      });
+
+      if (!subscription) {
+          return errorResponseHelper(res, {
+          success: false,
+          message: 'No boost subscription found'
+        });
+      }
+
+      let refundProcessed = false;
+      let cancellationMessage = '';
+
+      // Handle payment based on subscription status and boost state
+      if (subscription.paymentId) {
+        try {
+          // Get payment intent to check its status
+          const paymentIntent = await StripeHelper.getPaymentIntent(subscription.paymentId);
+          
+          if (subscription.status === 'pending') {
+            // If subscription is pending, cancel the payment intent
+            await StripeHelper.cancelPaymentIntent(subscription.paymentId);
+            cancellationMessage = 'Payment intent canceled successfully';
+          } else if (subscription.status === 'active') {
+            // If subscription is active, check if boost has started
+            const boostQueue = await BoostQueue.findById(subscription.boostQueueInfo?.queueId);
+            
+            if (boostQueue) {
+              const queueItem = boostQueue.queue.find(item => 
+                item.business.toString() === businessId
+              );
+              
+              if (queueItem && queueItem.status === 'active') {
+                // Boost is active, calculate refund amount based on time used
+                const now = new Date();
+                const boostStartTime = new Date(queueItem.boostStartTime);
+                const boostEndTime = new Date(queueItem.boostEndTime);
+                const totalDuration = boostEndTime - boostStartTime;
+                const timeUsed = now - boostStartTime;
+                const timeRemaining = totalDuration - timeUsed;
+                
+                // Calculate refund percentage (minimum 50% refund if used less than 50% of time)
+                const usagePercentage = timeUsed / totalDuration;
+                let refundPercentage = 0;
+                
+                if (usagePercentage < 0.5) {
+                  // Used less than 50% of time, refund 50%
+                  refundPercentage = 0.5;
+                } else if (usagePercentage < 0.75) {
+                  // Used 50-75% of time, refund 25%
+                  refundPercentage = 0.25;
+                }
+                // If used more than 75%, no refund
+                
+                if (refundPercentage > 0) {
+                  const refundAmount = (subscription.amount * refundPercentage) / 100; // Convert from cents
+                  await StripeHelper.createRefund(subscription.paymentId, refundAmount);
+                  refundProcessed = true;
+                  cancellationMessage = `Refund processed: ${Math.round(refundPercentage * 100)}% of payment refunded`;
+                } else {
+                  cancellationMessage = 'No refund available - boost has been used for more than 75% of its duration';
+                }
+              } else {
+                // Boost hasn't started yet, full refund
+                await StripeHelper.createRefund(subscription.paymentId);
+                refundProcessed = true;
+                cancellationMessage = 'Full refund processed - boost had not started yet';
+              }
+            } else {
+              // No queue found, assume boost hasn't started, full refund
+              await StripeHelper.createRefund(subscription.paymentId);
+              refundProcessed = true;
+              cancellationMessage = 'Full refund processed';
+            }
+          }
+        } catch (error) {
+          console.error('Error processing payment cancellation/refund:', error);
+          cancellationMessage = 'Payment processing error: ' + error.message;
+        }
+      }
+
+      // Remove from boost queue
+      if (subscription.boostQueueInfo?.queueId) {
+        const boostQueue = await BoostQueue.findById(subscription.boostQueueInfo.queueId);
+        if (boostQueue) {
+          await boostQueue.removeFromQueue(businessId);
+        }
+      }
+
+      // Update subscription status
+      subscription.status = 'canceled';
+      subscription.metadata = {
+        ...subscription.metadata,
+        canceledAt: new Date(),
+        refundProcessed: refundProcessed,
+        cancellationReason: 'user_requested'
+      };
+      await subscription.save();
+
+      // Update business boost status - remove all boost references
+      business.isBoosted = false;
+      business.isBoostActive = false;
+      business.boostExpiryAt = null;
+      business.boostSubscriptionId = null;
+      business.activeSubscriptionId = null;
+      await business.save();
+
+      res.status(200).json({
+        success: true,
+        message: `Boost subscription canceled successfully. ${cancellationMessage}`,
+        data: {
+          subscription: {
+            _id: subscription._id,
+            status: subscription.status,
+            refundProcessed: refundProcessed,
+            cancellationMessage: cancellationMessage
+          },
+          business: {
+            _id: business._id,
+            businessName: business.businessName,
+            isBoosted: business.isBoosted,
+            isBoostActive: business.isBoostActive,
+            boostExpiryAt: business.boostExpiryAt,
+            boostSubscriptionId: business.boostSubscriptionId,
+            activeSubscriptionId: business.activeSubscriptionId
+          }
+        }
+      });
+    } catch (error) {
+      console.error('Error canceling boost subscription:', error);
+      errorResponseHelper(res, {
+        success: false,
+        message: 'Failed to cancel boost subscription',
+        error: error.message
+      });
+    }
+  }
+
+  /**
+   * Upgrade business subscription
+   */
+  static async upgradeBusinessSubscription(req, res) {
+    try {
+      const { businessId } = req.params;
+      const { newPaymentPlanId } = req.body;
+
+      // Validate required fields - accept both newPaymentPlanId and paymentPlanId for compatibility
+      const planId = newPaymentPlanId || req.body.paymentPlanId;
+      if (!planId) {
+        return errorResponseHelper(res, {
+          success: false,
+          message: 'New payment plan ID is required',
+          code: 'MISSING_PAYMENT_PLAN_ID'
+        });
+      }
+
+      // Verify business exists and user has access
+      const business = await Business.findById(businessId);
+      if (!business) {
+        return errorResponseHelper(res, {
+          success: false,
+          message: 'Business not found',
+          code: 'BUSINESS_NOT_FOUND'
+        });
+      }
+
+      // Verify business ownership
+      if (business.businessOwner.toString() !== req.businessOwner._id.toString()) {
+        return errorResponseHelper(res, {
+          success: false,
+          message: 'Access denied. You can only manage your own businesses.',
+          code: 'ACCESS_DENIED'
+        });
+      }
+
+      // Get new payment plan
+      const newPaymentPlan = await PaymentPlan.findById(planId);
+      if (!newPaymentPlan) {
+        return errorResponseHelper(res, {
+          success: false,
+          message: 'New payment plan not found',
+          code: 'PAYMENT_PLAN_NOT_FOUND'
+        });
+      }
+
+      // Verify it's a business plan
+      if (newPaymentPlan.planType !== 'business') {
+        return errorResponseHelper(res, {
+          success: false,
+          message: 'This endpoint is only for business plans',
+          code: 'INVALID_PLAN_TYPE'
+        });
+      }
+
+      if (!newPaymentPlan.isActive) {
+        return errorResponseHelper(res, {
+          success: false,
+          message: 'New payment plan is not active',
+          code: 'PAYMENT_PLAN_INACTIVE'
+        });
+      }
+
+      // Find current business subscription
+      const currentSubscription = await Subscription.findOne({
+        business: businessId,
+        subscriptionType: 'business',
+        status: { $in: ['active', 'pending'] }
+      });
+
+      if (!currentSubscription) {
+        return errorResponseHelper(res, {
+          success: false,
+          message: 'No active business subscription found to upgrade',
+          code: 'NO_ACTIVE_SUBSCRIPTION'
+        });
+      }
+
+      // Get current payment plan
+      const currentPaymentPlan = await PaymentPlan.findById(currentSubscription.paymentPlan);
+      if (!currentPaymentPlan) {
+        return errorResponseHelper(res, {
+          success: false,
+          message: 'Current payment plan not found',
+          code: 'CURRENT_PLAN_NOT_FOUND'
+        });
+      }
+
+      // Check if it's the same plan (no upgrade needed)
+      if (newPaymentPlan._id.toString() === currentPaymentPlan._id.toString()) {
+        return errorResponseHelper(res, {
+          success: false,
+          message: 'Cannot upgrade to the same plan. Please select a different plan.',
+          code: 'SAME_PLAN_UPGRADE'
+        });
+      }
+
+      // Calculate price difference (can be negative for cheaper plans)
+      const priceDifference = newPaymentPlan.price - currentPaymentPlan.price;
+
+      // Get or create Stripe customer
+      let stripeCustomer;
+      try {
+        if (business.stripeCustomerId) {
+          stripeCustomer = await StripeHelper.getCustomer(business.stripeCustomerId);
+        } else {
+          stripeCustomer = await StripeHelper.createCustomer({
+            email: business.email,
+            name: business.businessName,
+            businessId: business._id.toString(),
+            userId: business.businessOwner.toString()
+          });
+          
+          business.stripeCustomerId = stripeCustomer.id;
+          await business.save();
+        }
+      } catch (error) {
+        console.log('Error with existing Stripe customer, creating new one:', error.message);
+        stripeCustomer = await StripeHelper.createCustomer({
+          email: business.email,
+          name: business.businessName,
+          businessId: business._id.toString(),
+          userId: business.businessOwner.toString()
+        });
+        
+        business.stripeCustomerId = stripeCustomer.id;
+        await business.save();
+      }
+
+      let paymentIntent = null;
+      let upgradeType = 'upgrade';
+      
+      if (priceDifference > 0) {
+        // More expensive plan - create payment intent for the difference
+        paymentIntent = await StripeHelper.createPaymentIntent({
+          amount: priceDifference,
+          currency: newPaymentPlan.currency,
+          customerId: stripeCustomer.id,
+          businessId: business._id.toString(),
+          planType: 'business',
+          planId: planId,
+          receiptEmail: business.email,
+          metadata: {
+            upgradeFrom: currentPaymentPlan.name,
+            upgradeTo: newPaymentPlan.name,
+            originalSubscriptionId: currentSubscription._id.toString()
+          }
+        });
+        upgradeType = 'upgrade';
+      } else if (priceDifference < 0) {
+        // Cheaper plan - no additional payment needed, but we'll create a minimal payment intent for tracking
+        paymentIntent = await StripeHelper.createPaymentIntent({
+          amount: 0, // No additional payment needed
+          currency: newPaymentPlan.currency,
+          customerId: stripeCustomer.id,
+          businessId: business._id.toString(),
+          planType: 'business',
+          planId: planId,
+          receiptEmail: business.email,
+          metadata: {
+            upgradeFrom: currentPaymentPlan.name,
+            upgradeTo: newPaymentPlan.name,
+            originalSubscriptionId: currentSubscription._id.toString(),
+            downgrade: true,
+            priceDifference: Math.abs(priceDifference)
+          }
+        });
+        upgradeType = 'downgrade';
+      } else {
+        // Same price - create a minimal payment intent for tracking
+        paymentIntent = await StripeHelper.createPaymentIntent({
+          amount: 0,
+          currency: newPaymentPlan.currency,
+          customerId: stripeCustomer.id,
+          businessId: business._id.toString(),
+          planType: 'business',
+          planId: planId,
+          receiptEmail: business.email,
+          metadata: {
+            upgradeFrom: currentPaymentPlan.name,
+            upgradeTo: newPaymentPlan.name,
+            originalSubscriptionId: currentSubscription._id.toString(),
+            samePrice: true
+          }
+        });
+        upgradeType = 'switch';
+      }
+
+      // Create new subscription record
+      const newSubscription = new Subscription({
+        business: businessId,
+        paymentPlan: planId,
+        subscriptionType: 'business',
+        stripeCustomerId: stripeCustomer.id,
+        status: 'pending', // Will be activated after payment confirmation
+        amount: newPaymentPlan.price,
+        currency: newPaymentPlan.currency,
+        isLifetime: newPaymentPlan.isLifetime,
+        expiresAt: newPaymentPlan.isLifetime ? null : new Date(Date.now() + (newPaymentPlan.validityHours || 8760) * 60 * 60 * 1000),
+        paymentId: paymentIntent.id,
+        features: newPaymentPlan.features || [],
+        metadata: {
+          planName: newPaymentPlan.name,
+          businessName: business.businessName,
+          upgradeFrom: currentPaymentPlan.name,
+          upgradeFromId: currentPaymentPlan._id.toString(),
+          upgradeReason: 'user_requested',
+          upgradeType: upgradeType,
+          priceDifference: priceDifference
+        }
+      });
+
+      await newSubscription.save();
+
+      // Determine appropriate message based on upgrade type
+      let message = '';
+      if (upgradeType === 'upgrade') {
+        message = 'Business subscription upgrade initiated. Please complete payment.';
+      } else if (upgradeType === 'downgrade') {
+        message = 'Business subscription downgrade initiated. No additional payment required.';
+      } else {
+        message = 'Business subscription plan switch initiated. No additional payment required.';
+      }
+
+        successResponseHelper(res, {
+        success: true,
+        message: message,
+        data: {
+          subscription: {
+            _id: newSubscription._id,
+            status: newSubscription.status,
+            amount: newSubscription.amount,
+            currency: newSubscription.currency,
+            paymentPlan: {
+              _id: newPaymentPlan._id,
+              name: newPaymentPlan.name,
+              description: newPaymentPlan.description,
+              price: newPaymentPlan.price,
+              currency: newPaymentPlan.currency,
+              features: newPaymentPlan.features
+            }
+          },
+          payment: {
+            clientSecret: paymentIntent.client_secret,
+            paymentIntentId: paymentIntent.id,
+            amount: Math.max(0, priceDifference), // Ensure non-negative for display
+            currency: newPaymentPlan.currency,
+            requiresPayment: priceDifference > 0
+          },
+          upgrade: {
+            type: upgradeType,
+            from: {
+              planName: currentPaymentPlan.name,
+              price: currentPaymentPlan.price,
+              currency: currentPaymentPlan.currency
+            },
+            to: {
+              planName: newPaymentPlan.name,
+              price: newPaymentPlan.price,
+              currency: newPaymentPlan.currency
+            },
+            priceDifference: priceDifference,
+            requiresPayment: priceDifference > 0
+          }
+        }
+      });
+    } catch (error) {
+      console.error('Error upgrading business subscription:', error);
+      errorResponseHelper(res, {
+        message: 'Failed to upgrade business subscription',
+        code: '00500'
+      });
+    }
+  }
+
+  /**
+   * Cancel business subscription
+   */
+  static async cancelBusinessSubscription(req, res) {
+    try {
+      const { businessId } = req.params;
+      const { reason } = req.body;
+
+      // Verify business exists and user has access
+      const business = await Business.findById(businessId);
+      if (!business) {
+        return errorResponseHelper(res, {
+          success: false,
+          message: 'Business not found',
+          code: 'BUSINESS_NOT_FOUND'
+        });
+      }
+
+      // Verify business ownership
+      if (business.businessOwner.toString() !== req.businessOwner._id.toString()) {
+        return errorResponseHelper(res, {
+          success: false,
+          message: 'Access denied. You can only manage your own businesses.',
+          code: 'ACCESS_DENIED'
+        });
+      }
+
+      // Find business subscription (active or pending)
+      const subscription = await Subscription.findOne({
+        business: businessId,
+        subscriptionType: 'business',
+        status: { $in: ['active', 'pending'] }
+      });
+
+      if (!subscription) {
+        return errorResponseHelper(res, {
+          success: false,
+          message: 'No active business subscription found',
+          code: 'NO_ACTIVE_SUBSCRIPTION'
+        });
+      }
+
+      // Get payment plan details
+      const paymentPlan = await PaymentPlan.findById(subscription.paymentPlan);
+      if (!paymentPlan) {
+        return errorResponseHelper(res, {
+          success: false,
+          message: 'Payment plan not found',
+          code: 'PAYMENT_PLAN_NOT_FOUND'
+        });
+      }
+
+      let refundProcessed = false;
+      let cancellationMessage = '';
+      let refundAmount = 0;
+
+      // Handle payment cancellation/refund based on subscription status
+      if (subscription.paymentId) {
+        try {
+          // Get payment intent to check its status
+          const paymentIntent = await StripeHelper.getPaymentIntent(subscription.paymentId);
+          
+          if (subscription.status === 'pending') {
+            // If subscription is pending, cancel the payment intent
+            await StripeHelper.cancelPaymentIntent(subscription.paymentId);
+            cancellationMessage = 'Payment intent canceled successfully';
+          } else if (subscription.status === 'active') {
+            // If subscription is active, check if it's lifetime or time-based
+            if (paymentPlan.isLifetime) {
+              // For lifetime subscriptions, calculate refund based on time since purchase
+              const purchaseDate = subscription.createdAt;
+              const now = new Date();
+              const daysSincePurchase = Math.floor((now - purchaseDate) / (1000 * 60 * 60 * 24));
+              
+              // Refund policy: 30-day money-back guarantee
+              if (daysSincePurchase <= 30) {
+                refundAmount = subscription.amount;
+                await StripeHelper.createRefund(subscription.paymentId, refundAmount);
+                refundProcessed = true;
+                cancellationMessage = 'Full refund processed - within 30-day money-back guarantee';
+              } else {
+                cancellationMessage = 'No refund available - subscription is outside 30-day money-back period';
+              }
+            } else {
+              // For time-based subscriptions, calculate refund based on unused time
+              const now = new Date();
+              const expiryDate = new Date(subscription.expiresAt);
+              const totalDuration = expiryDate - subscription.createdAt;
+              const timeRemaining = expiryDate - now;
+              
+              if (timeRemaining > 0) {
+                // Calculate refund percentage based on remaining time
+                const remainingPercentage = timeRemaining / totalDuration;
+                refundAmount = subscription.amount * remainingPercentage;
+                
+                if (refundAmount > 0) {
+                  await StripeHelper.createRefund(subscription.paymentId, refundAmount);
+                  refundProcessed = true;
+                  cancellationMessage = `Partial refund processed: ${Math.round(remainingPercentage * 100)}% of unused time refunded`;
+                } else {
+                  cancellationMessage = 'No refund available - subscription has expired';
+                }
+              } else {
+                cancellationMessage = 'No refund available - subscription has already expired';
+              }
+            }
+          }
+        } catch (error) {
+          console.error('Error processing payment cancellation/refund:', error);
+          cancellationMessage = 'Payment processing error: ' + error.message;
+        }
+      }
+
+      // Update subscription status
+      subscription.status = 'canceled';
+      subscription.metadata = {
+        ...subscription.metadata,
+        canceledAt: new Date(),
+        refundProcessed: refundProcessed,
+        refundAmount: refundAmount,
+        cancellationReason: reason || 'user_requested'
+      };
+      await subscription.save();
+
+      // Update business subscription status - remove all subscription references
+      business.businessSubscriptionId = null;
+      business.activeSubscriptionId = null;
+      await business.save();
+
+      // Send cancellation notification
+      try {
+        await sendSubscriptionNotifications.businessSubscriptionCanceled(businessId, {
+          subscriptionId: subscription._id.toString(),
+          planName: paymentPlan.name,
+          refundAmount: refundAmount
+        });
+
+        // Send refund notification if refund was processed
+        if (refundProcessed && refundAmount > 0) {
+          await sendPaymentNotifications.refundProcessed(businessId, {
+            refundId: subscription.paymentId, // Using payment ID as refund ID for tracking
+            amount: refundAmount,
+            currency: subscription.currency,
+            reason: reason || 'subscription_cancellation'
+          });
+        }
+      } catch (notificationError) {
+        console.error('Failed to send cancellation notifications:', notificationError);
+        // Don't fail the main operation if notifications fail
+      }
+
+        successResponseHelper(res, {
+        success: true,
+        message: `Business subscription canceled successfully. ${cancellationMessage}`,
+        data: {
+          subscription: {
+            _id: subscription._id,
+            status: subscription.status,
+            refundProcessed: refundProcessed,
+            refundAmount: refundAmount,
+            cancellationMessage: cancellationMessage,
+            canceledAt: subscription.metadata.canceledAt
+          },
+          business: {
+            _id: business._id,
+            businessName: business.businessName,
+            businessSubscriptionId: business.businessSubscriptionId,
+            activeSubscriptionId: business.activeSubscriptionId
+          }
+        }
+      });
+    } catch (error) {
+      console.error('Error canceling business subscription:', error);
+      errorResponseHelper(res, {
+        success: false,
+        message: 'Failed to cancel business subscription',
+        error: error.message
+      });
+    }
+  }
+
+  /**
+   * Get boost queue status
+   */
+  static async getBoostQueueStatus(req, res) {
+    try {
+      const { businessId } = req.params;
+
+      // Verify business exists and user has access
+      const business = await Business.findById(businessId).populate('category');
+      if (!business) {
+        return errorResponseHelper(res, {
+          success: false,
+          message: 'Business not found'
+        });
+      }
+
+      // Verify business ownership
+      if (business.businessOwner.toString() !== req.businessOwner._id.toString()) {
+        return errorResponseHelper(res, {
+          success: false,
+          message: 'Access denied. You can only manage your own businesses.'
+        });
+      }
+
+      // Find boost subscription
+      const subscription = await Subscription.findOne({
+        business: businessId,
+        subscriptionType: 'boost'
+      });
+
+      if (!subscription) {
+        return errorResponseHelper(res, {
+          success: false,
+          message: 'No boost subscription found'
+        });
+      }
+
+      // Get boost queue
+      const boostQueue = await BoostQueue.findOne({ category: business.category._id });
+      
+      if (!boostQueue) {
+        return errorResponseHelper(res, {
+          success: false,
+          message: 'Boost queue not found for this category'
+        });
+      }
+
+      // Get current queue position and status
+      const queuePosition = boostQueue.getQueuePosition(businessId);
+      const estimatedStartTime = boostQueue.getEstimatedStartTime(businessId);
+      const isCurrentlyActive = boostQueue.isBusinessActive(businessId);
+      const timeRemaining = boostQueue.getCurrentBoostTimeRemaining();
+
+      successResponseHelper(res, {
+        success: true,
+        message: 'Boost queue status retrieved successfully',
+        data: {
+          business: {
+            _id: business._id,
+            businessName: business.businessName,
+            category: business.category
+          },
+          subscription: {
+            _id: subscription._id,
+            status: subscription.status,
+            boostQueueInfo: subscription.boostQueueInfo
+          },
+          queueStatus: {
+            position: queuePosition,
+            estimatedStartTime,
+            estimatedEndTime: estimatedStartTime ? new Date(estimatedStartTime.getTime() + 24 * 60 * 60 * 1000) : null,
+            isCurrentlyActive,
+            timeRemaining: isCurrentlyActive ? timeRemaining : null,
+            totalInQueue: boostQueue.queue.filter(item => item.status === 'pending').length,
+            currentlyActiveBusiness: boostQueue.currentlyActive.business ? {
+              _id: boostQueue.currentlyActive.business,
+              boostStartTime: boostQueue.currentlyActive.boostStartTime,
+              boostEndTime: boostQueue.currentlyActive.boostEndTime
+            } : null
+          }
+        }
+      });
+    } catch (error) {
+      console.error('Error getting boost queue status:', error);
+      errorResponseHelper(res, {
+        success: false,
+        message: 'Failed to get boost queue status',
+        error: error.message
+      });
+    }
+  }
+
+  /**
+   * Activate boost for business when its turn comes up in queue
+   */
+  static async activateBoostForBusiness(req, res) {
+    try {
+      const { businessId } = req.params;
+
+      // Verify business exists and user has access
+      const business = await Business.findById(businessId).populate('category');
+      if (!business) {
+        return errorResponseHelper(res, {
+          success: false,
+          message: 'Business not found'
+        });
+      }
+
+      // Verify business ownership
+      if (business.businessOwner.toString() !== req.businessOwner._id.toString()) {
+        return errorResponseHelper(res, {
+          success: false,
+          message: 'Access denied. You can only manage your own businesses.'
+        });
+      }
+
+      // Find boost subscription
+      const subscription = await Subscription.findOne({
+        business: businessId,
+        subscriptionType: 'boost',
+        status: 'active'
+      });
+
+      if (!subscription) {
+        return errorResponseHelper(res, {
+          success: false,
+          message: 'No active boost subscription found'
+        });
+      }
+
+      // Get boost queue
+      const boostQueue = await BoostQueue.findOne({ category: business.category._id });
+      
+      if (!boostQueue) {
+        return errorResponseHelper(res, {
+          success: false,
+          message: 'Boost queue not found for this category'
+        });
+      }
+
+      // Check if this business is next in queue and should be activated
+      const queueItem = boostQueue.queue.find(item => 
+        item.business.toString() === businessId && item.status === 'pending'
+      );
+
+      if (!queueItem) {
+        return errorResponseHelper(res, {
+          success: false,
+          message: 'Business not found in queue or already active'
+        });
+      }
+
+      // Check if this business is next in line
+      const pendingItems = boostQueue.queue.filter(item => item.status === 'pending');
+      const isNextInLine = pendingItems.length > 0 && pendingItems[0].business.toString() === businessId;
+
+      if (!isNextInLine) {
+        return errorResponseHelper(res, {
+          success: false,
+          message: 'Business is not next in queue'
+        });
+      }
+
+      // Activate the boost
+      const now = new Date();
+      const boostEndTime = new Date(now.getTime() + 24 * 60 * 60 * 1000); // 24 hours
+
+      // Update queue item
+      queueItem.status = 'active';
+      queueItem.boostStartTime = now;
+      queueItem.boostEndTime = boostEndTime;
+      queueItem.estimatedStartTime = now;
+      queueItem.estimatedEndTime = boostEndTime;
+
+      // Update currently active business
+      boostQueue.currentlyActive = {
+        business: business._id,
+        boostStartTime: now,
+        boostEndTime: boostEndTime,
+        subscription: subscription._id
+      };
+
+      await boostQueue.save();
+
+      // Update subscription
+      subscription.boostQueueInfo.isCurrentlyActive = true;
+      subscription.boostQueueInfo.boostStartTime = now;
+      subscription.boostQueueInfo.boostEndTime = boostEndTime;
+      subscription.boostQueueInfo.queuePosition = 0;
+      await subscription.save();
+
+      // Update business boost status
+      business.isBoosted = true;
+      business.isBoostActive = true;
+      business.boostExpiryAt = boostEndTime;
+      await business.save();
+
+      successResponseHelper(res, {
+        success: true,
+        message: 'Boost activated successfully',
+        data: {
+          business: {
+            _id: business._id,
+            businessName: business.businessName,
+            isBoosted: business.isBoosted,
+            isBoostActive: business.isBoostActive,
+            boostExpiryAt: business.boostExpiryAt
+          },
+          subscription: {
+            _id: subscription._id,
+            status: subscription.status,
+            boostQueueInfo: subscription.boostQueueInfo
+          },
+          queueInfo: {
+            position: 0,
+            boostStartTime: now,
+            boostEndTime: boostEndTime,
+            isCurrentlyActive: true
+          }
+        }
+      });
+    } catch (error) {
+      console.error('Error activating boost for business:', error);
+      errorResponseHelper(res, {
+        success: false,
+        message: 'Failed to activate boost',
+        error: error.message
+      });
+    }
+  }
+
+  /**
+   * Get boost queue position
+   */
+  static async getBoostQueuePosition(req, res) {
+    try {
+      const { businessId } = req.params;
+
+      // Verify business exists and user has access
+      const business = await Business.findById(businessId).populate('category');
+      if (!business) {
+        return errorResponseHelper(res, {
+          success: false,
+          message: 'Business not found'
+        });
+      }
+
+      // Verify business ownership
+      if (business.businessOwner.toString() !== req.businessOwner._id.toString()) {
+        return errorResponseHelper(res, {
+          success: false,
+          message: 'Access denied. You can only manage your own businesses.'
+        });
+      }
+
+      // Get boost queue
+      const boostQueue = await BoostQueue.findOne({ category: business.category._id });
+      
+      if (!boostQueue) {
+        return errorResponseHelper(res, {
+          success: false,
+          message: 'No boost queue found for this category'
+        });
+      }
+
+      const position = boostQueue.getQueuePosition(businessId);
+      const estimatedStartTime = boostQueue.getEstimatedStartTime(businessId);
+      const isCurrentlyActive = boostQueue.isBusinessActive(businessId);
+
+      if (position === null && !isCurrentlyActive) {
+        return errorResponseHelper(res, {
+          success: false,
+          message: 'Business not found in boost queue'
+        });
+      }
+
+        successResponseHelper(res, {
+        success: true,
+        message: 'Boost queue position retrieved successfully',
+        data: {
+          position: isCurrentlyActive ? 0 : position,
+          estimatedStartTime,
+          estimatedEndTime: estimatedStartTime ? new Date(estimatedStartTime.getTime() + 24 * 60 * 60 * 1000) : null,
+          isCurrentlyActive,
+          totalInQueue: boostQueue.queue.filter(item => item.status === 'pending').length,
+          categoryName: business.category.name
+        }
+      });
+    } catch (error) {
+      console.error('Error getting boost queue position:', error);
+      errorResponseHelper(res, {
+        success: false,
+        message: 'Failed to get boost queue position',
+        error: error.message
+      });
+    }
+  }
+
+  /**
+   * Get payment history for all businesses owned by the user
+   */
+  static async getPaymentHistory(req, res) {
+    try {
+      // Get the business owner ID from the authenticated user
+      const businessOwnerId = req.businessOwner?._id || req.user?._id;
+      
+      if (!businessOwnerId) {
+        return errorResponseHelper(res, {
+          success: false,
+          message: 'Unauthorized access'
+        });
+      }
+
+      // Find all businesses owned by this user
+      const businesses = await Business.find({ businessOwner: businessOwnerId })
+        .select('_id businessName businessCategory businessType status createdAt businessLogo businessAddress');
+
+      if (businesses.length === 0) {
+        return errorResponseHelper(res, {
+          success: true,
+          message: 'No businesses found for this user',
+          data: {
+            businesses: [],
+            paymentHistory: {
+              businessSubscriptions: [],
+              boostSubscriptions: [],
+              allPayments: []
+            },
+            summary: {
+              totalBusinesses: 0,
+              totalPayments: 0,
+              totalBusinessPayments: 0,
+              totalBoostPayments: 0,
+              totalAmountSpent: 0,
+              totalRefunds: 0
+            }
+          }
+        });
+      }
+
+      const businessIds = businesses.map(b => b._id);
+
+      // Find all confirmed payments (active, expired, or canceled subscriptions)
+      const allSubscriptions = await Subscription.find({ 
+        business: { $in: businessIds },
+        status: { $in: ['active', 'expired', 'canceled'] }
+      })
+        .populate('business', 'businessName businessCategory businessType status businessLogo businessAddress businessOwner')
+        .populate('paymentPlan', 'name planType price features maxBusinesses maxReviews maxBoostPerDay validityDays description')
+        .sort({ createdAt: -1 });
+
+      // Separate subscriptions by type
+      const businessSubscriptions = allSubscriptions.filter(sub => sub.subscriptionType === 'business');
+      const boostSubscriptions = allSubscriptions.filter(sub => sub.subscriptionType === 'boost');
+
+      // Calculate summary statistics
+      const totalAmountSpent = allSubscriptions.reduce((total, sub) => {
+        if (sub.status === 'active' || sub.status === 'expired') {
+          return total + (sub.amount || 0);
+        }
+        return total;
+      }, 0);
+
+      const totalRefunds = allSubscriptions.reduce((total, sub) => {
+        if (sub.status === 'canceled' && sub.metadata?.refundProcessed) {
+          return total + (sub.amount || 0);
+        }
+        return total;
+      }, 0);
+
+      // Organize data by business with their payment history
+      const organizedData = businesses.map(business => {
+        const businessPayments = allSubscriptions.filter(sub => 
+          sub.business._id.toString() === business._id.toString()
+        );
+
+        const businessPlanPayments = businessPayments.filter(sub => 
+          sub.subscriptionType === 'business'
+        );
+        
+        const boostPlanPayments = businessPayments.filter(sub => 
+          sub.subscriptionType === 'boost'
+        );
+
+        const activePayments = businessPayments.filter(sub => 
+          sub.status === 'active'
+        );
+        
+        const expiredPayments = businessPayments.filter(sub => 
+          sub.status === 'expired'
+        );
+
+        const canceledPayments = businessPayments.filter(sub => 
+          sub.status === 'canceled'
+        );
+
+        const businessTotalSpent = businessPayments.reduce((total, sub) => {
+          if (sub.status === 'active' || sub.status === 'expired') {
+            return total + (sub.amount || 0);
+          }
+          return total;
+        }, 0);
+
+        const businessTotalRefunds = businessPayments.reduce((total, sub) => {
+          if (sub.status === 'canceled' && sub.metadata?.refundProcessed) {
+            return total + (sub.amount || 0);
+          }
+          return total;
+        }, 0);
+
+        return {
+          business: {
+            _id: business._id,
+            businessName: business.businessName,
+            businessCategory: business.businessCategory,
+            businessType: business.businessType,
+            status: business.status,
+            createdAt: business.createdAt,
+            businessLogo: business.businessLogo,
+            businessAddress: business.businessAddress
+          },
+          paymentHistory: {
+            allPayments: businessPayments,
+            businessPlanPayments: businessPlanPayments,
+            boostPlanPayments: boostPlanPayments,
+            activePayments: activePayments,
+            expiredPayments: expiredPayments,
+            canceledPayments: canceledPayments
+          },
+          summary: {
+            totalPayments: businessPayments.length,
+            businessPlanPayments: businessPlanPayments.length,
+            boostPlanPayments: boostPlanPayments.length,
+            activePayments: activePayments.length,
+            expiredPayments: expiredPayments.length,
+            canceledPayments: canceledPayments.length,
+            totalAmountSpent: businessTotalSpent,
+            totalRefunds: businessTotalRefunds,
+            netAmount: businessTotalSpent - businessTotalRefunds
+          }
+        };
+      });
+
+        successResponseHelper(res, {
+        success: true,
+        message: 'Payment history retrieved successfully',
+        data: {
+          businesses: organizedData,
+          paymentHistory: {
+            businessSubscriptions: businessSubscriptions,
+            boostSubscriptions: boostSubscriptions,
+            allPayments: allSubscriptions
+          },
+          summary: {
+            totalBusinesses: businesses.length,
+            totalPayments: allSubscriptions.length,
+            totalBusinessPayments: businessSubscriptions.length,
+            totalBoostPayments: boostSubscriptions.length,
+            totalAmountSpent: totalAmountSpent,
+            totalRefunds: totalRefunds,
+            netAmount: totalAmountSpent - totalRefunds,
+            activePayments: allSubscriptions.filter(sub => sub.status === 'active').length,
+            expiredPayments: allSubscriptions.filter(sub => sub.status === 'expired').length,
+            canceledPayments: allSubscriptions.filter(sub => sub.status === 'canceled').length
+          }
+        }
+      });
+    } catch (error) {
+      console.error('Error fetching payment history:', error);
+      errorResponseHelper(res, {
+        success: false,
+        message: 'Failed to fetch payment history',
+        error: error.message
+      });
+    }
+  }
+
+  /**
+   * Get payment history for a specific business
+   */
+  static async getBusinessPaymentHistory(req, res) {
+    try {
+      const { businessId } = req.params;
+
+      // Verify business exists and user has access
+      const business = await Business.findById(businessId);
+      if (!business) {
+        return errorResponseHelper(res, {
+          success: false,
+          message: 'Business not found'
+        });
+      }
+
+      // Verify business ownership
+      if (business.businessOwner.toString() !== req.businessOwner._id.toString()) {
+          return errorResponseHelper(res, {
+          success: false,
+          message: 'Access denied. You can only manage your own businesses.'
+        });
+      }
+
+      // Find all confirmed payments for this business
+      const allSubscriptions = await Subscription.find({ 
+        business: businessId,
+        status: { $in: ['active', 'expired', 'canceled'] }
+      })
+        .populate('paymentPlan', 'name planType price features maxBusinesses maxReviews maxBoostPerDay validityDays description')
+        .sort({ createdAt: -1 });
+
+      // Separate subscriptions by type
+      const businessSubscriptions = allSubscriptions.filter(sub => sub.subscriptionType === 'business');
+      const boostSubscriptions = allSubscriptions.filter(sub => sub.subscriptionType === 'boost');
+
+      // Calculate summary statistics
+      const totalAmountSpent = allSubscriptions.reduce((total, sub) => {
+        if (sub.status === 'active' || sub.status === 'expired') {
+          return total + (sub.amount || 0);
+        }
+        return total;
+      }, 0);
+
+      const totalRefunds = allSubscriptions.reduce((total, sub) => {
+        if (sub.status === 'canceled' && sub.metadata?.refundProcessed) {
+          return total + (sub.amount || 0);
+        }
+        return total;
+      }, 0);
+
+      // Group payments by status
+      const activePayments = allSubscriptions.filter(sub => sub.status === 'active');
+      const expiredPayments = allSubscriptions.filter(sub => sub.status === 'expired');
+      const canceledPayments = allSubscriptions.filter(sub => sub.status === 'canceled');
+
+      successResponseHelper(res, {
+        success: true,
+        message: 'Business payment history retrieved successfully',
+        data: {
+          business: {
+            _id: business._id,
+            businessName: business.businessName,
+            businessCategory: business.businessCategory,
+            businessType: business.businessType,
+            status: business.status,
+            createdAt: business.createdAt
+          },
+          paymentHistory: {
+            businessSubscriptions: businessSubscriptions,
+            boostSubscriptions: boostSubscriptions,
+            allPayments: allSubscriptions,
+            activePayments: activePayments,
+            expiredPayments: expiredPayments,
+            canceledPayments: canceledPayments
+          },
+          summary: {
+            totalPayments: allSubscriptions.length,
+            businessPlanPayments: businessSubscriptions.length,
+            boostPlanPayments: boostSubscriptions.length,
+            activePayments: activePayments.length,
+            expiredPayments: expiredPayments.length,
+            canceledPayments: canceledPayments.length,
+            totalAmountSpent: totalAmountSpent,
+            totalRefunds: totalRefunds,
+            netAmount: totalAmountSpent - totalRefunds
+          }
+        }
+      });
+    } catch (error) {
+      console.error('Error fetching business payment history:', error);
+      errorResponseHelper(res, {
+        success: false,
+        message: 'Failed to fetch business payment history',
         error: error.message
       });
     }

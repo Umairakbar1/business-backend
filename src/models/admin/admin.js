@@ -21,6 +21,11 @@ const adminSchema = new Schema({
     notificationTokens: [
         { deviceType: { type: String }, token: { type: String } },
     ],
+    // Firebase Cloud Messaging token for notifications
+    fcmToken: {
+        type: String,
+        default: null
+    },
     courseNeedToSync: { type: Boolean, default: false },
 },
     {

@@ -36,4 +36,9 @@ router.get('/boost/:businessId/availability', authorizedAccessAdmin, subscriptio
 // Use boost
 router.post('/boost/:businessId/use', authorizedAccessAdmin, subscriptionController.useBoost);
 
+// Boost expiry management
+router.post('/boost/expiry/check', authorizedAccessAdmin, subscriptionController.checkAndUpdateExpiredBoosts);
+router.get('/boost/expiry/stats', authorizedAccessAdmin, subscriptionController.getBoostExpiryStats);
+router.post('/boost/:businessId/expire', authorizedAccessAdmin, subscriptionController.expireBusinessBoost);
+
 export default router;

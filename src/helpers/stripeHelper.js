@@ -231,6 +231,33 @@ class StripeHelper {
   }
 
   /**
+   * Create a payment intent for subscription payments
+   */
+  static async createPaymentIntent(paymentIntentData) {
+    try {
+      const paymentIntent = await stripe.paymentIntents.create({
+        amount: Math.round(paymentIntentData.amount * 100), // Convert to cents
+        currency: paymentIntentData.currency.toLowerCase(),
+        customer: paymentIntentData.customerId,
+        metadata: {
+          businessId: paymentIntentData.businessId,
+          planType: paymentIntentData.planType,
+          planId: paymentIntentData.planId || '',
+          subscriptionType: paymentIntentData.subscriptionType || 'one_time'
+        },
+        automatic_payment_methods: {
+          enabled: true,
+        },
+        description: `Payment for ${paymentIntentData.planType} plan`,
+        receipt_email: paymentIntentData.receiptEmail
+      });
+      return paymentIntent;
+    } catch (error) {
+      throw new Error(`Failed to create payment intent: ${error.message}`);
+    }
+  }
+
+  /**
    * Create a Stripe checkout session for one-time payments
    */
   static async createStripeCheckoutSession(sessionData) {
@@ -268,6 +295,52 @@ class StripeHelper {
    */
   static async createCheckoutSession(sessionData) {
     return StripeHelper.createStripeCheckoutSession(sessionData);
+  }
+
+  /**
+   * Cancel a payment intent in Stripe
+   */
+  static async cancelPaymentIntent(paymentIntentId) {
+    try {
+      const paymentIntent = await stripe.paymentIntents.cancel(paymentIntentId);
+      return paymentIntent;
+    } catch (error) {
+      throw new Error(`Failed to cancel payment intent: ${error.message}`);
+    }
+  }
+
+  /**
+   * Create a refund for a payment
+   */
+  static async createRefund(paymentIntentId, amount = null, reason = 'requested_by_customer') {
+    try {
+      const refundData = {
+        payment_intent: paymentIntentId,
+        reason: reason
+      };
+
+      // If amount is specified, add it to refund data
+      if (amount) {
+        refundData.amount = Math.round(amount * 100); // Convert to cents
+      }
+
+      const refund = await stripe.refunds.create(refundData);
+      return refund;
+    } catch (error) {
+      throw new Error(`Failed to create refund: ${error.message}`);
+    }
+  }
+
+  /**
+   * Get refund details
+   */
+  static async getRefund(refundId) {
+    try {
+      const refund = await stripe.refunds.retrieve(refundId);
+      return refund;
+    } catch (error) {
+      throw new Error(`Failed to retrieve refund: ${error.message}`);
+    }
   }
 }
 
