@@ -1,10 +1,16 @@
 import Blog from '../../models/admin/blog.js';
+import Media from '../../models/admin/media.js';
 import { errorResponseHelper, successResponseHelper } from '../../helpers/utilityHelper.js';
 import { uploadImageWithThumbnail, deleteFile } from '../../helpers/cloudinaryHelper.js';
 
 // Create a new blog post
 const createBlog = async (req, res) => {
     try {
+        console.log('=== CREATE BLOG REQUEST ===');
+        console.log('Request body:', req.body);
+        console.log('Request file:', req.file);
+        console.log('User:', req.user);
+        
         const { title, author,description, content, category, subCategory, status = 'draft', enableComments = true, tags, metaTitle, metaDescription, metaKeywords, authorName, authorEmail, authorModel = 'Admin' } = req.body;
 
         if (!title || !description || !content || !category) {
@@ -25,6 +31,40 @@ const createBlog = async (req, res) => {
             return errorResponseHelper(res, { message: "Author name and email are required", code: '00400' });
         }
 
+        // Parse tags from JSON string if needed
+        let parsedTags = [];
+        if (tags) {
+            try {
+                if (typeof tags === 'string') {
+                    parsedTags = JSON.parse(tags);
+                } else if (Array.isArray(tags)) {
+                    parsedTags = tags;
+                } else {
+                    parsedTags = [tags];
+                }
+            } catch (error) {
+                console.error('Error parsing tags:', error);
+                parsedTags = [];
+            }
+        }
+
+        // Parse metaKeywords from JSON string if needed
+        let parsedMetaKeywords = [];
+        if (metaKeywords) {
+            try {
+                if (typeof metaKeywords === 'string') {
+                    parsedMetaKeywords = JSON.parse(metaKeywords);
+                } else if (Array.isArray(metaKeywords)) {
+                    parsedMetaKeywords = metaKeywords;
+                } else {
+                    parsedMetaKeywords = [metaKeywords];
+                }
+            } catch (error) {
+                console.error('Error parsing metaKeywords:', error);
+                parsedMetaKeywords = [];
+            }
+        }
+
         const blogData = {
             title,
             description,
@@ -33,10 +73,10 @@ const createBlog = async (req, res) => {
             subCategory,
             status,
             enableComments,
-            tags: tags ? (Array.isArray(tags) ? tags : [tags]) : [],
+            tags: parsedTags,
             metaTitle,
             metaDescription,
-            metaKeywords: metaKeywords ? (Array.isArray(metaKeywords) ? metaKeywords : [metaKeywords]) : [],
+            metaKeywords: parsedMetaKeywords,
             author: author,
             authorModel: finalAuthorModel,
             authorName: finalAuthorName,
@@ -44,7 +84,7 @@ const createBlog = async (req, res) => {
             publishedAt: status === 'published' ? new Date() : null
         };
 
-        // Handle image upload to Cloudinary
+        // Handle image upload to Cloudinary or media selection
         if (req.file) {
             try {
                 console.log('Starting image upload for blog:', {
@@ -80,13 +120,46 @@ const createBlog = async (req, res) => {
                 
                 return errorResponseHelper(res, {message: errorMessage, code:'00500'});
             }
+        } else if (req.body.coverMediaId) {
+            // Handle selected media from library
+            try {
+                console.log('Processing coverMediaId:', req.body.coverMediaId);
+                const selectedMedia = await Media.findById(req.body.coverMediaId);
+                
+                if (!selectedMedia) {
+                    return errorResponseHelper(res, { message: "Selected media not found", code: '00404' });
+                }
+                
+                if (selectedMedia.type !== 'image') {
+                    return errorResponseHelper(res, { message: "Selected media must be an image", code: '00400' });
+                }
+                
+                // Use the media file URL as cover image
+                blogData.coverImage = {
+                    url: selectedMedia.file?.url || selectedMedia.thumbnail?.url,
+                    public_id: selectedMedia.file?.public_id,
+                    mediaId: selectedMedia._id // Store reference to the media
+                };
+                
+                console.log('Blog using selected media:', selectedMedia.title);
+            } catch (mediaError) {
+                console.error('Error fetching selected media:', mediaError);
+                return errorResponseHelper(res, { message: 'Error fetching selected media', code: '00500' });
+            }
         }
 
+        console.log('Creating blog with data:', blogData);
         const blog = await Blog.create(blogData);
+        console.log('Blog created successfully:', blog._id);
 
         return successResponseHelper(res, { message: "Blog post created successfully", data: blog });
     } catch (error) {
         console.error('Create blog error:', error);
+        console.error('Error details:', {
+            message: error.message,
+            stack: error.stack,
+            name: error.name
+        });
         return errorResponseHelper(res, { message: 'Internal server error', code: '00500' });
     }
 };
@@ -119,6 +192,7 @@ const getAllBlogs = async (req, res) => {
                 select: 'firstName lastName email',
                 refPath: 'authorModel'
             })
+            .populate('coverImage.mediaId', 'title type file thumbnail')
             .sort({ createdAt: -1 })
             .skip(skip)
             .limit(parseInt(limit));
@@ -169,7 +243,8 @@ const getBlogById = async (req, res) => {
                 path: 'author',
                 select: 'firstName lastName email',
                 refPath: 'authorModel'
-            });
+            })
+            .populate('coverImage.mediaId', 'title type file thumbnail');
 
         if (!blog) {
             return errorResponseHelper(res, { message: "Blog post not found", code: '00404' });
@@ -242,6 +317,38 @@ const updateBlog = async (req, res) => {
             return errorResponseHelper(res, { message: "Author model must be either 'Admin' or 'User'", code: '00400' });
         }
 
+        // Parse tags from JSON string if needed
+        if (tags !== undefined) {
+            try {
+                if (typeof tags === 'string') {
+                    blog.tags = JSON.parse(tags);
+                } else if (Array.isArray(tags)) {
+                    blog.tags = tags;
+                } else {
+                    blog.tags = [tags];
+                }
+            } catch (error) {
+                console.error('Error parsing tags for update:', error);
+                blog.tags = [];
+            }
+        }
+
+        // Parse metaKeywords from JSON string if needed
+        if (metaKeywords !== undefined) {
+            try {
+                if (typeof metaKeywords === 'string') {
+                    blog.metaKeywords = JSON.parse(metaKeywords);
+                } else if (Array.isArray(metaKeywords)) {
+                    blog.metaKeywords = metaKeywords;
+                } else {
+                    blog.metaKeywords = [metaKeywords];
+                }
+            } catch (error) {
+                console.error('Error parsing metaKeywords for update:', error);
+                blog.metaKeywords = [];
+            }
+        }
+
         // Update fields if provided
         if (title !== undefined) blog.title = title;
         if (description !== undefined) blog.description = description;
@@ -249,10 +356,8 @@ const updateBlog = async (req, res) => {
         if (category !== undefined) blog.category = category;
         if (subCategory !== undefined) blog.subCategory = subCategory;
         if (enableComments !== undefined) blog.enableComments = enableComments;
-        if (tags !== undefined) blog.tags = Array.isArray(tags) ? tags : [tags];
         if (metaTitle !== undefined) blog.metaTitle = metaTitle;
         if (metaDescription !== undefined) blog.metaDescription = metaDescription;
-        if (metaKeywords !== undefined) blog.metaKeywords = Array.isArray(metaKeywords) ? metaKeywords : [metaKeywords];
         
         // Update author information if provided
         if (authorName !== undefined) blog.authorName = authorName;
@@ -267,7 +372,7 @@ const updateBlog = async (req, res) => {
             }
         }
 
-        // Handle image upload and deletion of previous image
+        // Handle image upload and deletion of previous image or media selection
         if (req.file) {
             try {
                 console.log('Starting image upload for blog update:', {
@@ -315,6 +420,42 @@ const updateBlog = async (req, res) => {
                 
                 return errorResponseHelper(res, {message: errorMessage, code:'00500'});
             }
+        } else if (req.body.coverMediaId) {
+            // Handle selected media from library for update
+            try {
+                const selectedMedia = await Media.findById(req.body.coverMediaId);
+                
+                if (!selectedMedia) {
+                    return errorResponseHelper(res, { message: "Selected media not found", code: '00404' });
+                }
+                
+                if (selectedMedia.type !== 'image') {
+                    return errorResponseHelper(res, { message: "Selected media must be an image", code: '00400' });
+                }
+                
+                // Delete old image from Cloudinary if it exists and was uploaded (not from media library)
+                if (blog.coverImage && blog.coverImage.public_id && !blog.coverImage.mediaId) {
+                    try {
+                        await deleteFile(blog.coverImage.public_id, 'image');
+                        console.log('Old blog image deleted successfully:', blog.coverImage.public_id);
+                    } catch (deleteError) {
+                        console.error('Error deleting old blog image:', deleteError);
+                        // Continue even if deletion fails
+                    }
+                }
+                
+                // Use the media file URL as cover image
+                blog.coverImage = {
+                    url: selectedMedia.file?.url || selectedMedia.thumbnail?.url,
+                    public_id: selectedMedia.file?.public_id,
+                    mediaId: selectedMedia._id // Store reference to the media
+                };
+                
+                console.log('Blog updated with selected media:', selectedMedia.title);
+            } catch (mediaError) {
+                console.error('Error fetching selected media for update:', mediaError);
+                return errorResponseHelper(res, { message: 'Error fetching selected media', code: '00500' });
+            }
         }
 
         blog.updatedAt = new Date();
@@ -338,8 +479,8 @@ const deleteBlog = async (req, res) => {
             return errorResponseHelper(res, { message: "Blog post not found", code: '00404' });
         }
 
-        // Delete blog image from Cloudinary if it exists
-        if (blog.coverImage && blog.coverImage.public_id) {
+        // Delete blog image from Cloudinary if it exists and was uploaded (not from media library)
+        if (blog.coverImage && blog.coverImage.public_id && !blog.coverImage.mediaId) {
             try {
                 await deleteFile(blog.coverImage.public_id, 'image');
                 console.log('Blog image deleted successfully:', blog.coverImage.public_id);

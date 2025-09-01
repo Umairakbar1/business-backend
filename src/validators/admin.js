@@ -277,12 +277,20 @@ const blogValidator = Joi.object({
       'boolean.base': 'Enable comments must be a boolean value'
     }),
   
-  tags: Joi.array()
-    .items(Joi.string().trim())
-    .optional()
-    .messages({
-      'array.base': 'Tags must be an array'
-    }),
+  tags: Joi.alternatives().try(
+    Joi.array()
+      .items(Joi.string().trim())
+      .messages({
+        'array.base': 'Tags must be an array'
+      }),
+    Joi.string()
+      .messages({
+        'string.base': 'Tags must be a valid JSON string or array'
+      })
+  ).optional()
+  .messages({
+    'alternatives.any': 'Tags must be either an array or a valid JSON string'
+  }),
   
   metaTitle: Joi.string()
     .max(60)
@@ -305,6 +313,13 @@ const blogValidator = Joi.object({
     .optional()
     .messages({
       'string.uri': 'Cover image must be a valid URL'
+    }),
+
+  coverMediaId: Joi.string()
+    .pattern(/^[0-9a-fA-F]{24}$/)
+    .optional()
+    .messages({
+      'string.pattern.base': 'Cover media ID must be a valid MongoDB ObjectId'
     }),
 
     author: Joi.string()
@@ -331,12 +346,20 @@ const blogValidator = Joi.object({
     .messages({
       'string.email': 'Author email must be a valid email address'
     }),
-      metaKeywords: Joi.array()
-    .items(Joi.string().trim())
-    .optional()
-    .messages({
-      'array.base': 'Meta keywords must be an array'
-    })
+      metaKeywords: Joi.alternatives().try(
+    Joi.array()
+      .items(Joi.string().trim())
+      .messages({
+        'array.base': 'Meta keywords must be an array'
+      }),
+    Joi.string()
+      .messages({
+        'string.base': 'Meta keywords must be a valid JSON string or array'
+      })
+  ).optional()
+  .messages({
+    'alternatives.any': 'Meta keywords must be either an array or a valid JSON string'
+  })
 });
 
 // Query ticketing validators
@@ -441,7 +464,7 @@ const queryTicketValidator = Joi.object({
 
 // Update validators for blog and query tickets
 const blogUpdateValidator = blogValidator.fork(
-  ['title', 'description', 'content', 'category', 'subCategory', 'authorName', 'authorEmail', 'authorModel', 'status', 'enableComments', 'tags', 'metaTitle', 'metaDescription', 'metaKeywords', 'coverImage', 'author'   ],
+  ['title', 'description', 'content', 'category', 'subCategory', 'authorName', 'authorEmail', 'authorModel', 'status', 'enableComments', 'tags', 'metaTitle', 'metaDescription', 'metaKeywords', 'coverImage', 'coverMediaId', 'author'   ],
   (schema) => schema.optional()
 );
 

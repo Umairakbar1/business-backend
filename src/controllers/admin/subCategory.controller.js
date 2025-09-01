@@ -1,5 +1,7 @@
 import SubCategory from '../../models/admin/subCategory.js';
 import Category from '../../models/admin/category.js';
+import Business from '../../models/business/business.js';
+import Blog from '../../models/admin/blog.js';
 import { subCategoryValidator, subCategoryUpdateValidator } from '../../validators/admin.js';
 import { successResponseHelper, errorResponseHelper, generateSlug } from '../../helpers/utilityHelper.js';
 import { uploadImageWithThumbnail, deleteFile } from '../../helpers/cloudinaryHelper.js';
@@ -120,18 +122,18 @@ const getAllSubCategories = async (req, res) => {
 
     const query = {};
 
-    // search filter
-    if (queryText) {
+    // queryText filter
+    if (queryText && queryText.trim() !== '') {
       query.title = { $regex: queryText, $options: 'i' };
     }
 
     // Category filter
-    if (categoryId) {
+    if (categoryId && categoryId.trim() !== '') {
       query.categoryId = categoryId;
     }
 
     // Status filter
-    if (status) {
+    if (status && status.trim() !== '') {
       query.status = status;
     }
 
@@ -148,6 +150,18 @@ const getAllSubCategories = async (req, res) => {
       .skip(skip)
       .limit(parseInt(limit));
 
+    // Get business count for each subcategory
+    const businessCountPromises = subCategories.map(subCategory => 
+      Business.countDocuments({ subcategories: subCategory._id })
+    );
+    const businessCounts = await Promise.all(businessCountPromises);
+
+    // Attach business count to each subcategory
+    const subCategoriesWithBusinessCount = subCategories.map((subCategory, index) => ({
+      ...subCategory.toObject(),
+      businessCount: businessCounts[index]
+    }));
+
     const total = await SubCategory.countDocuments(query);
 
     const pagination = {
@@ -159,7 +173,7 @@ const getAllSubCategories = async (req, res) => {
 
     return successResponseHelper(res, {
       message: 'Subcategories retrieved successfully',
-      data:subCategories,
+      data: subCategoriesWithBusinessCount,
       pagination
     });
   } catch (error) {
@@ -174,35 +188,33 @@ const getSubCategoryById = async (req, res) => {
     const { id } = req.params;
     const {queryText, status} = req.query;
     const query = {};
-    if (queryText) {
+    if (queryText && queryText.trim() !== '') {
       query.title = { $regex: queryText, $options: 'i' };
     }
-    if (status) {
+    if (status && status.trim() !== '') {
       query.status = status;
     }
     const subCategory = await SubCategory.findById(id)
       .populate('categoryId', 'title description')
       .populate('createdBy', 'name email')
       .populate('updatedBy', 'name email');
-      subCategory.filter(query);  
-      const total = await SubCategory.countDocuments(query);
-      const page = parseInt(req.query.page) || 1;
-      const limit = parseInt(req.query.limit) || 10;
-      const pagination = {
-        currentPage: parseInt(page),
-        totalPages: Math.ceil(total / parseInt(limit)),
-        totalItems: total,
-        itemsPerPage: parseInt(limit)
-      };
       
     if (!subCategory) {
       return errorResponseHelper(res, { message: 'Subcategory not found', code: '00404' });
     }
 
+    // Get business count for this subcategory
+    const businessCount = await Business.countDocuments({ subcategories: id });
+
+    // Attach business count to the subcategory
+    const subCategoryWithBusinessCount = {
+      ...subCategory.toObject(),
+      businessCount: businessCount
+    };
+
     return successResponseHelper(res, {
       message: 'Subcategory retrieved successfully',
-      data:subCategory,
-      pagination
+      data: subCategoryWithBusinessCount
     });
     
   } catch (error) {
@@ -355,6 +367,26 @@ const deleteSubCategory = async (req, res) => {
       return errorResponseHelper(res, { message: 'Subcategory not found', code: '00404' });
     }
 
+    // Check if subcategory is being used by any businesses
+    const businessCount = await Business.countDocuments({ subcategories: id });
+    if (businessCount > 0) {
+      return errorResponseHelper(res, { 
+        message: `Cannot delete subcategory because it is linked to ${businessCount} business(es). Please archive the subcategory instead or reassign businesses to another subcategory first.`, 
+        code: '00400',
+        data: { businessCount }
+      });
+    }
+
+    // Check if subcategory is being used by any blogs
+    const blogCount = await Blog.countDocuments({ subCategory: id });
+    if (blogCount > 0) {
+      return errorResponseHelper(res, { 
+        message: `Cannot delete subcategory because it is linked to ${blogCount} blog(s). Please archive the subcategory instead or reassign blogs to another subcategory first.`, 
+        code: '00400',
+        data: { blogCount }
+      });
+    }
+
     // Delete subcategory image from Cloudinary if it exists
     if (subCategory.image && subCategory.image.public_id) {
       try {
@@ -386,7 +418,14 @@ const deleteSubCategory = async (req, res) => {
 const getSubCategoriesByCategory = async (req, res) => {
   try {
     const { categoryId } = req.params;
-    const { status } = req.query;
+    const { 
+      page = 1, 
+      limit = 10, 
+      status, 
+      queryText,
+      sortBy = 'title', 
+      sortOrder = 'asc' 
+    } = req.query;
 
     // Check if category exists
     const category = await Category.findById(categoryId);
@@ -396,22 +435,51 @@ const getSubCategoriesByCategory = async (req, res) => {
 
     const query = { categoryId };
 
-    if (status !== undefined) {
+    // Status filter
+    if (status && status.trim() !== '') {
       query.status = status;
     }
 
+    // queryText filter
+    if (queryText && queryText.trim() !== '') {
+      query.title = { $regex: queryText, $options: 'i' };
+    }
+
+    // Build sort object
+    const sortOptions = {};
+    sortOptions[sortBy] = sortOrder === 'desc' ? -1 : 1;
+
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+
     const subCategories = await SubCategory.find(query)
       .populate('categoryId', 'title')
-      .sort({ title: 1 });
+      .sort(sortOptions)
+      .skip(skip)
+      .limit(parseInt(limit));
+
+    // Get business count for each subcategory
+    const businessCountPromises = subCategories.map(subCategory => 
+      Business.countDocuments({ subcategories: subCategory._id })
+    );
+    const businessCounts = await Promise.all(businessCountPromises);
+
+    // Attach business count to each subcategory
+    const subCategoriesWithBusinessCount = subCategories.map((subCategory, index) => ({
+      ...subCategory.toObject(),
+      businessCount: businessCounts[index]
+    }));
+
+    const total = await SubCategory.countDocuments(query);
+    const totalPages = Math.ceil(total / parseInt(limit));
 
     return successResponseHelper(res, {
       message: 'Subcategories retrieved successfully',
-      data:subCategories,
+      data: subCategoriesWithBusinessCount,
       pagination: {
-        currentPage: 1,
-        totalPages: 1,
-        totalItems: subCategories.length,
-        itemsPerPage: subCategories.length
+        currentPage: parseInt(page),
+        totalPages,
+        totalItems: total,
+        itemsPerPage: parseInt(limit)
       }
     });
   } catch (error) {
@@ -429,8 +497,8 @@ const bulkUpdateStatus = async (req, res) => {
       return errorResponseHelper(res, { message: 'Subcategory IDs array is required', code: '00400' });
     }
 
-    if (!['active', 'inactive'].includes(status)) {
-      return errorResponseHelper(res, { message: 'Status must be either "active" or "inactive"', code: '00400' });
+    if (!['active', 'inactive', 'archived'].includes(status)) {
+      return errorResponseHelper(res, { message: 'Status must be either "active", "inactive", or "archived"', code: '00400' });
     }
 
     const result = await SubCategory.updateMany(
@@ -448,9 +516,21 @@ const bulkUpdateStatus = async (req, res) => {
       .populate('createdBy', 'name email')
       .populate('updatedBy', 'name email');
 
+    // Get business count for each subcategory
+    const businessCountPromises = updatedSubCategories.map(subCategory => 
+      Business.countDocuments({ subcategories: subCategory._id })
+    );
+    const businessCounts = await Promise.all(businessCountPromises);
+
+    // Attach business count to each subcategory
+    const subCategoriesWithBusinessCount = updatedSubCategories.map((subCategory, index) => ({
+      ...subCategory.toObject(),
+      businessCount: businessCounts[index]
+    }));
+
     return successResponseHelper(res, {
       message: `${result.modifiedCount} subcategories updated successfully`,
-      data: updatedSubCategories,
+      data: subCategoriesWithBusinessCount,
       updatedCount: result.modifiedCount
     });
   } catch (error) {
@@ -465,8 +545,8 @@ const changeSubCategoryStatus = async (req, res) => {
     const { id } = req.params;
     const { status } = req.body;
     
-    if (!['active', 'inactive'].includes(status)) {
-      return errorResponseHelper(res, { message: 'Status must be either "active" or "inactive"', code: '00400' });
+    if (!['active', 'inactive', 'archived'].includes(status)) {
+      return errorResponseHelper(res, { message: 'Status must be either "active", "inactive", or "archived"', code: '00400' });
     }
     
     const subCategory = await SubCategory.findByIdAndUpdate(
@@ -485,14 +565,130 @@ const changeSubCategoryStatus = async (req, res) => {
       return errorResponseHelper(res, { message: 'Subcategory not found', code: '00404' });
     }
 
+    // Get business count for this subcategory
+    const businessCount = await Business.countDocuments({ subcategories: id });
+
+    // Attach business count to the subcategory
+    const subCategoryWithBusinessCount = {
+      ...subCategory.toObject(),
+      businessCount: businessCount
+    };
+
     return successResponseHelper(res, { 
       message: 'Subcategory status updated successfully', 
-      data: subCategory 
+      data: subCategoryWithBusinessCount 
     });
   } catch (error) {
     console.error('Change subcategory status error:', error);
     return errorResponseHelper(res, { message: 'Internal server error', code: '00500' });
   } 
+};
+
+const archiveSubCategory = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // Check if subcategory exists
+    const subCategory = await SubCategory.findById(id);
+    if (!subCategory) {
+      return errorResponseHelper(res, { message: 'Subcategory not found', code: '00404' });
+    }
+
+    // Check if subcategory is already archived
+    if (subCategory.status === 'archived') {
+      return errorResponseHelper(res, { message: 'Subcategory is already archived', code: '00400' });
+    }
+
+    // Archive the subcategory (change status to archived)
+    const archivedSubCategory = await SubCategory.findByIdAndUpdate(
+      id,
+      { 
+        status: 'archived', 
+        updatedBy: req.user.id,
+        updatedAt: new Date()
+      },
+      { new: true, runValidators: true }
+    ).populate('categoryId', 'title description')
+     .populate('createdBy', 'name email')
+     .populate('updatedBy', 'name email');
+
+    // Get business count for this subcategory
+    const businessCount = await Business.countDocuments({ subcategories: id });
+
+    // Attach business count to the subcategory
+    const subCategoryWithBusinessCount = {
+      ...archivedSubCategory.toObject(),
+      businessCount: businessCount
+    };
+
+    return successResponseHelper(res, {
+      message: 'Subcategory archived successfully',
+      data: subCategoryWithBusinessCount
+    });
+  } catch (error) {
+    console.error('Archive subcategory error:', error);
+    if (error.kind === 'ObjectId') {
+      return errorResponseHelper(res, { message: 'Invalid subcategory ID', code: '00400' });
+    }
+    return errorResponseHelper(res, { message: 'Internal server error', code: '00500' });
+  }
+};
+
+const getArchivedSubCategories = async (req, res) => {
+  try {
+    const { page = 1, limit = 10, queryText, categoryId, sortBy = 'createdAt', sortOrder = 'desc' } = req.query;
+    
+    // Build filter object for archived subcategories
+    const filter = { status: 'archived' };
+    if (queryText && queryText.trim() !== '') {
+      filter.title = { $regex: queryText, $options: 'i' };
+    }
+    if (categoryId && categoryId.trim() !== '') {
+      filter.categoryId = categoryId;
+    }
+
+    // Build sort object
+    const sort = {};
+    sort[sortBy] = sortOrder === 'desc' ? -1 : 1;
+
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+    
+    const subCategories = await SubCategory.find(filter)
+      .populate('categoryId', 'title')
+      .populate('createdBy', 'name email')
+      .sort(sort)
+      .skip(skip)
+      .limit(parseInt(limit));
+
+    // Get business count for each subcategory
+    const businessCountPromises = subCategories.map(subCategory => 
+      Business.countDocuments({ subcategories: subCategory._id })
+    );
+    const businessCounts = await Promise.all(businessCountPromises);
+
+    // Attach business count to each subcategory
+    const subCategoriesWithBusinessCount = subCategories.map((subCategory, index) => ({
+      ...subCategory.toObject(),
+      businessCount: businessCounts[index]
+    }));
+
+    const total = await SubCategory.countDocuments(filter);
+    const totalPages = Math.ceil(total / parseInt(limit));
+
+    return successResponseHelper(res, {
+      message: 'Archived subcategories retrieved successfully',
+      data: subCategoriesWithBusinessCount,
+      pagination: {
+        currentPage: parseInt(page),
+        totalPages,
+        totalItems: total,
+        itemsPerPage: parseInt(limit)
+      }
+    });
+  } catch (error) {
+    console.error('Get archived subcategories error:', error);
+    return errorResponseHelper(res, { message: 'Internal server error', code: '00500' });
+  }
 };
 
 export {
@@ -503,5 +699,7 @@ export {
   deleteSubCategory,
   getSubCategoriesByCategory,
   bulkUpdateStatus,
-  changeSubCategoryStatus
+  changeSubCategoryStatus,
+  archiveSubCategory,
+  getArchivedSubCategories
 };

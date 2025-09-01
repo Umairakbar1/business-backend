@@ -195,62 +195,17 @@ export const cloudinaryDocumentUpload = multer({
   }
 });
 
-// Single image upload middleware for Cloudinary
-export const uploadSingleImageToCloudinary = (req, res, next) => {
-  console.log('🔧 uploadSingleImageToCloudinary - Starting...');
+// Legal document upload middleware - accepts both 'file' and 'document' field names
+export const uploadLegalDocumentToCloudinary = (req, res, next) => {
+  console.log('🔧 uploadLegalDocumentToCloudinary - Starting...');
   console.log('🔧 Request path:', req.path);
   console.log('🔧 Content-Type:', req.headers['content-type']);
   console.log('🔧 Content-Length:', req.headers['content-length']);
-  console.log('🔧 User-Agent:', req.headers['user-agent']);
   
   // Check if this is a multipart request
   if (!req.headers['content-type'] || !req.headers['content-type'].includes('multipart/form-data')) {
     console.log('⚠️ Not a multipart request, skipping file upload');
     return next();
-  }
-  
-  // Validate content-type format
-  const contentType = req.headers['content-type'];
-  if (!contentType.includes('boundary=')) {
-    console.error('❌ Invalid multipart content-type - missing boundary');
-    return res.status(400).json({
-      success: false,
-      message: 'Invalid request format. Please ensure you are sending a proper multipart form.',
-      code: '00400'
-    });
-  }
-  
-  // Check content length
-  const contentLength = parseInt(req.headers['content-length'] || '0');
-  if (contentLength === 0) {
-    console.error('❌ Empty request body');
-    return res.status(400).json({
-      success: false,
-      message: 'Request body is empty. Please ensure you are sending form data.',
-      code: '00400'
-    });
-  }
-  
-  if (contentLength > 10 * 1024 * 1024) { // 10MB limit
-    console.error('❌ Request too large:', contentLength, 'bytes');
-    return res.status(400).json({
-      success: false,
-      message: 'Request too large. Please reduce the size of your data.',
-      code: '00400'
-    });
-  }
-  
-  // Log additional request details for debugging
-  console.log('🔧 Request method:', req.method);
-  console.log('🔧 Request URL:', req.url);
-  console.log('🔧 Request headers keys:', Object.keys(req.headers));
-  console.log('🔧 Boundary from content-type:', contentType.split('boundary=')[1]);
-  
-  // Check if request body is readable
-  if (req.body && Object.keys(req.body).length > 0) {
-    console.log('🔧 Request body already parsed:', Object.keys(req.body));
-  } else {
-    console.log('🔧 Request body not yet parsed or empty');
   }
   
   // Set a timeout to prevent hanging requests
@@ -265,79 +220,29 @@ export const uploadSingleImageToCloudinary = (req, res, next) => {
     }
   }, 30000); // 30 second timeout
   
-  // Wrap the multer middleware in a try-catch to handle any unexpected errors
-  try {
-    console.log('🔧 About to process with multer...');
-    
-    // Use the configured multer instance
-    cloudinaryImageUpload.single('image')(req, res, (err) => {
-      // Clear the timeout since we got a response
-      clearTimeout(timeout);
-      
-      if (err) {
-        console.error('❌ File upload error in uploadSingleImageToCloudinary:', err);
-        console.error('❌ Error type:', err.constructor.name);
-        console.error('❌ Error code:', err.code);
-        console.error('❌ Error field:', err.field);
-        console.error('❌ Error message:', err.message);
-        
-        if (err instanceof multer.MulterError) {
-          switch (err.code) {
-            case 'LIMIT_FILE_SIZE':
-              return res.status(400).json({
-                success: false,
-                message: 'File too large. Maximum size is 5MB',
-                code: '00400'
-              });
-            case 'LIMIT_FILE_COUNT':
-              return res.status(400).json({
-                success: false,
-                message: 'Too many files. Only one image allowed',
-                code: '00400'
-              });
-            case 'LIMIT_FIELD_COUNT':
-              return res.status(400).json({
-                success: false,
-                message: 'Too many form fields. Please reduce the number of fields.',
-                code: '00400'
-              });
-            case 'LIMIT_PART_COUNT':
-              return res.status(400).json({
-                success: false,
-                message: 'Form data too complex. Please simplify your request.',
-                code: '00400'
-              });
-            default:
-              return res.status(400).json({
-                success: false,
-                message: 'File upload error: ' + err.message,
-                code: '00400'
-              });
+  // Try with 'file' field first, then 'document' if that fails
+  const tryUpload = (fieldName) => {
+    return new Promise((resolve, reject) => {
+      cloudinaryDocumentUpload.single(fieldName)(req, res, (err) => {
+        if (err) {
+          if (err.code === 'LIMIT_UNEXPECTED_FILE' && fieldName === 'file') {
+            // Try with 'document' field next
+            console.log(`🔧 Field '${fieldName}' not found, trying 'document'...`);
+            resolve(tryUpload('document'));
+          } else {
+            reject(err);
           }
+        } else {
+          resolve();
         }
-        
-        // Handle "Unexpected end of form" error specifically
-        if (err.message.includes('Unexpected end of form')) {
-          console.error('❌ Multipart form parsing error - this usually indicates malformed form data');
-          console.error('❌ This error often occurs when:');
-          console.error('   - The frontend is not properly sending multipart data');
-          console.error('   - The form is being submitted before the file is fully loaded');
-          console.error('   - There are network issues during upload');
-          console.error('   - The request is being interrupted');
-          
-          return res.status(400).json({
-            success: false,
-            message: 'Form data is incomplete or malformed. This usually happens when the file upload is interrupted or not properly formatted. Please try uploading the image again.',
-            code: '00400'
-          });
-        }
-        
-        return res.status(400).json({
-          success: false,
-          message: 'File upload failed: ' + err.message,
-          code: '00400'
-        });
-      }
+      });
+    });
+  };
+  
+  // Start with 'file' field
+  tryUpload('file')
+    .then(() => {
+      clearTimeout(timeout);
       
       // Success - log file details
       if (req.file) {
@@ -353,19 +258,249 @@ export const uploadSingleImageToCloudinary = (req, res, next) => {
       
       console.log('🔧 Multer processing completed successfully');
       next();
+    })
+    .catch((err) => {
+      clearTimeout(timeout);
+      
+      console.error('❌ File upload error in uploadLegalDocumentToCloudinary:', err);
+      console.error('❌ Error type:', err.constructor.name);
+      console.error('❌ Error code:', err.code);
+      console.error('❌ Error field:', err.field);
+      console.error('❌ Error message:', err.message);
+      
+      if (err instanceof multer.MulterError) {
+        switch (err.code) {
+          case 'LIMIT_FILE_SIZE':
+            return res.status(400).json({
+              success: false,
+              message: 'File too large. Maximum size is 5MB',
+              code: '00400'
+            });
+          case 'LIMIT_FILE_COUNT':
+            return res.status(400).json({
+              success: false,
+              message: 'Too many files. Only one document allowed',
+              code: '00400'
+            });
+          case 'LIMIT_UNEXPECTED_FILE':
+            return res.status(400).json({
+              success: false,
+              message: 'No file field found. Please ensure you are sending a file with field name "file" or "document"',
+              code: '00400'
+            });
+          default:
+            return res.status(400).json({
+              success: false,
+              message: 'File upload error: ' + err.message,
+              code: '00400'
+            });
+        }
+      }
+      
+      return res.status(400).json({
+        success: false,
+        message: 'File upload failed: ' + err.message,
+        code: '00400'
+      });
     });
-  } catch (unexpectedError) {
-    // Clear the timeout since we got an error
+};
+export const uploadBrandLogoToCloudinary = (req, res, next) => {
+  console.log('🔧 uploadBrandLogoToCloudinary - Starting...');
+  console.log('🔧 Request path:', req.path);
+  console.log('🔧 Content-Type:', req.headers['content-type']);
+  console.log('🔧 Content-Length:', req.headers['content-length']);
+  
+  // Check if this is a multipart request
+  if (!req.headers['content-type'] || !req.headers['content-type'].includes('multipart/form-data')) {
+    console.log('⚠️ Not a multipart request, skipping file upload');
+    return next();
+  }
+  
+  // Set a timeout to prevent hanging requests
+  const timeout = setTimeout(() => {
+    console.error('❌ Request timeout - multer processing took too long');
+    if (!res.headersSent) {
+      res.status(408).json({
+        success: false,
+        message: 'Request timeout. The file upload is taking too long.',
+        code: '00408'
+      });
+    }
+  }, 30000); // 30 second timeout
+  
+  // Try with 'file' field first, then 'image' if that fails
+  const tryUpload = (fieldName) => {
+    return new Promise((resolve, reject) => {
+      cloudinaryImageUpload.single(fieldName)(req, res, (err) => {
+        if (err) {
+          if (err.code === 'LIMIT_UNEXPECTED_FILE' && fieldName === 'file') {
+            // Try with 'image' field next
+            console.log(`🔧 Field '${fieldName}' not found, trying 'image'...`);
+            resolve(tryUpload('image'));
+          } else {
+            reject(err);
+          }
+        } else {
+          resolve();
+        }
+      });
+    });
+  };
+  
+  // Start with 'file' field
+  tryUpload('file')
+    .then(() => {
+      clearTimeout(timeout);
+      
+      // Success - log file details
+      if (req.file) {
+        console.log('✅ File uploaded successfully:');
+        console.log('   - Field name:', req.file.fieldname);
+        console.log('   - Original name:', req.file.originalname);
+        console.log('   - MIME type:', req.file.mimetype);
+        console.log('   - Size:', req.file.size, 'bytes');
+        console.log('   - Buffer exists:', !!req.file.buffer);
+      } else {
+        console.log('ℹ️ No file uploaded in this request');
+      }
+      
+      console.log('🔧 Multer processing completed successfully');
+      next();
+    })
+    .catch((err) => {
+      clearTimeout(timeout);
+      
+      console.error('❌ File upload error in uploadBrandLogoToCloudinary:', err);
+      console.error('❌ Error type:', err.constructor.name);
+      console.error('❌ Error code:', err.code);
+      console.error('❌ Error field:', err.field);
+      console.error('❌ Error message:', err.message);
+      
+      if (err instanceof multer.MulterError) {
+        switch (err.code) {
+          case 'LIMIT_FILE_SIZE':
+            return res.status(400).json({
+              success: false,
+              message: 'File too large. Maximum size is 5MB',
+              code: '00400'
+            });
+          case 'LIMIT_FILE_COUNT':
+            return res.status(400).json({
+              success: false,
+              message: 'Too many files. Only one image allowed',
+              code: '00400'
+            });
+          case 'LIMIT_UNEXPECTED_FILE':
+            return res.status(400).json({
+              success: false,
+              message: 'No file field found. Please ensure you are sending a file with field name "file" or "image"',
+              code: '00400'
+            });
+          default:
+            return res.status(400).json({
+              success: false,
+              message: 'File upload error: ' + err.message,
+              code: '00400'
+            });
+        }
+      }
+      
+      return res.status(400).json({
+        success: false,
+        message: 'File upload failed: ' + err.message,
+        code: '00400'
+      });
+    });
+};
+
+// Single image upload middleware for Cloudinary
+export const uploadSingleImageToCloudinary = (req, res, next) => {
+  console.log('🔧 uploadSingleImageToCloudinary - Starting...');
+  console.log('🔧 Request path:', req.path);
+  console.log('🔧 Content-Type:', req.headers['content-type']);
+  console.log('🔧 Content-Length:', req.headers['content-length']);
+  
+  // Check if this is a multipart request
+  if (!req.headers['content-type'] || !req.headers['content-type'].includes('multipart/form-data')) {
+    console.log('⚠️ Not a multipart request, skipping file upload');
+    return next();
+  }
+  
+  // Set a timeout to prevent hanging requests
+  const timeout = setTimeout(() => {
+    console.error('❌ Request timeout - multer processing took too long');
+    if (!res.headersSent) {
+      res.status(408).json({
+        success: false,
+        message: 'Request timeout. The file upload is taking too long.',
+        code: '00408'
+      });
+    }
+  }, 30000); // 30 second timeout
+  
+  // Use the configured multer instance
+  cloudinaryImageUpload.single('image')(req, res, (err) => {
+    // Clear the timeout since we got a response
     clearTimeout(timeout);
     
-    console.error('❌ Unexpected error in uploadSingleImageToCloudinary:', unexpectedError);
-    console.error('❌ Unexpected error stack:', unexpectedError.stack);
-    return res.status(500).json({
-      success: false,
-      message: 'An unexpected error occurred during file upload. Please try again.',
-      code: '00500'
-    });
-  }
+    if (err) {
+      console.error('❌ File upload error in uploadSingleImageToCloudinary:', err);
+      console.error('❌ Error type:', err.constructor.name);
+      console.error('❌ Error code:', err.code);
+      console.error('❌ Error field:', err.field);
+      console.error('❌ Error message:', err.message);
+      
+      if (err instanceof multer.MulterError) {
+        switch (err.code) {
+          case 'LIMIT_FILE_SIZE':
+            return res.status(400).json({
+              success: false,
+              message: 'File too large. Maximum size is 5MB',
+              code: '00400'
+            });
+          case 'LIMIT_FILE_COUNT':
+            return res.status(400).json({
+              success: false,
+              message: 'Too many files. Only one image allowed',
+              code: '00400'
+            });
+          case 'LIMIT_UNEXPECTED_FILE':
+            return res.status(400).json({
+              success: false,
+              message: 'No file field found. Please ensure you are sending a file with field name "image"',
+              code: '00400'
+            });
+          default:
+            return res.status(400).json({
+              success: false,
+              message: 'File upload error: ' + err.message,
+              code: '00400'
+            });
+        }
+      }
+      
+      return res.status(400).json({
+        success: false,
+        message: 'File upload failed: ' + err.message,
+        code: '00400'
+      });
+    }
+    
+    // Success - log file details
+    if (req.file) {
+      console.log('✅ File uploaded successfully:');
+      console.log('   - Field name:', req.file.fieldname);
+      console.log('   - Original name:', req.file.originalname);
+      console.log('   - MIME type:', req.file.mimetype);
+      console.log('   - Size:', req.file.size, 'bytes');
+      console.log('   - Buffer exists:', !!req.file.buffer);
+    } else {
+      console.log('ℹ️ No file uploaded in this request');
+    }
+    
+    console.log('🔧 Multer processing completed successfully');
+    next();
+  });
 };
 
 // Robust profile upload middleware specifically for admin profiles

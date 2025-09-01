@@ -52,6 +52,10 @@ const BlogSchema = new mongoose.Schema({
         },
         public_id: {
             type: String
+        },
+        mediaId: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: 'Media'
         }
     },
     image: String, // Legacy field for backward compatibility

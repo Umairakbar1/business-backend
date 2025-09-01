@@ -1,16 +1,164 @@
 import Business from '../../models/business/business.js';
 import Category from '../../models/admin/category.js';
 import SubCategory from '../../models/admin/subCategory.js';
+import Subscription from '../../models/admin/subscription.js';
+import Review from '../../models/admin/review.js';
 import { errorResponseHelper, successResponseHelper } from '../../helpers/utilityHelper.js';
 import mongoose from 'mongoose';
+
+// Helper function to add subscription and boost status to business
+const addSubscriptionAndBoostStatus = (business) => {
+  const businessObj = business.toObject();
+  
+  // Check if business has active subscription
+  const hasActiveSubscription = businessObj.businessSubscriptionId && 
+    businessObj.businessSubscriptionId.status === 'active' &&
+    (businessObj.businessSubscriptionId.isLifetime || 
+     (businessObj.businessSubscriptionId.expiresAt && new Date() < new Date(businessObj.businessSubscriptionId.expiresAt)));
+
+  // Check if business has active boost
+  const hasActiveBoost = businessObj.boostSubscriptionId && 
+    businessObj.boostSubscriptionId.status === 'active' &&
+    businessObj.boostSubscriptionId.boostQueueInfo &&
+    businessObj.boostSubscriptionId.boostQueueInfo.isCurrentlyActive &&
+    businessObj.boostSubscriptionId.boostQueueInfo.boostEndTime &&
+    new Date() < new Date(businessObj.boostSubscriptionId.boostQueueInfo.boostEndTime);
+
+  // Also check the boostActive field from business model
+  const isBoosted = businessObj.boostActive && 
+    businessObj.boostEndAt && 
+    new Date() < new Date(businessObj.boostEndAt);
+
+  // Add subscription plan details if available
+  const subscriptionDetails = businessObj.businessSubscriptionId ? {
+    _id: businessObj.businessSubscriptionId._id,
+    subscriptionType: businessObj.businessSubscriptionId.subscriptionType,
+    status: businessObj.businessSubscriptionId.status,
+    amount: businessObj.businessSubscriptionId.amount,
+    currency: businessObj.businessSubscriptionId.currency,
+    expiresAt: businessObj.businessSubscriptionId.expiresAt,
+    isLifetime: businessObj.businessSubscriptionId.isLifetime,
+    features: businessObj.businessSubscriptionId.features,
+    maxBoostPerDay: businessObj.businessSubscriptionId.maxBoostPerDay,
+    validityHours: businessObj.businessSubscriptionId.validityHours,
+    createdAt: businessObj.businessSubscriptionId.createdAt,
+    updatedAt: businessObj.businessSubscriptionId.updatedAt,
+    boostUsage: businessObj.businessSubscriptionId.boostUsage,
+    featureUsage: businessObj.businessSubscriptionId.featureUsage,
+    planDetails: businessObj.businessSubscriptionId.paymentPlan ? {
+      _id: businessObj.businessSubscriptionId.paymentPlan._id,
+      name: businessObj.businessSubscriptionId.paymentPlan.name,
+      description: businessObj.businessSubscriptionId.paymentPlan.description,
+      planType: businessObj.businessSubscriptionId.paymentPlan.planType,
+      price: businessObj.businessSubscriptionId.paymentPlan.price,
+      currency: businessObj.businessSubscriptionId.paymentPlan.currency,
+      features: businessObj.businessSubscriptionId.paymentPlan.features,
+      maxBoostPerDay: businessObj.businessSubscriptionId.paymentPlan.maxBoostPerDay,
+      validityHours: businessObj.businessSubscriptionId.paymentPlan.validityHours,
+      isActive: businessObj.businessSubscriptionId.paymentPlan.isActive,
+      isPopular: businessObj.businessSubscriptionId.paymentPlan.isPopular,
+      sortOrder: businessObj.businessSubscriptionId.paymentPlan.sortOrder,
+      discount: businessObj.businessSubscriptionId.paymentPlan.discount
+    } : null,
+    isExpired: businessObj.businessSubscriptionId.expiresAt ? new Date() > new Date(businessObj.businessSubscriptionId.expiresAt) : false,
+    daysUntilExpiry: businessObj.businessSubscriptionId.expiresAt ? 
+      Math.ceil((new Date(businessObj.businessSubscriptionId.expiresAt) - new Date()) / (1000 * 60 * 60 * 24)) : null
+  } : null;
+
+  // Add boost plan details if available
+  const boostDetails = businessObj.boostSubscriptionId ? {
+    _id: businessObj.boostSubscriptionId._id,
+    subscriptionType: businessObj.boostSubscriptionId.subscriptionType,
+    status: businessObj.boostSubscriptionId.status,
+    amount: businessObj.boostSubscriptionId.amount,
+    currency: businessObj.boostSubscriptionId.currency,
+    expiresAt: businessObj.boostSubscriptionId.expiresAt,
+    isLifetime: businessObj.boostSubscriptionId.isLifetime,
+    features: businessObj.boostSubscriptionId.features,
+    maxBoostPerDay: businessObj.boostSubscriptionId.maxBoostPerDay,
+    validityHours: businessObj.boostSubscriptionId.validityHours,
+    createdAt: businessObj.boostSubscriptionId.createdAt,
+    updatedAt: businessObj.boostSubscriptionId.updatedAt,
+    boostUsage: businessObj.boostSubscriptionId.boostUsage,
+    boostQueueInfo: businessObj.boostSubscriptionId.boostQueueInfo,
+    planDetails: businessObj.boostSubscriptionId.paymentPlan ? {
+      _id: businessObj.boostSubscriptionId.paymentPlan._id,
+      name: businessObj.boostSubscriptionId.paymentPlan.name,
+      description: businessObj.boostSubscriptionId.paymentPlan.description,
+      planType: businessObj.boostSubscriptionId.paymentPlan.planType,
+      price: businessObj.boostSubscriptionId.paymentPlan.price,
+      currency: businessObj.boostSubscriptionId.paymentPlan.currency,
+      features: businessObj.boostSubscriptionId.paymentPlan.features,
+      maxBoostPerDay: businessObj.boostSubscriptionId.paymentPlan.maxBoostPerDay,
+      validityHours: businessObj.boostSubscriptionId.paymentPlan.validityHours,
+      isActive: businessObj.boostSubscriptionId.paymentPlan.isActive,
+      isPopular: businessObj.boostSubscriptionId.paymentPlan.isPopular,
+      sortOrder: businessObj.boostSubscriptionId.paymentPlan.sortOrder,
+      discount: businessObj.boostSubscriptionId.paymentPlan.discount
+    } : null,
+    isExpired: businessObj.boostSubscriptionId.expiresAt ? new Date() > new Date(businessObj.boostSubscriptionId.expiresAt) : false,
+    hoursUntilExpiry: businessObj.boostSubscriptionId.expiresAt ? 
+      Math.ceil((new Date(businessObj.boostSubscriptionId.expiresAt) - new Date()) / (1000 * 60 * 60)) : null
+  } : null;
+
+  // Determine active subscription ID
+  let activeSubscriptionId = null;
+  if (hasActiveSubscription && businessObj.businessSubscriptionId) {
+    activeSubscriptionId = businessObj.businessSubscriptionId._id;
+  } else if (hasActiveBoost && businessObj.boostSubscriptionId) {
+    activeSubscriptionId = businessObj.boostSubscriptionId._id;
+  }
+
+  return {
+    ...businessObj,
+    hasActiveSubscription: !!hasActiveSubscription,
+    hasActiveBoost: !!(hasActiveBoost || isBoosted),
+    isBoosted: !!(hasActiveBoost || isBoosted),
+    activeSubscriptionId,
+    subscriptionDetails,
+    boostDetails
+  };
+};
+
+// Helper function to add review count to businesses
+const addReviewCountToBusinesses = async (businesses) => {
+  const businessIds = businesses.map(business => business._id);
+  
+  // Get review counts for all businesses
+  const reviewCounts = await Review.aggregate([
+    {
+      $match: {
+        businessId: { $in: businessIds }
+      }
+    },
+    {
+      $group: {
+        _id: '$businessId',
+        reviewCount: { $sum: 1 }
+      }
+    }
+  ]);
+  
+  // Create a map for quick lookup
+  const reviewCountMap = {};
+  reviewCounts.forEach(item => {
+    reviewCountMap[item._id.toString()] = item.reviewCount;
+  });
+  
+  // Add review count to each business
+  return businesses.map(business => ({
+    ...business.toObject(),
+    reviewCount: reviewCountMap[business._id.toString()] || 0
+  }));
+};
 
 // Get all businesses
 export const getAllBusinesses = async (req, res) => {
   try {
-    const { page = 1, limit = 10, queryText, status, startDate, endDate } = req.query;
+    const { page = 1, limit = 10, queryText, status, startDate, endDate, hasReviews } = req.query;
     const filter = {};
 
-    console.log('Query parameters:', { page, limit, queryText, status, startDate, endDate });
+    console.log('Query parameters:', { page, limit, queryText, status, startDate, endDate, hasReviews });
 
     // Text search (businessName, owner name, email, phone, website)
     if (queryText) {
@@ -33,6 +181,30 @@ export const getAllBusinesses = async (req, res) => {
       filter.createdAt = {};
       if (startDate) filter.createdAt.$gte = new Date(startDate);
       if (endDate) filter.createdAt.$lte = new Date(endDate);
+    }
+
+    // Filter businesses that have at least 1 review
+    if (hasReviews === 'true' || hasReviews === true) {
+      // Get business IDs that have at least 1 review
+      const businessesWithReviews = await Review.distinct('businessId');
+      console.log('Businesses with reviews:', businessesWithReviews.length);
+      
+      if (businessesWithReviews.length > 0) {
+        filter._id = { $in: businessesWithReviews };
+      } else {
+        // If no businesses have reviews, return empty result
+        return successResponseHelper(res, {
+          message: 'No businesses with reviews found',
+          data: [],
+          pagination: {
+            page: parseInt(page),
+            limit: parseInt(limit),
+            total: 0,
+            totalPages: 0
+          },
+          totalCount: 0
+        });
+      }
     }
 
     console.log('Applied filter:', JSON.stringify(filter, null, 2));
@@ -66,6 +238,22 @@ export const getAllBusinesses = async (req, res) => {
       .populate('businessOwner', 'firstName lastName email phoneNumber username status profilePhoto')
       .populate('category', 'title slug description image color')
       .populate('subcategories', 'title slug description image')
+      .populate({
+        path: 'businessSubscriptionId',
+        select: 'status subscriptionType expiresAt isLifetime paymentPlan amount currency features maxBoostPerDay validityHours',
+        populate: {
+          path: 'paymentPlan',
+          select: 'name description planType price currency features maxBoostPerDay validityHours isActive isPopular'
+        }
+      })
+      .populate({
+        path: 'boostSubscriptionId',
+        select: 'status subscriptionType expiresAt boostQueueInfo paymentPlan amount currency features maxBoostPerDay validityHours',
+        populate: {
+          path: 'paymentPlan',
+          select: 'name description planType price currency features maxBoostPerDay validityHours isActive isPopular'
+        }
+      })
       .sort({ createdAt: -1 })
       .skip(skip)
       .limit(parseInt(limit));
@@ -93,11 +281,17 @@ export const getAllBusinesses = async (req, res) => {
       console.log('No businesses found');
     }
 
+    // Add subscription and boost status to each business
+    const businessesWithSubscriptionStatus = businesses.map(business => addSubscriptionAndBoostStatus(business));
+
+    // Add review counts to businesses
+    const businessesWithReviewCounts = await addReviewCountToBusinesses(businessesWithSubscriptionStatus);
+
     const total = await Business.countDocuments(filter);
 
     return successResponseHelper(res, {
       message: 'Businesses fetched successfully',
-      data: businesses,
+      data: businessesWithReviewCounts,
         pagination: {
           page: parseInt(page),
           limit: parseInt(limit),
@@ -121,13 +315,32 @@ export const getSingleBusiness = async (req, res) => {
     const business = await Business.findById(businessId)
       .populate('businessOwner', 'firstName lastName email phoneNumber username status profilePhoto isEmailVerified isPhoneVerified')
       .populate('category', 'title slug description image color')
-      .populate('subcategories', 'title slug description image');
+      .populate('subcategories', 'title slug description image')
+      .populate({
+        path: 'businessSubscriptionId',
+        select: 'status subscriptionType expiresAt isLifetime paymentPlan amount currency features maxBoostPerDay validityHours createdAt updatedAt',
+        populate: {
+          path: 'paymentPlan',
+          select: 'name description planType price currency features maxBoostPerDay validityHours isActive isPopular sortOrder'
+        }
+      })
+      .populate({
+        path: 'boostSubscriptionId',
+        select: 'status subscriptionType expiresAt boostQueueInfo paymentPlan amount currency features maxBoostPerDay validityHours createdAt updatedAt',
+        populate: {
+          path: 'paymentPlan',
+          select: 'name description planType price currency features maxBoostPerDay validityHours isActive isPopular sortOrder'
+        }
+      });
     
     if (!business) {
       return errorResponseHelper(res, { message: 'Business not found', code: '00404' });
     }
+
+    // Add subscription and boost status to business
+    const businessWithSubscriptionStatus = addSubscriptionAndBoostStatus(business);
     
-    return successResponseHelper(res, { message: 'Business fetched successfully', data: business });
+    return successResponseHelper(res, { message: 'Business fetched successfully', data: businessWithSubscriptionStatus });
   } catch (error) {
     console.error('Get business error:', error);
     return errorResponseHelper(res, { message: 'Failed to fetch business', code: '00500' });
@@ -150,13 +363,32 @@ export const changeStatusOfBusiness = async (req, res) => {
       { new: true, runValidators: true }
     ).populate('businessOwner', 'firstName lastName email phoneNumber username status profilePhoto')
       .populate('category', 'title slug description image color')
-      .populate('subcategories', 'title slug description image');
+      .populate('subcategories', 'title slug description image')
+      .populate({
+        path: 'businessSubscriptionId',
+        select: 'status subscriptionType expiresAt isLifetime paymentPlan amount currency features maxBoostPerDay validityHours',
+        populate: {
+          path: 'paymentPlan',
+          select: 'name description planType price currency features maxBoostPerDay validityHours isActive isPopular'
+        }
+      })
+      .populate({
+        path: 'boostSubscriptionId',
+        select: 'status subscriptionType expiresAt boostQueueInfo paymentPlan amount currency features maxBoostPerDay validityHours',
+        populate: {
+          path: 'paymentPlan',
+          select: 'name description planType price currency features maxBoostPerDay validityHours isActive isPopular'
+        }
+      });
     
     if (!business) {
       return errorResponseHelper(res, { message: 'Business not found', code: '00404' });
     }
+
+    // Add subscription and boost status to business
+    const businessWithSubscriptionStatus = addSubscriptionAndBoostStatus(business);
     
-    return successResponseHelper(res, { message: 'Business status updated successfully', data: business });
+    return successResponseHelper(res, { message: 'Business status updated successfully', data: businessWithSubscriptionStatus });
   } catch (error) {
     console.error('Update business status error:', error);
     return errorResponseHelper(res, { message: 'Failed to update business status', code: '00500' });
@@ -168,15 +400,139 @@ export const deleteBusiness = async (req, res) => {
   try {
     const { businessId } = req.params;
     
-    const business = await Business.findByIdAndDelete(businessId);
+    // Validate business ID
+    if (!mongoose.Types.ObjectId.isValid(businessId)) {
+      return errorResponseHelper(res, { message: 'Invalid business ID', code: '00400' });
+    }
+    
+    // First, get the business to check if it exists and get subscription IDs
+    const business = await Business.findById(businessId);
     if (!business) {
       return errorResponseHelper(res, { message: 'Business not found', code: '00404' });
     }
     
-    return successResponseHelper(res, { message: 'Business deleted successfully' });
+    console.log('Deleting business:', {
+      businessId: business._id,
+      businessName: business.businessName,
+      businessSubscriptionId: business.businessSubscriptionId,
+      boostSubscriptionId: business.boostSubscriptionId
+    });
+    
+    // Store subscription IDs for cleanup
+    const businessSubscriptionId = business.businessSubscriptionId;
+    const boostSubscriptionId = business.boostSubscriptionId;
+    
+    // Start a database transaction for atomic operations
+    const session = await mongoose.startSession();
+    let deletedSubscriptions = [];
+    
+    try {
+      await session.withTransaction(async () => {
+        // 1. Delete all subscriptions associated with this business
+        const subscriptionDeleteResult = await Subscription.deleteMany(
+          { business: businessId },
+          { session }
+        );
+        
+        console.log('Deleted subscriptions:', {
+          deletedCount: subscriptionDeleteResult.deletedCount,
+          businessSubscriptionId,
+          boostSubscriptionId
+        });
+        
+        // 2. Delete the business
+        const businessDeleteResult = await Business.findByIdAndDelete(businessId, { session });
+        
+        if (!businessDeleteResult) {
+          throw new Error('Failed to delete business');
+        }
+        
+        console.log('Business deleted successfully:', businessDeleteResult._id);
+        
+        // 3. Update any other businesses that might reference these subscription IDs
+        // (This is a safety measure in case there are any cross-references)
+        const updatePromises = [];
+        
+        if (businessSubscriptionId) {
+          updatePromises.push(
+            Business.updateMany(
+              { businessSubscriptionId: businessSubscriptionId },
+              { $unset: { businessSubscriptionId: 1 } },
+              { session }
+            )
+          );
+        }
+        
+        if (boostSubscriptionId) {
+          updatePromises.push(
+            Business.updateMany(
+              { boostSubscriptionId: boostSubscriptionId },
+              { $unset: { boostSubscriptionId: 1 } },
+              { session }
+            )
+          );
+        }
+        
+        if (updatePromises.length > 0) {
+          await Promise.all(updatePromises);
+          console.log('Cleaned up subscription references in other businesses');
+        }
+        
+        // 4. Log the cleanup details
+        deletedSubscriptions = {
+          businessSubscriptionId,
+          boostSubscriptionId,
+          totalSubscriptionsDeleted: subscriptionDeleteResult.deletedCount,
+          businessDeleted: true
+        };
+      });
+      
+      console.log('Business deletion transaction completed successfully');
+      
+    } catch (transactionError) {
+      console.error('Transaction failed:', transactionError);
+      throw transactionError;
+    } finally {
+      await session.endSession();
+    }
+    
+    // Return success response with cleanup details
+    return successResponseHelper(res, { 
+      message: 'Business and associated subscriptions deleted successfully',
+      data: {
+        businessId,
+        businessName: business.businessName,
+        deletedSubscriptions,
+        cleanupDetails: {
+          subscriptionsDeleted: deletedSubscriptions.totalSubscriptionsDeleted,
+          businessSubscriptionId: deletedSubscriptions.businessSubscriptionId,
+          boostSubscriptionId: deletedSubscriptions.boostSubscriptionId
+        }
+      }
+    });
+    
   } catch (error) {
     console.error('Delete business error:', error);
-    return errorResponseHelper(res, { message: 'Failed to delete business', code: '00500' });
+    
+    // Handle specific error types
+    if (error.name === 'ValidationError') {
+      return errorResponseHelper(res, { 
+        message: 'Validation error during deletion', 
+        code: '00400' 
+      });
+    }
+    
+    if (error.name === 'CastError') {
+      return errorResponseHelper(res, { 
+        message: 'Invalid business ID format', 
+        code: '00400' 
+      });
+    }
+    
+    return errorResponseHelper(res, { 
+      message: 'Failed to delete business and associated data', 
+      code: '00500' 
+    });
   }
 };
 
@@ -928,5 +1284,382 @@ export const bulkUpdateBusinessStatus = async (req, res) => {
   } catch (error) {
     console.error('Bulk update business status error:', error);
     return errorResponseHelper(res, { message: 'Failed to bulk update business status', code: '00500' });
+  }
+};
+
+// Bulk delete businesses with subscription cleanup
+export const bulkDeleteBusinesses = async (req, res) => {
+  try {
+    const { businessIds } = req.body;
+    
+    if (!businessIds || !Array.isArray(businessIds) || businessIds.length === 0) {
+      return errorResponseHelper(res, { message: 'Business IDs array is required', code: '00400' });
+    }
+    
+    // Validate all business IDs
+    const invalidIds = businessIds.filter(id => !mongoose.Types.ObjectId.isValid(id));
+    if (invalidIds.length > 0) {
+      return errorResponseHelper(res, { 
+        message: 'Invalid business ID(s) found', 
+        invalidIds,
+        code: '00400' 
+      });
+    }
+    
+    console.log('Bulk deleting businesses:', businessIds);
+    
+    // Start a database transaction for atomic operations
+    const session = await mongoose.startSession();
+    let deletionResults = [];
+    
+    try {
+      await session.withTransaction(async () => {
+        // 1. Get all businesses to be deleted (for logging and cleanup)
+        const businessesToDelete = await Business.find({ _id: { $in: businessIds } }, { session });
+        
+        if (businessesToDelete.length === 0) {
+          throw new Error('No businesses found to delete');
+        }
+        
+        console.log(`Found ${businessesToDelete.length} businesses to delete`);
+        
+        // 2. Delete all subscriptions associated with these businesses
+        const subscriptionDeleteResult = await Subscription.deleteMany(
+          { business: { $in: businessIds } },
+          { session }
+        );
+        
+        console.log('Deleted subscriptions:', {
+          deletedCount: subscriptionDeleteResult.deletedCount,
+          businessIds
+        });
+        
+        // 3. Delete the businesses
+        const businessDeleteResult = await Business.deleteMany(
+          { _id: { $in: businessIds } },
+          { session }
+        );
+        
+        console.log('Deleted businesses:', {
+          deletedCount: businessDeleteResult.deletedCount,
+          businessIds
+        });
+        
+        // 4. Clean up any orphaned subscription references
+        // (This is a safety measure to ensure no dangling references)
+        const cleanupResult = await Business.updateMany(
+          {
+            $or: [
+              { businessSubscriptionId: { $in: businessIds } },
+              { boostSubscriptionId: { $in: businessIds } }
+            ]
+          },
+          {
+            $unset: {
+              businessSubscriptionId: 1,
+              boostSubscriptionId: 1
+            }
+          },
+          { session }
+        );
+        
+        if (cleanupResult.modifiedCount > 0) {
+          console.log('Cleaned up subscription references:', cleanupResult.modifiedCount);
+        }
+        
+        // 5. Prepare deletion results
+        deletionResults = {
+          businessesDeleted: businessDeleteResult.deletedCount,
+          subscriptionsDeleted: subscriptionDeleteResult.deletedCount,
+          referencesCleaned: cleanupResult.modifiedCount,
+          businessDetails: businessesToDelete.map(business => ({
+            _id: business._id,
+            businessName: business.businessName,
+            businessSubscriptionId: business.businessSubscriptionId,
+            boostSubscriptionId: business.boostSubscriptionId
+          }))
+        };
+      });
+      
+      console.log('Bulk business deletion transaction completed successfully');
+      
+    } catch (transactionError) {
+      console.error('Bulk deletion transaction failed:', transactionError);
+      throw transactionError;
+    } finally {
+      await session.endSession();
+    }
+    
+    return successResponseHelper(res, {
+      message: `Successfully deleted ${deletionResults.businessesDeleted} business(es) and associated subscriptions`,
+      data: {
+        deletionSummary: {
+          businessesDeleted: deletionResults.businessesDeleted,
+          subscriptionsDeleted: deletionResults.subscriptionsDeleted,
+          referencesCleaned: deletionResults.referencesCleaned
+        },
+        deletedBusinesses: deletionResults.businessDetails
+      }
+    });
+    
+  } catch (error) {
+    console.error('Bulk delete businesses error:', error);
+    
+    // Handle specific error types
+    if (error.name === 'ValidationError') {
+      return errorResponseHelper(res, { 
+        message: 'Validation error during bulk deletion', 
+        code: '00400' 
+      });
+    }
+    
+    if (error.name === 'CastError') {
+      return errorResponseHelper(res, { 
+        message: 'Invalid business ID format in bulk deletion', 
+        code: '00400' 
+      });
+    }
+    
+    return errorResponseHelper(res, { 
+      message: 'Failed to bulk delete businesses and associated data', 
+      code: '00500' 
+    });
+  }
+};
+
+// Get detailed subscription and boost information for a single business
+export const getBusinessSubscriptionAndBoostDetails = async (req, res) => {
+  try {
+    const { businessId } = req.params;
+    
+    if (!mongoose.Types.ObjectId.isValid(businessId)) {
+      return errorResponseHelper(res, { message: 'Invalid business ID', code: '00400' });
+    }
+    
+    const business = await Business.findById(businessId)
+      .populate('businessOwner', 'firstName lastName email phoneNumber username status profilePhoto')
+      .populate('category', 'title slug description image color')
+      .populate('subcategories', 'title slug description image')
+      .populate({
+        path: 'businessSubscriptionId',
+        select: 'status subscriptionType expiresAt isLifetime paymentPlan amount currency features maxBoostPerDay validityHours createdAt updatedAt boostUsage featureUsage',
+        populate: {
+          path: 'paymentPlan',
+          select: 'name description planType price currency features maxBoostPerDay validityHours isActive isPopular sortOrder discount'
+        }
+      })
+      .populate({
+        path: 'boostSubscriptionId',
+        select: 'status subscriptionType expiresAt boostQueueInfo paymentPlan amount currency features maxBoostPerDay validityHours createdAt updatedAt boostUsage',
+        populate: {
+          path: 'paymentPlan',
+          select: 'name description planType price currency features maxBoostPerDay validityHours isActive isPopular sortOrder discount'
+        }
+      });
+    
+    if (!business) {
+      return errorResponseHelper(res, { message: 'Business not found', code: '00404' });
+    }
+
+    // Get all subscriptions for this business (both active and inactive)
+    const allSubscriptions = await Subscription.find({ business: businessId })
+      .populate('paymentPlan', 'name description planType price currency features maxBoostPerDay validityHours isActive isPopular sortOrder discount')
+      .sort({ createdAt: -1 });
+
+    // Get all boost subscriptions specifically
+    const boostSubscriptions = allSubscriptions.filter(sub => sub.subscriptionType === 'boost');
+    
+    // Get all business subscriptions specifically
+    const businessSubscriptions = allSubscriptions.filter(sub => sub.subscriptionType === 'business');
+
+    // Check subscription and boost status
+    const businessObj = business.toObject();
+    
+    // Check if business has active subscription
+    const hasActiveSubscription = businessObj.businessSubscriptionId && 
+      businessObj.businessSubscriptionId.status === 'active' &&
+      (businessObj.businessSubscriptionId.isLifetime || 
+       (businessObj.businessSubscriptionId.expiresAt && new Date() < new Date(businessObj.businessSubscriptionId.expiresAt)));
+
+    // Check if business has active boost
+    const hasActiveBoost = businessObj.boostSubscriptionId && 
+      businessObj.boostSubscriptionId.status === 'active' &&
+      businessObj.boostSubscriptionId.boostQueueInfo &&
+      businessObj.boostSubscriptionId.boostQueueInfo.isCurrentlyActive &&
+      businessObj.boostSubscriptionId.boostQueueInfo.boostEndTime &&
+      new Date() < new Date(businessObj.boostSubscriptionId.boostQueueInfo.boostEndTime);
+
+    // Also check the boostActive field from business model
+    const isBoosted = businessObj.boostActive && 
+      businessObj.boostEndAt && 
+      new Date() < new Date(businessObj.boostEndAt);
+
+    // Prepare detailed response
+    const subscriptionDetails = {
+      business: {
+        _id: business._id,
+        businessName: business.businessName,
+        email: business.email,
+        phoneNumber: business.phoneNumber,
+        status: business.status,
+        category: business.category,
+        subcategories: business.subcategories,
+        businessOwner: business.businessOwner,
+        boostActive: business.boostActive,
+        boostStartAt: business.boostStartAt,
+        boostEndAt: business.boostEndAt,
+        boostCategory: business.boostCategory,
+        createdAt: business.createdAt,
+        updatedAt: business.updatedAt
+      },
+      subscriptionStatus: {
+        hasActiveSubscription: !!hasActiveSubscription,
+        hasActiveBoost: !!(hasActiveBoost || isBoosted),
+        isBoosted: !!(hasActiveBoost || isBoosted)
+      },
+      activeSubscription: hasActiveSubscription ? {
+        ...businessObj.businessSubscriptionId,
+        planDetails: businessObj.businessSubscriptionId.paymentPlan,
+        isExpired: businessObj.businessSubscriptionId.expiresAt ? new Date() > new Date(businessObj.businessSubscriptionId.expiresAt) : false,
+        daysUntilExpiry: businessObj.businessSubscriptionId.expiresAt ? 
+          Math.ceil((new Date(businessObj.businessSubscriptionId.expiresAt) - new Date()) / (1000 * 60 * 60 * 24)) : null
+      } : null,
+      activeBoost: (hasActiveBoost || isBoosted) ? {
+        ...businessObj.boostSubscriptionId,
+        planDetails: businessObj.boostSubscriptionId?.paymentPlan,
+        isExpired: businessObj.boostSubscriptionId?.expiresAt ? new Date() > new Date(businessObj.boostSubscriptionId.expiresAt) : false,
+        hoursUntilExpiry: businessObj.boostSubscriptionId?.expiresAt ? 
+          Math.ceil((new Date(businessObj.boostSubscriptionId.expiresAt) - new Date()) / (1000 * 60 * 60)) : null
+      } : null,
+      subscriptionHistory: {
+        totalSubscriptions: allSubscriptions.length,
+        businessSubscriptions: businessSubscriptions.length,
+        boostSubscriptions: boostSubscriptions.length,
+        allSubscriptions: allSubscriptions.map(sub => ({
+          _id: sub._id,
+          subscriptionType: sub.subscriptionType,
+          status: sub.status,
+          amount: sub.amount,
+          currency: sub.currency,
+          expiresAt: sub.expiresAt,
+          isLifetime: sub.isLifetime,
+          createdAt: sub.createdAt,
+          updatedAt: sub.updatedAt,
+          planDetails: sub.paymentPlan,
+          features: sub.features,
+          maxBoostPerDay: sub.maxBoostPerDay,
+          validityHours: sub.validityHours,
+          boostUsage: sub.boostUsage,
+          featureUsage: sub.featureUsage,
+          boostQueueInfo: sub.boostQueueInfo
+        }))
+      }
+    };
+    
+    return successResponseHelper(res, { 
+      message: 'Business subscription and boost details fetched successfully', 
+      data: subscriptionDetails 
+    });
+  } catch (error) {
+    console.error('Get business subscription and boost details error:', error);
+    return errorResponseHelper(res, { message: 'Failed to fetch business subscription and boost details', code: '00500' });
+  }
+};
+
+// Get subscription details by subscription ID
+export const getSubscriptionDetailsById = async (req, res) => {
+  try {
+    const { subscriptionId } = req.params;
+    
+    if (!mongoose.Types.ObjectId.isValid(subscriptionId)) {
+      return errorResponseHelper(res, { message: 'Invalid subscription ID', code: '00400' });
+    }
+    
+    // Find subscription with populated payment plan
+    const subscription = await Subscription.findById(subscriptionId)
+      .populate('business', 'businessName email phoneNumber status about category subcategories businessOwner boostActive boostStartAt boostEndAt boostCategory createdAt updatedAt')
+      .populate('paymentPlan', 'name description planType price currency features maxBoostPerDay validityHours isActive isPopular sortOrder discount')
+      .populate('business.category', 'title slug description image color')
+      .populate('business.subcategories', 'title slug description image')
+      .populate('business.businessOwner', 'firstName lastName email phoneNumber username status profilePhoto isEmailVerified isPhoneVerified');
+    
+    if (!subscription) {
+      return errorResponseHelper(res, { message: 'Subscription not found', code: '00404' });
+    }
+
+    // Calculate expiry information
+    const isExpired = subscription.expiresAt ? new Date() > new Date(subscription.expiresAt) : false;
+    const daysUntilExpiry = subscription.expiresAt ? 
+      Math.ceil((new Date(subscription.expiresAt) - new Date()) / (1000 * 60 * 60 * 24)) : null;
+    const hoursUntilExpiry = subscription.expiresAt ? 
+      Math.ceil((new Date(subscription.expiresAt) - new Date()) / (1000 * 60 * 60)) : null;
+
+    // Prepare response
+    const response = {
+      subscription: {
+        _id: subscription._id,
+        subscriptionType: subscription.subscriptionType,
+        status: subscription.status,
+        amount: subscription.amount,
+        currency: subscription.currency,
+        expiresAt: subscription.expiresAt,
+        isLifetime: subscription.isLifetime,
+        features: subscription.features,
+        maxBoostPerDay: subscription.maxBoostPerDay,
+        validityHours: subscription.validityHours,
+        createdAt: subscription.createdAt,
+        updatedAt: subscription.updatedAt,
+        boostUsage: subscription.boostUsage,
+        featureUsage: subscription.featureUsage,
+        boostQueueInfo: subscription.boostQueueInfo,
+        stripeCustomerId: subscription.stripeCustomerId,
+        paymentId: subscription.paymentId,
+        metadata: subscription.metadata,
+        // Calculated fields
+        isExpired,
+        daysUntilExpiry,
+        hoursUntilExpiry
+      },
+      paymentPlan: subscription.paymentPlan ? {
+        _id: subscription.paymentPlan._id,
+        name: subscription.paymentPlan.name,
+        description: subscription.paymentPlan.description,
+        planType: subscription.paymentPlan.planType,
+        price: subscription.paymentPlan.price,
+        currency: subscription.paymentPlan.currency,
+        features: subscription.paymentPlan.features,
+        maxBoostPerDay: subscription.paymentPlan.maxBoostPerDay,
+        validityHours: subscription.paymentPlan.validityHours,
+        isActive: subscription.paymentPlan.isActive,
+        isPopular: subscription.paymentPlan.isPopular,
+        sortOrder: subscription.paymentPlan.sortOrder,
+        discount: subscription.paymentPlan.discount
+      } : null,
+      business: subscription.business ? {
+        _id: subscription.business._id,
+        businessName: subscription.business.businessName,
+        email: subscription.business.email,
+        phoneNumber: subscription.business.phoneNumber,
+        status: subscription.business.status,
+        about: subscription.business.about,
+        category: subscription.business.category,
+        subcategories: subscription.business.subcategories,
+        businessOwner: subscription.business.businessOwner,
+        boostActive: subscription.business.boostActive,
+        boostStartAt: subscription.business.boostStartAt,
+        boostEndAt: subscription.business.boostEndAt,
+        boostCategory: subscription.business.boostCategory,
+        createdAt: subscription.business.createdAt,
+        updatedAt: subscription.business.updatedAt
+      } : null
+    };
+    
+    return successResponseHelper(res, { 
+      message: 'Subscription details fetched successfully', 
+      data: response 
+    });
+  } catch (error) {
+    console.error('Get subscription details by ID error:', error);
+    return errorResponseHelper(res, { message: 'Failed to fetch subscription details', code: '00500' });
   }
 };

@@ -1,5 +1,6 @@
 import LogSubCategory from '../../models/admin/logSubCategory.js';
 import LogCategory from '../../models/admin/logCategory.js';
+import Blog from '../../models/admin/blog.js';
 import { successResponseHelper, errorResponseHelper } from '../../helpers/utilityHelper.js';
 import { uploadImageWithThumbnail, deleteFile } from '../../helpers/cloudinaryHelper.js';
 
@@ -278,6 +279,16 @@ const deleteLogSubCategory = async (req, res) => {
     const subCategory = await LogSubCategory.findById(id);
     if (!subCategory) {
       return errorResponseHelper(res, {message:'Log subcategory not found', code:'00404'});
+    }
+
+    // Check if subcategory is being used by any blogs
+    const blogCount = await Blog.countDocuments({ subCategory: id });
+    if (blogCount > 0) {
+      return errorResponseHelper(res, { 
+        message: `Cannot delete log subcategory because it is linked to ${blogCount} blog(s). Please archive the subcategory instead or reassign blogs to another subcategory first.`, 
+        code: '00400',
+        data: { blogCount }
+      });
     }
 
     // Delete subcategory image from Cloudinary if it exists

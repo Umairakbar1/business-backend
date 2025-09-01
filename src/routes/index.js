@@ -20,6 +20,7 @@ import adminBoostExpiryRoutes from "./admin/boostExpiry.js";
 import adminNotificationRoutes from "./admin/notification.js";
 import adminBrandLogoRoutes from "./admin/brandLogo.js";
 import adminLegalDocumentRoutes from "./admin/legalDocument.js";
+import adminBoostStatsRoutes from "./admin/boostStats.js";
 import businessAuthRoutes from "./business/auth.js";
 import businessBusinessRoutes from "./business/business.js";
 import businessReviewsRoutes from "./business/reviews.js";
@@ -39,6 +40,7 @@ import userRepliesRoutes from "./user/replies.js";
 import mediaRoutes from "./media.js";
 import { getMetadataByUrl } from "../controllers/admin/metadata.controller.js";
 import { getBrandLogo } from "../controllers/admin/brandLogo.controller.js";
+import { getAllLegalDocuments, getLegalDocumentByType } from "../controllers/admin/legalDocument.controller.js";
 
 const router = Router();
 
@@ -74,6 +76,7 @@ router.use("/admin/boost-expiry", adminBoostExpiryRoutes);
 router.use("/admin/notifications", adminNotificationRoutes);
 router.use("/admin/brand-logo", adminBrandLogoRoutes);
 router.use("/admin/legal-documents", adminLegalDocumentRoutes);
+router.use("/admin/boost-stats", adminBoostStatsRoutes);
 
 // Business routes
 router.use("/business/auth", businessAuthRoutes);
@@ -105,5 +108,9 @@ router.get("/metadata/:url", getMetadataByUrl);
 
 // Public brand logo route (accessible by all sites)
 router.get("/brand-logo", getBrandLogo);
+
+// Public legal documents routes (accessible by all sites)
+router.get("/legal-documents", getAllLegalDocuments);
+router.get("/legal-documents/:type", getLegalDocumentByType);
 
 export default router;

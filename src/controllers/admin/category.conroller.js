@@ -1,5 +1,7 @@
 import Category from '../../models/admin/category.js';
 import SubCategory from '../../models/admin/subCategory.js';
+import Business from '../../models/business/business.js';
+import Blog from '../../models/admin/blog.js';
 import { categoryValidator } from '../../validators/admin.js';
 import { successResponseHelper, errorResponseHelper, generateSlug } from '../../helpers/utilityHelper.js';
 import { uploadImageWithThumbnail, deleteFile } from '../../helpers/cloudinaryHelper.js';
@@ -118,14 +120,14 @@ const createCategory = async (req, res) => {
 
 const getAllCategories = async (req, res) => {
   try {
-    const { page = 1, limit = 10, search, status, sortBy = 'createdAt', sortOrder = 'desc' } = req.query;
+    const { page = 1, limit = 10, queryText, status, sortBy = 'createdAt', sortOrder = 'desc' } = req.query;
     
     // Build filter object
     const filter = {};
-    if (search) {
-      filter.title = { $regex: search, $options: 'i' };
+    if (queryText && queryText.trim() !== '') {
+      filter.title = { $regex: queryText, $options: 'i' };
     }
-    if (status) {
+    if (status && status.trim() !== '') {
       filter.status = status;
     }
 
@@ -157,10 +159,17 @@ const getAllCategories = async (req, res) => {
       subcategoriesByCategory[categoryId].push(sub);
     });
 
-    // Attach subcategories to each category
-    const categoriesWithSubcategories = categories.map(category => ({
+    // Get business count for each category
+    const businessCountPromises = categories.map(category => 
+      Business.countDocuments({ category: category._id })
+    );
+    const businessCounts = await Promise.all(businessCountPromises);
+
+    // Attach subcategories and business count to each category
+    const categoriesWithSubcategories = categories.map((category, index) => ({
       ...category.toObject(),
-      subcategories: subcategoriesByCategory[category._id.toString()] || []
+      subcategories: subcategoriesByCategory[category._id.toString()] || [],
+      businessCount: businessCounts[index]
     }));
 
     const total = await Category.countDocuments(filter);
@@ -197,10 +206,14 @@ const getCategoryById = async (req, res) => {
       categoryId: id
     }).select('title slug description image status createdAt');
 
-    // Attach subcategories to the category
+    // Get business count for this category
+    const businessCount = await Business.countDocuments({ category: id });
+
+    // Attach subcategories and business count to the category
     const categoryWithSubcategories = {
       ...category.toObject(),
-      subcategories: subcategories
+      subcategories: subcategories,
+      businessCount: businessCount
     };
 
     return successResponseHelper(res, {
@@ -343,6 +356,26 @@ const deleteCategory = async (req, res) => {
     // Check if category has subcategories
     const subcategories = await SubCategory.find({ categoryId: id });
     
+    // Check if category is being used by any businesses
+    const businessCount = await Business.countDocuments({ category: id });
+    if (businessCount > 0) {
+      return errorResponseHelper(res, { 
+        message: `Cannot delete category because it is linked to ${businessCount} business(es). Please archive the category instead or reassign businesses to another category first.`, 
+        code: '00400',
+        data: { businessCount }
+      });
+    }
+
+    // Check if category is being used by any blogs
+    const blogCount = await Blog.countDocuments({ category: id });
+    if (blogCount > 0) {
+      return errorResponseHelper(res, { 
+        message: `Cannot delete category because it is linked to ${blogCount} blog(s). Please archive the category instead or reassign blogs to another category first.`, 
+        code: '00400',
+        data: { blogCount }
+      });
+    }
+    
     // const subcategoryIds = subcategories.map(sub => sub._id);
     // const hasProducts = await Product.findOne({ subcategory: { $in: subcategoryIds } });
     // if (hasProducts) {
@@ -389,8 +422,8 @@ const changeStatus = async (req, res) => {
     const { id } = req.params;
     const { status } = req.body; // Get status from request body instead of params
     
-    if (!status || !['active', 'inactive'].includes(status)) {
-      return errorResponseHelper(res, { message: 'Status must be either "active" or "inactive"', code: '00400' });
+    if (!status || !['active', 'inactive', 'archived'].includes(status)) {
+      return errorResponseHelper(res, { message: 'Status must be either "active", "inactive", or "archived"', code: '00400' });
     }
     
     const category = await Category.findByIdAndUpdate(id, { status }, { new: true })
@@ -408,10 +441,14 @@ const changeStatus = async (req, res) => {
       categoryId: id
     }).select('title slug description image status categoryId');
 
-    // Attach subcategories to the category (complete object like getAllCategories)
+    // Get business count for this category
+    const businessCount = await Business.countDocuments({ category: id });
+
+    // Attach subcategories and business count to the category (complete object like getAllCategories)
     const categoryWithSubcategories = {
       ...category.toObject(),
-      subcategories: subcategories
+      subcategories: subcategories,
+      businessCount: businessCount
     };
 
     return successResponseHelper(res, { 
@@ -475,8 +512,8 @@ const bulkUpdateStatus = async (req, res) => {
       return errorResponseHelper(res, { message: 'Category IDs array is required', code: '00400' });
     }
 
-    if (!['active', 'inactive'].includes(status)) {
-      return errorResponseHelper(res, { message: 'Status must be either "active" or "inactive"', code: '00400' });
+    if (!['active', 'inactive', 'archived'].includes(status)) {
+      return errorResponseHelper(res, { message: 'Status must be either "active", "inactive", or "archived"', code: '00400' });
     }
 
     // Update categories status
@@ -507,10 +544,17 @@ const bulkUpdateStatus = async (req, res) => {
       subcategoriesByCategory[categoryId].push(sub);
     });
 
-    // Attach subcategories to each category
-    const categoriesWithSubcategories = updatedCategories.map(category => ({
+    // Get business count for each category
+    const businessCountPromises = updatedCategories.map(category => 
+      Business.countDocuments({ category: category._id })
+    );
+    const businessCounts = await Promise.all(businessCountPromises);
+
+    // Attach subcategories and business count to each category
+    const categoriesWithSubcategories = updatedCategories.map((category, index) => ({
       ...category.toObject(),
-      subcategories: subcategoriesByCategory[category._id.toString()] || []
+      subcategories: subcategoriesByCategory[category._id.toString()] || [],
+      businessCount: businessCounts[index]
     }));
 
     return successResponseHelper(res, {
@@ -524,6 +568,129 @@ const bulkUpdateStatus = async (req, res) => {
   }
 };
 
+const archiveCategory = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // Check if category exists
+    const category = await Category.findById(id);
+    if (!category) {
+      return errorResponseHelper(res, { message: 'Category not found', code: '00404' });
+    }
+
+    // Check if category is already archived
+    if (category.status === 'archived') {
+      return errorResponseHelper(res, { message: 'Category is already archived', code: '00400' });
+    }
+
+    // Archive the category (change status to archived)
+    const archivedCategory = await Category.findByIdAndUpdate(
+      id,
+      { status: 'archived', updatedAt: Date.now() },
+      { new: true, runValidators: true }
+    ).populate('parentCategory', 'title');
+
+    // Archive all subcategories of this category
+    await SubCategory.updateMany({ categoryId: id }, { status: 'archived' });
+
+    // Get subcategories for this category
+    const subcategories = await SubCategory.find({ 
+      categoryId: id
+    }).select('title slug description image status categoryId');
+
+    // Get business count for this category
+    const businessCount = await Business.countDocuments({ category: id });
+
+    // Attach subcategories and business count to the category
+    const categoryWithSubcategories = {
+      ...archivedCategory.toObject(),
+      subcategories: subcategories,
+      businessCount: businessCount
+    };
+
+    return successResponseHelper(res, {
+      message: 'Category archived successfully',
+      data: categoryWithSubcategories
+    });
+  } catch (error) {
+    console.error('Archive category error:', error);
+    if (error.kind === 'ObjectId') {
+      return errorResponseHelper(res, { message: 'Invalid category ID', code: '00400' });
+    }
+    return errorResponseHelper(res, { message: 'Internal server error', code: '00500' });
+  }
+};
+
+const getArchivedCategories = async (req, res) => {
+  try {
+    const { page = 1, limit = 10, queryText, sortBy = 'createdAt', sortOrder = 'desc' } = req.query;
+    
+    // Build filter object for archived categories
+    const filter = { status: 'archived' };
+    if (queryText && queryText.trim() !== '') {
+      filter.title = { $regex: queryText, $options: 'i' };
+    }
+
+    // Build sort object
+    const sort = {};
+    sort[sortBy] = sortOrder === 'desc' ? -1 : 1;
+
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+    
+    const categories = await Category.find(filter)
+      .sort(sort)
+      .skip(skip)
+      .limit(parseInt(limit))
+      .populate('parentCategory', 'title');
+
+    // Get subcategories for all categories
+    const categoryIds = categories.map(cat => cat._id);
+    const subcategories = await SubCategory.find({ 
+      categoryId: { $in: categoryIds }
+    }).select('title slug description image status categoryId');
+    
+    // Group subcategories by category
+    const subcategoriesByCategory = {};
+    subcategories.forEach(sub => {
+      const categoryId = sub.categoryId.toString();
+      if (!subcategoriesByCategory[categoryId]) {
+        subcategoriesByCategory[categoryId] = [];
+      }
+      subcategoriesByCategory[categoryId].push(sub);
+    });
+
+    // Get business count for each category
+    const businessCountPromises = categories.map(category => 
+      Business.countDocuments({ category: category._id })
+    );
+    const businessCounts = await Promise.all(businessCountPromises);
+
+    // Attach subcategories and business count to each category
+    const categoriesWithSubcategories = categories.map((category, index) => ({
+      ...category.toObject(),
+      subcategories: subcategoriesByCategory[category._id.toString()] || [],
+      businessCount: businessCounts[index]
+    }));
+
+    const total = await Category.countDocuments(filter);
+    const totalPages = Math.ceil(total / parseInt(limit));
+
+    return successResponseHelper(res, {
+      message: 'Archived categories retrieved successfully',
+      data: categoriesWithSubcategories,
+      pagination: {
+        currentPage: parseInt(page),
+        totalPages,
+        totalItems: total,
+        itemsPerPage: parseInt(limit)
+      }
+    });
+  } catch (error) {
+    console.error('Get archived categories error:', error);
+    return errorResponseHelper(res, { message: 'Internal server error', code: '00500' });
+  }
+};
+
 export {
   createCategory,
   getAllCategories,
@@ -532,5 +699,7 @@ export {
   deleteCategory,
   changeStatus,
   getCategoryHierarchy,
-  bulkUpdateStatus
+  bulkUpdateStatus,
+  archiveCategory,
+  getArchivedCategories
 };

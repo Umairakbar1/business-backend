@@ -8,10 +8,13 @@ import {
   updateBusiness,
   getBusinessStats,
   bulkUpdateBusinessStatus,
+  bulkDeleteBusinesses,
   getBusinessesWithOwnerDetails,
   testBusinessConnection,
   searchBusinessesByOwner,
-  getAllBusinessesNoFilter
+  getAllBusinessesNoFilter,
+  getBusinessSubscriptionAndBoostDetails,
+  getSubscriptionDetailsById
 } from "../../controllers/admin/busienss.controller.js";
 import { uploadBusinessAssets, handleCloudinaryUploadError } from "../../middleware/cloudinaryUpload.js";
 
@@ -35,6 +38,14 @@ router.get("/with-owner-details", authorizedAccessAdmin, getBusinessesWithOwnerD
 // Get single business by ID
 router.get("/:businessId", authorizedAccessAdmin, getSingleBusiness);
 
+// Get detailed subscription and boost information for a business
+router.get("/:businessId/subscription-details", authorizedAccessAdmin, getBusinessSubscriptionAndBoostDetails);
+
+
+
+// Get subscription details by subscription ID
+router.get("/subscription/:subscriptionId", authorizedAccessAdmin, getSubscriptionDetailsById);
+
 // Update business status
 router.post("/status/:businessId", authorizedAccessAdmin, changeStatusOfBusiness);
 
@@ -49,5 +60,8 @@ router.get("/stats/summary", authorizedAccessAdmin, getBusinessStats);
 
 // Bulk update business status
 router.patch("/bulk-status", authorizedAccessAdmin, bulkUpdateBusinessStatus);
+
+// Bulk delete businesses with subscription cleanup
+router.delete("/bulk-delete", authorizedAccessAdmin, bulkDeleteBusinesses);
 
 export default router;

@@ -1,45 +1,34 @@
 import express from 'express';
 import { 
-    createOrUpdateLegalDocument,
-    getLegalDocumentByType,
+    createLegalDocument,
     getAllLegalDocuments,
-    getLegalDocumentById,
+    getLegalDocumentByType,
+    getAllLegalDocumentsAdmin,
     updateLegalDocument,
-    deleteLegalDocument,
-    toggleDocumentStatus,
-    getAllActiveLegalDocuments,
-    getDocumentHistory
+    deleteLegalDocument
 } from '../../controllers/admin/legalDocument.controller.js';
 import { verifyAdminToken } from '../../middleware/authorization.js';
+import { uploadLegalDocumentToCloudinary, handleCloudinaryUploadError } from '../../middleware/cloudinaryUpload.js';
 
 const router = express.Router();
 
-// Public endpoints (no authentication required)
-router.get('/active', getAllActiveLegalDocuments);
-router.get('/:type', getLegalDocumentByType);
+// Public endpoints - Get legal documents (no authentication required)
+router.get('/', getAllLegalDocuments);
+router.get('/type/:type', getLegalDocumentByType);
 
 // Admin protected routes
 router.use(verifyAdminToken);
 
 // Create or update legal document
-router.post('/create-update', createOrUpdateLegalDocument);
+router.post('/', uploadLegalDocumentToCloudinary, handleCloudinaryUploadError, createLegalDocument);
 
-// Get all legal documents
-router.get('/', getAllLegalDocuments);
-
-// Get legal document by ID
-router.get('/id/:id', getLegalDocumentById);
+// Get all legal documents (admin view)
+router.get('/admin', getAllLegalDocumentsAdmin);
 
 // Update legal document
-router.put('/:id', updateLegalDocument);
+router.put('/:id', uploadLegalDocumentToCloudinary, handleCloudinaryUploadError, updateLegalDocument);
 
 // Delete legal document
 router.delete('/:id', deleteLegalDocument);
-
-// Toggle document status
-router.patch('/:id/toggle-status', toggleDocumentStatus);
-
-// Get document history
-router.get('/history/:type', getDocumentHistory);
 
 export default router;

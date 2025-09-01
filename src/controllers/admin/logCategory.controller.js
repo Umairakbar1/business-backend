@@ -1,5 +1,6 @@
 import LogCategory from '../../models/admin/logCategory.js';
 import LogSubCategory from '../../models/admin/logSubCategory.js';
+import Blog from '../../models/admin/blog.js';
 import { successResponseHelper, errorResponseHelper } from '../../helpers/utilityHelper.js';
 import { uploadImageWithThumbnail, deleteFile } from '../../helpers/cloudinaryHelper.js';
 
@@ -342,6 +343,16 @@ const deleteLogCategory = async (req, res) => {
 
     // Check if category has subcategories
     const subcategories = await LogSubCategory.find({ categoryId: id });
+    
+    // Check if category is being used by any blogs
+    const blogCount = await Blog.countDocuments({ category: id });
+    if (blogCount > 0) {
+      return errorResponseHelper(res, { 
+        message: `Cannot delete log category because it is linked to ${blogCount} blog(s). Please archive the category instead or reassign blogs to another category first.`, 
+        code: '00400',
+        data: { blogCount }
+      });
+    }
     
     // Delete all subcategories first
     if (subcategories.length > 0) {

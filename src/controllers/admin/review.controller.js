@@ -374,21 +374,61 @@ export const getBusinessesWithReviews = async (req, res) => {
       page, limit, search, status, sortBy, sortOrder, includeReviews, reviewsLimit
     });
     
-    // Build filter object - Admin can see all businesses
-    const filter = {};
+    // Import Review model first to get businesses with reviews
+    let Review;
+    try {
+      Review = (await import('../../models/admin/review.js')).default;
+      if (!Review) {
+        throw new Error('Failed to import Review model');
+      }
+    } catch (importError) {
+      console.error('Error importing Review model:', importError);
+      return errorResponseHelper(res, { message: 'Failed to load Review model', code: '00500' });
+    }
+    
+    // Get business IDs that have at least 1 review
+    const businessesWithReviews = await Review.distinct('businessId');
+    console.log('Businesses with reviews found:', businessesWithReviews.length);
+    
+    if (businessesWithReviews.length === 0) {
+      return successResponseHelper(res, {
+        message: 'No businesses with reviews found',
+        data: [],
+        pagination: {
+          page: parseInt(page),
+          limit: parseInt(limit),
+          total: 0,
+          totalPages: 0
+        }
+      });
+    }
+    
+    // Build filter object - Only include businesses that have reviews
+    const filter = {
+      _id: { $in: businessesWithReviews }
+    };
     
     // Add search functionality
     if (search) {
-      filter.$or = [
-        { businessName: { $regex: search, $options: 'i' } },
-        { email: { $regex: search, $options: 'i' } },
-        { phoneNumber: { $regex: search, $options: 'i' } }
+      filter.$and = [
+        { _id: { $in: businessesWithReviews } },
+        {
+          $or: [
+            { businessName: { $regex: search, $options: 'i' } },
+            { email: { $regex: search, $options: 'i' } },
+            { phoneNumber: { $regex: search, $options: 'i' } }
+          ]
+        }
       ];
     }
     
     // Add status filter
     if (status) {
-      filter.status = status;
+      if (filter.$and) {
+        filter.$and.push({ status });
+      } else {
+        filter.status = status;
+      }
     }
     
     // Build sort object
@@ -398,7 +438,7 @@ export const getBusinessesWithReviews = async (req, res) => {
     // Calculate pagination
     const skip = (parseInt(page) - 1) * parseInt(limit);
     
-    // Get businesses with pagination
+    // Get businesses with reviews and pagination
     const businesses = await Business.find(filter)
       .sort(sort)
       .skip(skip)
@@ -417,17 +457,16 @@ export const getBusinessesWithReviews = async (req, res) => {
       });
     }
     
-    // Get total count for pagination
+    // Get total count for pagination - only count businesses with reviews
     const total = await Business.countDocuments(filter);
     
     // Import Category and SubCategory models
-    let Category, SubCategory, Review;
+    let Category, SubCategory;
     try {
       Category = (await import('../../models/admin/category.js')).default;
       SubCategory = (await import('../../models/admin/subCategory.js')).default;
-      Review = (await import('../../models/admin/review.js')).default;
       
-      if (!Category || !SubCategory || !Review) {
+      if (!Category || !SubCategory) {
         throw new Error('Failed to import required models');
       }
     } catch (importError) {

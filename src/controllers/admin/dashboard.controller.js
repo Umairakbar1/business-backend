@@ -19,12 +19,10 @@ export const getDashboardStats = async (req, res) => {
       totalUsers,
       totalBusinesses,
       totalPaidSubscriptions,
-      activeBoosts,
       totalEarnings,
       currentMonthUsers,
       currentMonthBusinesses,
       currentMonthSubscriptions,
-      currentMonthBoosts,
       currentMonthEarnings
     ] = await Promise.all([
       // Total counts
@@ -33,11 +31,6 @@ export const getDashboardStats = async (req, res) => {
       Subscription.countDocuments({ 
         status: 'active', 
         subscriptionType: 'business' 
-      }),
-      Subscription.countDocuments({ 
-        status: 'active', 
-        subscriptionType: 'boost',
-        expiresAt: { $gt: currentDate }
       }),
       Payment.aggregate([
         { $match: { status: 'completed' } },
@@ -58,12 +51,6 @@ export const getDashboardStats = async (req, res) => {
         subscriptionType: 'business',
         createdAt: { $gte: currentMonth }
       }),
-      Subscription.countDocuments({ 
-        status: 'active',
-        subscriptionType: 'boost',
-        createdAt: { $gte: currentMonth },
-        expiresAt: { $gt: currentDate }
-      }),
       Payment.aggregate([
         { 
           $match: { 
@@ -80,7 +67,6 @@ export const getDashboardStats = async (req, res) => {
       previousMonthUsers,
       previousMonthBusinesses,
       previousMonthSubscriptions,
-      previousMonthBoosts,
       previousMonthEarnings
     ] = await Promise.all([
       User.countDocuments({ 
@@ -94,11 +80,6 @@ export const getDashboardStats = async (req, res) => {
       Subscription.countDocuments({ 
         status: 'active',
         subscriptionType: 'business',
-        createdAt: { $gte: previousMonth, $lt: currentMonth }
-      }),
-      Subscription.countDocuments({ 
-        status: 'active',
-        subscriptionType: 'boost',
         createdAt: { $gte: previousMonth, $lt: currentMonth }
       }),
       Payment.aggregate([
@@ -121,7 +102,6 @@ export const getDashboardStats = async (req, res) => {
     const userChange = calculateChange(currentMonthUsers, previousMonthUsers);
     const businessChange = calculateChange(currentMonthBusinesses, previousMonthBusinesses);
     const subscriptionChange = calculateChange(currentMonthSubscriptions, previousMonthSubscriptions);
-    const boostChange = calculateChange(currentMonthBoosts, previousMonthBoosts);
     const earningsChange = calculateChange(
       currentMonthEarnings[0]?.total || 0, 
       previousMonthEarnings[0]?.total || 0
@@ -184,21 +164,18 @@ export const getDashboardStats = async (req, res) => {
         totalUsers: totalUsers || 0,
         totalBusinesses: totalBusinesses || 0,
         totalPaidSubscriptions: totalPaidSubscriptions || 0,
-        activeBoosts: activeBoosts || 0,
         totalEarnings: totalEarnings[0]?.total || 0
       },
       currentMonth: {
         users: currentMonthUsers || 0,
         businesses: currentMonthBusinesses || 0,
         subscriptions: currentMonthSubscriptions || 0,
-        boosts: currentMonthBoosts || 0,
         earnings: currentMonthEarnings[0]?.total || 0
       },
       previousMonth: {
         users: previousMonthUsers || 0,
         businesses: previousMonthBusinesses || 0,
         subscriptions: previousMonthSubscriptions || 0,
-        boosts: previousMonthBoosts || 0,
         earnings: previousMonthEarnings[0]?.total || 0
       },
       monthOverMonth: {
@@ -213,10 +190,6 @@ export const getDashboardStats = async (req, res) => {
         subscriptions: {
           change: subscriptionChange,
           trend: subscriptionChange >= 0 ? 'increase' : 'decrease'
-        },
-        boosts: {
-          change: boostChange,
-          trend: boostChange >= 0 ? 'increase' : 'decrease'
         },
         earnings: {
           change: earningsChange,

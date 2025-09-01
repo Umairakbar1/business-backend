@@ -5,7 +5,7 @@ import {
     deleteBrandLogo 
 } from '../../controllers/admin/brandLogo.controller.js';
 import { verifyAdminToken } from '../../middleware/authorization.js';
-import { uploadSingleImageToCloudinary, handleCloudinaryUploadError } from '../../middleware/cloudinaryUpload.js';
+import { uploadBrandLogoToCloudinary, handleCloudinaryUploadError } from '../../middleware/cloudinaryUpload.js';
 
 const router = express.Router();
 
@@ -16,7 +16,7 @@ router.get('/', getBrandLogo);
 router.use(verifyAdminToken);
 
 // Upload or replace brand logo
-router.post('/upload', uploadSingleImageToCloudinary, handleCloudinaryUploadError, uploadBrandLogo);
+router.post('/upload', uploadBrandLogoToCloudinary, handleCloudinaryUploadError, uploadBrandLogo);
 
 // Delete brand logo
 router.delete('/', deleteBrandLogo);
