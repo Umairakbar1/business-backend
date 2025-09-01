@@ -486,7 +486,26 @@ export const getBusinessListings = async (req, res) => {
     else if (hasCoordinates) sort.distance = 1; // Sort by distance (nearest first)
     else sort._id = -1;
 
-    pipeline.push({ $sort: sort });
+    // If categoryId is provided, prioritize boosted businesses first
+    if (categoryId) {
+      pipeline.push({
+        $addFields: {
+          sortOrder: {
+            $cond: {
+              if: { $eq: ['$isBoosted', true] },
+              then: 0, // Boosted businesses get priority (lower number = higher priority)
+              else: 1
+            }
+          }
+        }
+      });
+      
+      // Sort by boost status first, then by the original sort criteria
+      const boostedSort = { sortOrder: 1, ...sort };
+      pipeline.push({ $sort: boostedSort });
+    } else {
+      pipeline.push({ $sort: sort });
+    }
     pipeline.push({ $skip: (Number(page) - 1) * Number(limit) });
     pipeline.push({ $limit: Number(limit) });
 
@@ -661,7 +680,23 @@ export const getBusinessListings = async (req, res) => {
             avgRating: ratingFilter
           }
         }] : []),
-        { $sort: sort },
+        // If categoryId is provided, prioritize boosted businesses first
+        ...(categoryId ? [
+          {
+            $addFields: {
+              sortOrder: {
+                $cond: {
+                  if: { $eq: ['$isBoosted', true] },
+                  then: 0, // Boosted businesses get priority (lower number = higher priority)
+                  else: 1
+                }
+              }
+            }
+          },
+          { $sort: { sortOrder: 1, ...sort } }
+        ] : [
+          { $sort: sort }
+        ]),
         { $skip: (Number(page) - 1) * Number(limit) },
         { $limit: Number(limit) },
         {
