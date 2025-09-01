@@ -147,7 +147,7 @@ const addReviewCountToBusinesses = async (businesses) => {
   
   // Add review count to each business
   return businesses.map(business => ({
-    ...business.toObject(),
+    ...business,
     reviewCount: reviewCountMap[business._id.toString()] || 0
   }));
 };
