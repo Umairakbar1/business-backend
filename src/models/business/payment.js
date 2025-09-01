@@ -94,7 +94,7 @@ const paymentSchema = new mongoose.Schema({
   // Features and limits at time of payment
   features: [{
     type: String,
-    enum: ['query', 'review', 'embeded']
+    enum: ['query', 'review', 'embedded',"boost"]
   }],
   maxBoostPerDay: {
     type: Number,

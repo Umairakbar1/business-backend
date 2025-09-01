@@ -8,6 +8,35 @@ import { sendSubscriptionNotifications, sendPaymentNotifications } from '../../h
 
 class BusinessSubscriptionController {
   /**
+   * Helper function to safely update metadata without Mongoose Map issues
+   */
+  static safeUpdateMetadata(subscription, newMetadata) {
+    // Safely extract current metadata without internal Mongoose properties
+    let currentMetadata = {};
+    
+    if (subscription.metadata) {
+      if (typeof subscription.metadata.toObject === 'function') {
+        // It's a Mongoose Map, convert to plain object
+        currentMetadata = subscription.metadata.toObject();
+      } else if (typeof subscription.metadata === 'object') {
+        // It's already a plain object, filter out internal properties
+        currentMetadata = Object.keys(subscription.metadata)
+          .filter(key => !key.startsWith('$'))
+          .reduce((obj, key) => {
+            obj[key] = subscription.metadata[key];
+            return obj;
+          }, {});
+      }
+    }
+    
+    // Merge with new metadata
+    return {
+      ...currentMetadata,
+      ...newMetadata
+    };
+  }
+
+  /**
    * Subscribe to a payment plan
    */
   static async subscribeToPlan(req, res) {
@@ -108,16 +137,95 @@ class BusinessSubscriptionController {
       }
 
       // Check if business already has an active subscription of the same type
-      const existingSubscription = await Subscription.findOne({
+      const existingActiveSubscription = await Subscription.findOne({
         business: businessId,
         subscriptionType: paymentPlan.planType,
         status: 'active'
       });
 
-      if (existingSubscription) {
+      if (existingActiveSubscription) {
         return errorResponseHelper(res, {
           success: false,
           message: `Business already has an active ${paymentPlan.planType} subscription`
+        });
+      }
+
+      // Check if business already has a pending subscription of the same type
+      const existingPendingSubscription = await Subscription.findOne({
+        business: businessId,
+        subscriptionType: paymentPlan.planType,
+        status: 'pending'
+      });
+
+      if (existingPendingSubscription) {
+        // Update existing pending subscription instead of creating a new one
+        console.log('Found existing pending subscription, updating:', existingPendingSubscription._id);
+        
+        // Update the existing subscription with new payment plan details
+        existingPendingSubscription.paymentPlan = paymentPlanId;
+        existingPendingSubscription.amount = paymentPlan.price;
+        existingPendingSubscription.currency = paymentPlan.currency;
+        existingPendingSubscription.features = paymentPlan.features || [];
+        existingPendingSubscription.maxBoostPerDay = paymentPlan.maxBoostPerDay || 0;
+        existingPendingSubscription.validityHours = paymentPlan.validityHours || null;
+        existingPendingSubscription.metadata = {
+          planName: paymentPlan.name,
+          businessName: business.businessName,
+          updatedAt: new Date().toISOString()
+        };
+        
+        // Create new payment intent for the updated subscription
+        let stripeCustomer;
+        try {
+          if (business.stripeCustomerId) {
+            stripeCustomer = await StripeHelper.getCustomer(business.stripeCustomerId);
+          } else {
+            stripeCustomer = await StripeHelper.createCustomer({
+              email: business.email,
+              name: business.businessName,
+              businessId: business._id.toString(),
+              userId: business.businessOwner.toString()
+            });
+            
+            business.stripeCustomerId = stripeCustomer.id;
+            await business.save();
+          }
+        } catch (error) {
+          console.log('Error with existing Stripe customer, creating new one:', error.message);
+          stripeCustomer = await StripeHelper.createCustomer({
+            email: business.email,
+            name: business.businessName,
+            businessId: business._id.toString(),
+            userId: business.businessOwner.toString()
+          });
+          
+          business.stripeCustomerId = stripeCustomer.id;
+          await business.save();
+        }
+
+        const paymentIntent = await StripeHelper.createPaymentIntent({
+          amount: paymentPlan.price,
+          currency: paymentPlan.currency,
+          customerId: stripeCustomer.id,
+          businessId: business._id.toString(),
+          planType: paymentPlan.planType,
+          planId: paymentPlanId,
+          receiptEmail: business.email
+        });
+
+        existingPendingSubscription.paymentId = paymentIntent.id;
+        existingPendingSubscription.stripeCustomerId = stripeCustomer.id;
+        await existingPendingSubscription.save();
+
+        return successResponseHelper(res, {
+          success: true,
+          message: 'Existing pending subscription updated. Please complete payment.',
+          data: {
+            subscription: existingPendingSubscription,
+            clientSecret: paymentIntent.client_secret,
+            paymentIntentId: paymentIntent.id,
+            isUpdated: true
+          }
         });
       }
 
@@ -184,13 +292,13 @@ class BusinessSubscriptionController {
         currency: paymentPlan.currency
       });
 
-      // Create subscription in database
+      // Create subscription in database with pending status
       const subscription = new Subscription({
         business: businessId,
         paymentPlan: paymentPlanId,
         subscriptionType: paymentPlan.planType,
         stripeCustomerId: stripeCustomer.id,
-        status: 'inactive', // Will be updated to 'active' after payment confirmation
+        status: 'pending', // Set to pending initially
         amount: paymentPlan.price,
         currency: paymentPlan.currency,
         isLifetime: paymentPlan.planType === 'business', // Business plans are lifetime
@@ -380,8 +488,35 @@ class BusinessSubscriptionController {
         });
       }
 
-      // Find all businesses owned by this user
-      const businesses = await Business.find({ businessOwner: businessOwnerId })
+      // Extract query parameters for pagination, sorting, and filtering
+      const {
+        page = 1,
+        limit = 10,
+        queryText,
+        status,
+        sortBy = 'createdAt',
+        sortOrder = 'desc'
+      } = req.query;
+
+      // Validate and calculate pagination parameters
+      const pageNum = parseInt(page);
+      const limitNum = parseInt(limit);
+      
+      // Ensure valid pagination values
+      const validPage = isNaN(pageNum) || pageNum < 1 ? 1 : pageNum;
+      const validLimit = isNaN(limitNum) || limitNum < 1 ? 10 : Math.min(limitNum, 100); // Max 100 items per page
+      const skip = (validPage - 1) * validLimit;
+
+      // Build business filter
+      const businessFilter = { businessOwner: businessOwnerId };
+      
+      // Add business name search if queryText is provided
+      if (queryText && queryText.trim() !== '' && queryText !== 'null' && queryText !== 'undefined') {
+        businessFilter.businessName = { $regex: queryText.trim(), $options: 'i' };
+      }
+
+      // Find businesses owned by this user with search filter
+      const businesses = await Business.find(businessFilter)
         .select('_id businessName businessCategory businessType status createdAt');
 
       if (businesses.length === 0) {
@@ -391,18 +526,73 @@ class BusinessSubscriptionController {
           data: {
             subscriptions: [],
             businesses: [],
-            totalSubscriptions: 0
+            totalSubscriptions: 0,
+            pagination: {
+              currentPage: validPage,
+              totalPages: 0,
+              totalItems: 0,
+              itemsPerPage: validLimit
+            }
           }
         });
       }
 
       const businessIds = businesses.map(b => b._id);
 
-      // Find all subscriptions for these businesses with populated data
-      const subscriptions = await Subscription.find({ business: { $in: businessIds } })
+      // Build subscription filter
+      const subscriptionFilter = { business: { $in: businessIds } };
+      
+      // Add status filter if provided
+      if (status && status.trim() !== '' && status !== 'null' && status !== 'undefined') {
+        subscriptionFilter.status = status.trim();
+      }
+
+      // Build sort object
+      const sort = {};
+      if (sortBy && sortBy.trim() !== '' && sortBy !== 'null' && sortBy !== 'undefined') {
+        // Validate sortBy field
+        const allowedSortFields = ['createdAt', 'updatedAt', 'status', 'amount', 'subscriptionType'];
+        if (allowedSortFields.includes(sortBy.trim())) {
+          sort[sortBy.trim()] = sortOrder === 'desc' ? -1 : 1;
+        } else {
+          // Default to createdAt if invalid sortBy
+          sort.createdAt = sortOrder === 'desc' ? -1 : 1;
+        }
+      } else {
+        // Default sorting by latest/newest
+        sort.createdAt = sortOrder === 'desc' ? -1 : 1;
+      }
+
+      // Get total count for pagination
+      const totalSubscriptions = await Subscription.countDocuments(subscriptionFilter);
+
+      // Find subscriptions with pagination, sorting, and filtering
+      const subscriptions = await Subscription.find(subscriptionFilter)
         .populate('business', 'businessName businessCategory businessType status businessLogo businessAddress businessOwner')
         .populate('paymentPlan', 'name planType price features maxBusinesses maxReviews maxBoostPerDay validityDays description')
-        .sort({ createdAt: -1 });
+        .sort(sort)
+        .skip(skip)
+        .limit(validLimit);
+
+      // Debug logging
+      console.log('🔍 getAllBusinessSubscriptionsWithBusiness - Query params:', {
+        page: validPage,
+        limit: validLimit,
+        queryText: queryText || 'none',
+        status: status || 'none',
+        sortBy: sortBy || 'createdAt',
+        sortOrder: sortOrder || 'desc'
+      });
+      console.log('📊 getAllBusinessSubscriptionsWithBusiness - Pagination:', {
+        skip,
+        totalSubscriptions,
+        returnedSubscriptions: subscriptions.length
+      });
+      console.log('🔍 getAllBusinessSubscriptionsWithBusiness - Filters:', {
+        businessFilter,
+        subscriptionFilter,
+        sort
+      });
 
       // Separate subscriptions by type and business
       const organizedData = businesses.map(business => {
@@ -455,9 +645,9 @@ class BusinessSubscriptionController {
         message: 'All business subscriptions retrieved successfully',
         data: {
           businesses: organizedData,
-          allSubscriptions: subscriptions, // All subscriptions in one array
+          allSubscriptions: subscriptions, // Paginated subscriptions in one array
           totalBusinesses: businesses.length,
-          totalSubscriptions: subscriptions.length,
+          totalSubscriptions: totalSubscriptions, // Total count before pagination
           summary: {
             totalActiveBusinessPlans: subscriptions.filter(sub => 
               sub.subscriptionType === 'business' && sub.status === 'active'
@@ -471,6 +661,20 @@ class BusinessSubscriptionController {
             totalInactivePlans: subscriptions.filter(sub => 
               sub.status === 'inactive'
             ).length
+          },
+          pagination: {
+            currentPage: validPage,
+            totalPages: Math.ceil(totalSubscriptions / validLimit),
+            totalItems: totalSubscriptions,
+            itemsPerPage: validLimit,
+            hasNextPage: validPage < Math.ceil(totalSubscriptions / validLimit),
+            hasPrevPage: validPage > 1
+          },
+          filters: {
+            queryText: queryText || null,
+            status: status || null,
+            sortBy: sortBy || 'createdAt',
+            sortOrder: sortOrder || 'desc'
           }
         }
       });
@@ -1645,10 +1849,15 @@ class BusinessSubscriptionController {
               subscription.boostQueueInfo.boostEndTime = activeBusiness.boostEndTime;
               subscription.boostQueueInfo.queuePosition = 0;
               
-                              // Update business boost status
+                                            // Update business boost status - only if not in queue
+              if (!boostQueue.queue.some(item => 
+                item.business.toString() === businessId && 
+                item.status === 'pending'
+              )) {
                 business.isBoosted = true;
                 business.isBoostActive = true;
                 business.boostExpiryAt = activeBusiness.boostEndTime;
+              }
             } else {
               // Check if this business is next in queue
               const nextBusiness = boostQueue.queue.find(item => item.status === 'pending');
@@ -1666,6 +1875,11 @@ class BusinessSubscriptionController {
                 business.isBoosted = true;
                 business.isBoostActive = true;
                 business.boostExpiryAt = boostQueue.currentlyActive.boostEndTime;
+              } else {
+                // Business is in queue but not next - keep boost status false until it starts
+                business.isBoosted = false;
+                business.isBoostActive = false;
+                business.boostExpiryAt = null;
               }
             }
           }
@@ -1678,24 +1892,38 @@ class BusinessSubscriptionController {
       if (subscription.subscriptionType === 'business') {
         // Check if this is an upgrade (has upgrade metadata)
         if (subscription.metadata && subscription.metadata.upgradeFrom) {
-          // This is an upgrade - cancel the old subscription
+          // This is an upgrade - find and deactivate the old subscription
           const oldSubscription = await Subscription.findOne({
             business: businessId,
             subscriptionType: 'business',
-            status: 'active',
-            'metadata.upgradeFromId': subscription.metadata.upgradeFromId
+            status: 'active'
           });
           
           if (oldSubscription) {
+            // Mark old subscription as upgraded and inactive
             oldSubscription.status = 'upgraded';
-            oldSubscription.metadata = {
-              ...oldSubscription.metadata,
+            oldSubscription.metadata = BusinessSubscriptionController.safeUpdateMetadata(oldSubscription, {
               upgradedTo: subscription._id,
               upgradedAt: new Date(),
-              upgradeReason: 'user_requested'
-            };
+              upgradeReason: 'user_requested',
+              upgradeType: subscription.metadata?.upgradeType || 'upgrade'
+            });
             await oldSubscription.save();
-            console.log(`Old subscription ${oldSubscription._id} marked as upgraded`);
+            console.log(`Old subscription ${oldSubscription._id} marked as upgraded and inactive`);
+            
+            // Send upgrade notification for old subscription
+            try {
+              const oldPaymentPlan = await PaymentPlan.findById(oldSubscription.paymentPlan);
+              await sendSubscriptionNotifications.businessSubscriptionUpgraded(businessId, {
+                oldSubscriptionId: oldSubscription._id.toString(),
+                newSubscriptionId: subscription._id.toString(),
+                oldPlanName: oldPaymentPlan?.name || 'Unknown Plan',
+                newPlanName: subscription.metadata.planName,
+                priceDifference: subscription.metadata.priceDifference || 0
+              });
+            } catch (notificationError) {
+              console.error('Failed to send upgrade notification:', notificationError);
+            }
           }
         }
         
@@ -1890,23 +2118,104 @@ class BusinessSubscriptionController {
         });
       }
 
-      // Check if business already has an active or pending boost subscription
-      const existingBoostSubscription = await Subscription.findOne({
+      // Check if business already has an active boost subscription
+      const existingActiveBoostSubscription = await Subscription.findOne({
         business: businessId,
         subscriptionType: 'boost',
-        status: { $in: ['active', 'pending'] }
+        status: 'active'
       });
 
-      if (existingBoostSubscription) {
+      if (existingActiveBoostSubscription) {
         return errorResponseHelper(res, {
           success: false,
-          message: 'Business already has an active or pending boost subscription. Please cancel the existing one first.',
+          message: 'Business already has an active boost subscription. Please cancel the existing one first.',
           data: {
             existingSubscription: {
-              _id: existingBoostSubscription._id,
-              status: existingBoostSubscription.status,
-              createdAt: existingBoostSubscription.createdAt
+              _id: existingActiveBoostSubscription._id,
+              status: existingActiveBoostSubscription.status,
+              createdAt: existingActiveBoostSubscription.createdAt
             }
+          }
+        });
+      }
+
+      // Check if business already has a pending boost subscription for the same category
+      const existingPendingBoostSubscription = await Subscription.findOne({
+        business: businessId,
+        subscriptionType: 'boost',
+        status: 'pending',
+        'boostQueueInfo.category': business.category._id
+      });
+
+      if (existingPendingBoostSubscription) {
+        // Update existing pending boost subscription instead of creating a new one
+        console.log('Found existing pending boost subscription, updating:', existingPendingBoostSubscription._id);
+        
+        // Update the existing subscription with new payment plan details
+        existingPendingBoostSubscription.paymentPlan = paymentPlanId;
+        existingPendingBoostSubscription.amount = paymentPlan.price;
+        existingPendingBoostSubscription.currency = paymentPlan.currency;
+        existingPendingBoostSubscription.features = paymentPlan.features || [];
+        existingPendingBoostSubscription.maxBoostPerDay = paymentPlan.maxBoostPerDay || 0;
+        existingPendingBoostSubscription.validityHours = paymentPlan.validityHours || 24;
+        existingPendingBoostSubscription.metadata = {
+          planName: paymentPlan.name,
+          businessName: business.businessName,
+          categoryName: business.category.title,
+          updatedAt: new Date().toISOString()
+        };
+        
+        // Create new payment intent for the updated subscription
+        let stripeCustomer;
+        try {
+          if (business.stripeCustomerId) {
+            stripeCustomer = await StripeHelper.getCustomer(business.stripeCustomerId);
+          } else {
+            stripeCustomer = await StripeHelper.createCustomer({
+              email: business.email,
+              name: business.businessName,
+              businessId: business._id.toString(),
+              userId: business.businessOwner.toString()
+            });
+            
+            business.stripeCustomerId = stripeCustomer.id;
+            await business.save();
+          }
+        } catch (error) {
+          console.log('Error with existing Stripe customer, creating new one:', error.message);
+          stripeCustomer = await StripeHelper.createCustomer({
+            email: business.email,
+            name: business.businessName,
+            businessId: business._id.toString(),
+            userId: business.businessOwner.toString()
+          });
+          
+          business.stripeCustomerId = stripeCustomer.id;
+          await business.save();
+        }
+
+        const paymentIntent = await StripeHelper.createPaymentIntent({
+          amount: paymentPlan.price,
+          currency: paymentPlan.currency,
+          customerId: stripeCustomer.id,
+          businessId: business._id.toString(),
+          planType: 'boost',
+          planId: paymentPlanId,
+          receiptEmail: business.email
+        });
+
+        existingPendingBoostSubscription.paymentId = paymentIntent.id;
+        existingPendingBoostSubscription.stripeCustomerId = stripeCustomer.id;
+        await existingPendingBoostSubscription.save();
+
+        return successResponseHelper(res, {
+          success: true,
+          message: 'Existing pending boost subscription updated. Please complete payment.',
+          data: {
+            subscription: existingPendingBoostSubscription,
+            clientSecret: paymentIntent.client_secret,
+            paymentIntentId: paymentIntent.id,
+            isUpdated: true
           }
         });
       }
@@ -2255,17 +2564,36 @@ class BusinessSubscriptionController {
         const boostQueue = await BoostQueue.findById(subscription.boostQueueInfo.queueId);
         if (boostQueue) {
           await boostQueue.removeFromQueue(businessId);
+          
+          // If this business was currently active, activate the next one
+          if (boostQueue.currentlyActive.business && 
+              boostQueue.currentlyActive.business.toString() === businessId) {
+            await boostQueue.activateNext();
+          }
         }
       }
 
-      // Update subscription status
+      // Update subscription status and boost timing for canceled subscription
       subscription.status = 'canceled';
-      subscription.metadata = {
-        ...subscription.metadata,
+      
+      // For boost subscriptions, update the boost timing to show it's expired
+      if (subscription.subscriptionType === 'boost') {
+        const now = new Date();
+        // Set boost start time to now and end time to now (immediately expired)
+        subscription.boostQueueInfo = {
+          ...subscription.boostQueueInfo,
+          boostStartTime: now,
+          boostEndTime: now,
+          isCurrentlyActive: false
+        };
+        subscription.expiresAt = now; // Set expiry to now
+      }
+      
+      subscription.metadata = BusinessSubscriptionController.safeUpdateMetadata(subscription, {
         canceledAt: new Date(),
         refundProcessed: refundProcessed,
         cancellationReason: 'user_requested'
-      };
+      });
       await subscription.save();
 
       // Update business boost status - remove all boost references
@@ -2273,7 +2601,11 @@ class BusinessSubscriptionController {
       business.isBoostActive = false;
       business.boostExpiryAt = null;
       business.boostSubscriptionId = null;
-      business.activeSubscriptionId = null;
+      
+      // Only clear activeSubscriptionId if there's no business subscription
+      if (!business.businessSubscriptionId) {
+        business.activeSubscriptionId = null;
+      }
       await business.save();
 
       res.status(200).json({
@@ -2383,6 +2715,163 @@ class BusinessSubscriptionController {
           success: false,
           message: 'No active business subscription found to upgrade',
           code: 'NO_ACTIVE_SUBSCRIPTION'
+        });
+      }
+
+      // Check if there's already a pending upgrade for this business
+      const existingPendingUpgrade = await Subscription.findOne({
+        business: businessId,
+        subscriptionType: 'business',
+        status: 'pending',
+        'metadata.upgradeFrom': { $exists: true }
+      });
+
+      if (existingPendingUpgrade) {
+        // Update existing pending upgrade with new information
+        console.log('Found existing pending upgrade, updating:', existingPendingUpgrade._id);
+        
+        // Get current payment plan for proper comparison
+        const currentPaymentPlan = await PaymentPlan.findById(currentSubscription.paymentPlan);
+        if (!currentPaymentPlan) {
+          return errorResponseHelper(res, {
+            success: false,
+            message: 'Current payment plan not found',
+            code: 'CURRENT_PLAN_NOT_FOUND'
+          });
+        }
+        
+        // Calculate price difference and upgrade type
+        const priceDifference = newPaymentPlan.price - currentPaymentPlan.price;
+        let upgradeType = 'upgrade';
+        if (priceDifference < 0) {
+          upgradeType = 'downgrade';
+        } else if (priceDifference === 0) {
+          upgradeType = 'switch';
+        }
+        
+        // Update the existing subscription with new payment plan details (consistent with create subscription)
+        existingPendingUpgrade.paymentPlan = planId;
+        existingPendingUpgrade.amount = newPaymentPlan.price;
+        existingPendingUpgrade.currency = newPaymentPlan.currency;
+        existingPendingUpgrade.features = newPaymentPlan.features || [];
+        existingPendingUpgrade.isLifetime = newPaymentPlan.isLifetime;
+        existingPendingUpgrade.expiresAt = newPaymentPlan.isLifetime ? null : new Date(Date.now() + (newPaymentPlan.validityHours || 8760) * 60 * 60 * 1000);
+        existingPendingUpgrade.maxBoostPerDay = newPaymentPlan.maxBoostPerDay || 0;
+        existingPendingUpgrade.validityHours = newPaymentPlan.validityHours || null;
+        
+        existingPendingUpgrade.metadata = BusinessSubscriptionController.safeUpdateMetadata(existingPendingUpgrade, {
+          planName: newPaymentPlan.name,
+          businessName: business.businessName,
+          upgradeFrom: currentPaymentPlan.name,
+          upgradeFromId: currentPaymentPlan._id.toString(),
+          upgradeReason: 'user_requested',
+          upgradeType: upgradeType,
+          priceDifference: priceDifference,
+          originalSubscriptionId: currentSubscription._id.toString(),
+          updatedAt: new Date().toISOString()
+        });
+        
+        // Create new payment intent for the updated subscription
+        let stripeCustomer;
+        try {
+          if (business.stripeCustomerId) {
+            stripeCustomer = await StripeHelper.getCustomer(business.stripeCustomerId);
+          } else {
+            stripeCustomer = await StripeHelper.createCustomer({
+              email: business.email,
+              name: business.businessName,
+              businessId: business._id.toString(),
+              userId: business.businessOwner.toString()
+            });
+            
+            business.stripeCustomerId = stripeCustomer.id;
+            await business.save();
+          }
+        } catch (error) {
+          console.log('Error with existing Stripe customer, creating new one:', error.message);
+          stripeCustomer = await StripeHelper.createCustomer({
+            email: business.email,
+            name: business.businessName,
+            businessId: business._id.toString(),
+            userId: business.businessOwner.toString()
+          });
+          
+          business.stripeCustomerId = stripeCustomer.id;
+          await business.save();
+        }
+
+        // Create new payment intent for the updated upgrade
+        const newPaymentIntent = await StripeHelper.createPaymentIntent({
+          amount: Math.max(0, priceDifference), // Ensure non-negative amount
+          currency: newPaymentPlan.currency,
+          customerId: stripeCustomer.id,
+          businessId: business._id.toString(),
+          planType: 'business',
+          planId: planId,
+          receiptEmail: business.email,
+          metadata: {
+            upgradeFrom: currentPaymentPlan.name,
+            upgradeTo: newPaymentPlan.name,
+            originalSubscriptionId: currentSubscription._id.toString()
+          }
+        });
+
+        existingPendingUpgrade.paymentId = newPaymentIntent.id;
+        existingPendingUpgrade.stripeCustomerId = stripeCustomer.id;
+        await existingPendingUpgrade.save();
+
+        // Determine appropriate message based on upgrade type
+        let message = '';
+        if (upgradeType === 'upgrade') {
+          message = 'Existing pending upgrade updated. Please complete payment.';
+        } else if (upgradeType === 'downgrade') {
+          message = 'Existing pending downgrade updated. No additional payment required.';
+        } else {
+          message = 'Existing pending plan switch updated. No additional payment required.';
+        }
+
+        return successResponseHelper(res, {
+          success: true,
+          message: message,
+          data: {
+            subscription: {
+              _id: existingPendingUpgrade._id,
+              status: existingPendingUpgrade.status,
+              amount: existingPendingUpgrade.amount,
+              currency: existingPendingUpgrade.currency,
+              paymentPlan: {
+                _id: newPaymentPlan._id,
+                name: newPaymentPlan.name,
+                description: newPaymentPlan.description,
+                price: newPaymentPlan.price,
+                currency: newPaymentPlan.currency,
+                features: newPaymentPlan.features
+              }
+            },
+            payment: {
+              clientSecret: newPaymentIntent.client_secret,
+              paymentIntentId: newPaymentIntent.id,
+              amount: Math.max(0, priceDifference), // Ensure non-negative for display
+              currency: newPaymentPlan.currency,
+              requiresPayment: priceDifference > 0
+            },
+            upgrade: {
+              type: upgradeType,
+              from: {
+                planName: currentPaymentPlan.name,
+                price: currentPaymentPlan.price,
+                currency: currentPaymentPlan.currency
+              },
+              to: {
+                planName: newPaymentPlan.name,
+                price: newPaymentPlan.price,
+                currency: newPaymentPlan.currency
+              },
+              priceDifference: priceDifference,
+              requiresPayment: priceDifference > 0
+            },
+            isUpdated: true
+          }
         });
       }
 
@@ -2496,7 +2985,7 @@ class BusinessSubscriptionController {
         upgradeType = 'switch';
       }
 
-      // Create new subscription record
+      // Create new subscription record (consistent with create subscription logic)
       const newSubscription = new Subscription({
         business: businessId,
         paymentPlan: planId,
@@ -2509,6 +2998,8 @@ class BusinessSubscriptionController {
         expiresAt: newPaymentPlan.isLifetime ? null : new Date(Date.now() + (newPaymentPlan.validityHours || 8760) * 60 * 60 * 1000),
         paymentId: paymentIntent.id,
         features: newPaymentPlan.features || [],
+        maxBoostPerDay: newPaymentPlan.maxBoostPerDay || 0,
+        validityHours: newPaymentPlan.validityHours || null,
         metadata: {
           planName: newPaymentPlan.name,
           businessName: business.businessName,
@@ -2516,7 +3007,8 @@ class BusinessSubscriptionController {
           upgradeFromId: currentPaymentPlan._id.toString(),
           upgradeReason: 'user_requested',
           upgradeType: upgradeType,
-          priceDifference: priceDifference
+          priceDifference: priceDifference,
+          originalSubscriptionId: currentSubscription._id.toString()
         }
       });
 
@@ -2579,6 +3071,226 @@ class BusinessSubscriptionController {
       errorResponseHelper(res, {
         message: 'Failed to upgrade business subscription',
         code: '00500'
+      });
+    }
+  }
+
+  /**
+   * Handle subscription upgrade completion
+   */
+  static async handleSubscriptionUpgrade(req, res) {
+    try {
+      const { businessId, newSubscriptionId } = req.params;
+
+      // Verify business exists and user has access
+      const business = await Business.findById(businessId);
+      if (!business) {
+        return errorResponseHelper(res, {
+          success: false,
+          message: 'Business not found',
+          code: 'BUSINESS_NOT_FOUND'
+        });
+      }
+
+      // Verify business ownership
+      if (business.businessOwner.toString() !== req.businessOwner._id.toString()) {
+        return errorResponseHelper(res, {
+          success: false,
+          message: 'Access denied. You can only manage your own businesses.',
+          code: 'ACCESS_DENIED'
+        });
+      }
+
+      // Find the new subscription
+      const newSubscription = await Subscription.findById(newSubscriptionId);
+      if (!newSubscription) {
+        return errorResponseHelper(res, {
+          success: false,
+          message: 'New subscription not found',
+          code: 'SUBSCRIPTION_NOT_FOUND'
+        });
+      }
+
+      // Verify this is an upgrade subscription
+      if (!newSubscription.metadata?.upgradeFrom) {
+        return errorResponseHelper(res, {
+          success: false,
+          message: 'This is not an upgrade subscription',
+          code: 'NOT_UPGRADE_SUBSCRIPTION'
+        });
+      }
+
+      // Find the original subscription that was upgraded
+      const originalSubscription = await Subscription.findById(newSubscription.metadata.originalSubscriptionId);
+      if (!originalSubscription) {
+        return errorResponseHelper(res, {
+          success: false,
+          message: 'Original subscription not found',
+          code: 'ORIGINAL_SUBSCRIPTION_NOT_FOUND'
+        });
+      }
+
+      // Update original subscription status to upgraded
+      originalSubscription.status = 'upgraded';
+      originalSubscription.metadata = BusinessSubscriptionController.safeUpdateMetadata(originalSubscription, {
+        upgradedTo: newSubscription._id,
+        upgradedAt: new Date(),
+        upgradeReason: 'user_requested',
+        upgradeType: newSubscription.metadata?.upgradeType || 'upgrade'
+      });
+      await originalSubscription.save();
+
+      // Update business subscription references
+      business.businessSubscriptionId = newSubscription._id;
+      business.activeSubscriptionId = newSubscription._id;
+      await business.save();
+
+      // Send upgrade completion notification
+      try {
+        const oldPaymentPlan = await PaymentPlan.findById(originalSubscription.paymentPlan);
+        const newPaymentPlan = await PaymentPlan.findById(newSubscription.paymentPlan);
+        
+        await sendSubscriptionNotifications.businessSubscriptionUpgraded(businessId, {
+          oldSubscriptionId: originalSubscription._id.toString(),
+          newSubscriptionId: newSubscription._id.toString(),
+          oldPlanName: oldPaymentPlan?.name || 'Unknown Plan',
+          newPlanName: newPaymentPlan?.name || 'Unknown Plan',
+          priceDifference: newSubscription.metadata.priceDifference || 0
+        });
+      } catch (notificationError) {
+        console.error('Failed to send upgrade completion notification:', notificationError);
+      }
+
+      successResponseHelper(res, {
+        success: true,
+        message: 'Subscription upgrade completed successfully',
+        data: {
+          originalSubscription: {
+            _id: originalSubscription._id,
+            status: originalSubscription.status,
+            planName: originalSubscription.metadata?.planName
+          },
+          newSubscription: {
+            _id: newSubscription._id,
+            status: newSubscription.status,
+            planName: newSubscription.metadata?.planName
+          },
+          business: {
+            _id: business._id,
+            businessName: business.businessName,
+            businessSubscriptionId: business.businessSubscriptionId,
+            activeSubscriptionId: business.activeSubscriptionId
+          }
+        }
+      });
+    } catch (error) {
+      console.error('Error handling subscription upgrade:', error);
+      errorResponseHelper(res, {
+        success: false,
+        message: 'Failed to handle subscription upgrade',
+        error: error.message
+      });
+    }
+  }
+
+  /**
+   * Cancel pending subscription upgrade
+   */
+  static async cancelPendingUpgrade(req, res) {
+    try {
+      const { businessId, subscriptionId } = req.params;
+
+      // Verify business exists and user has access
+      const business = await Business.findById(businessId);
+      if (!business) {
+        return errorResponseHelper(res, {
+          success: false,
+          message: 'Business not found',
+          code: 'BUSINESS_NOT_FOUND'
+        });
+      }
+
+      // Verify business ownership
+      if (business.businessOwner.toString() !== req.businessOwner._id.toString()) {
+        return errorResponseHelper(res, {
+          success: false,
+          message: 'Access denied. You can only manage your own businesses.',
+          code: 'ACCESS_DENIED'
+        });
+      }
+
+      // Find the pending upgrade subscription
+      const pendingUpgrade = await Subscription.findOne({
+        _id: subscriptionId,
+        business: businessId,
+        subscriptionType: 'business',
+        status: 'pending',
+        'metadata.upgradeFrom': { $exists: true }
+      });
+
+      if (!pendingUpgrade) {
+        return errorResponseHelper(res, {
+          success: false,
+          message: 'No pending upgrade found',
+          code: 'NO_PENDING_UPGRADE'
+        });
+      }
+
+      // Cancel the payment intent if it exists
+      if (pendingUpgrade.paymentId) {
+        try {
+          await StripeHelper.cancelPaymentIntent(pendingUpgrade.paymentId);
+        } catch (error) {
+          console.error('Error canceling payment intent:', error);
+          // Continue with cancellation even if payment intent cancellation fails
+        }
+      }
+
+      // Update subscription status to canceled
+      pendingUpgrade.status = 'canceled';
+      pendingUpgrade.metadata = BusinessSubscriptionController.safeUpdateMetadata(pendingUpgrade, {
+        canceledAt: new Date(),
+        cancellationReason: 'user_requested'
+      });
+      await pendingUpgrade.save();
+
+      // Ensure the original subscription is still active
+      const originalSubscription = await Subscription.findOne({
+        business: businessId,
+        subscriptionType: 'business',
+        status: 'active'
+      });
+
+      if (originalSubscription) {
+        // Make sure business still references the original subscription
+        business.businessSubscriptionId = originalSubscription._id;
+        business.activeSubscriptionId = originalSubscription._id;
+        await business.save();
+      }
+
+      successResponseHelper(res, {
+        success: true,
+        message: 'Pending upgrade canceled successfully',
+        data: {
+          canceledUpgrade: {
+            _id: pendingUpgrade._id,
+            status: pendingUpgrade.status,
+            planName: pendingUpgrade.metadata?.planName
+          },
+          business: {
+            _id: business._id,
+            businessName: business.businessName,
+            businessSubscriptionId: business.businessSubscriptionId,
+            activeSubscriptionId: business.activeSubscriptionId
+          }
+        }
+      });
+    } catch (error) {
+      console.error('Error canceling pending upgrade:', error);
+      errorResponseHelper(res, {
+        success: false,
+        message: 'Failed to cancel pending upgrade',
+        error: error.message
       });
     }
   }
@@ -2698,13 +3410,12 @@ class BusinessSubscriptionController {
 
       // Update subscription status
       subscription.status = 'canceled';
-      subscription.metadata = {
-        ...subscription.metadata,
+      subscription.metadata = BusinessSubscriptionController.safeUpdateMetadata(subscription, {
         canceledAt: new Date(),
         refundProcessed: refundProcessed,
         refundAmount: refundAmount,
         cancellationReason: reason || 'user_requested'
-      };
+      });
       await subscription.save();
 
       // Update business subscription status - remove all subscription references
@@ -2772,7 +3483,7 @@ class BusinessSubscriptionController {
       const { businessId } = req.params;
 
       // Verify business exists and user has access
-      const business = await Business.findById(businessId).populate('category');
+      const business = await Business.findById(businessId).populate('category', 'title name');
       if (!business) {
         return errorResponseHelper(res, {
           success: false,
@@ -2789,60 +3500,60 @@ class BusinessSubscriptionController {
       }
 
       // Find boost subscription
-      const subscription = await Subscription.findOne({
+      const boostSubscription = await Subscription.findOne({
         business: businessId,
-        subscriptionType: 'boost'
+        subscriptionType: 'boost',
+        status: { $in: ['active', 'pending'] }
       });
 
-      if (!subscription) {
+      if (!boostSubscription) {
         return errorResponseHelper(res, {
           success: false,
           message: 'No boost subscription found'
         });
       }
 
-      // Get boost queue
-      const boostQueue = await BoostQueue.findOne({ category: business.category._id });
-      
-      if (!boostQueue) {
-        return errorResponseHelper(res, {
-          success: false,
-          message: 'Boost queue not found for this category'
-        });
+      // Get boost queue information
+      let queueInfo = null;
+      if (boostSubscription.boostQueueInfo?.queueId) {
+        const boostQueue = await BoostQueue.findById(boostSubscription.boostQueueInfo.queueId);
+        if (boostQueue) {
+          const queueItem = boostQueue.queue.find(item => 
+            item.business.toString() === businessId
+          );
+          
+          if (queueItem) {
+            queueInfo = {
+              position: queueItem.position,
+              status: queueItem.status,
+              estimatedStartTime: queueItem.estimatedStartTime,
+              estimatedEndTime: queueItem.estimatedEndTime,
+              boostStartTime: queueItem.boostStartTime,
+              boostEndTime: queueItem.boostEndTime,
+              isCurrentlyActive: queueItem.status === 'active',
+              categoryName: business.category.title,
+              totalInQueue: boostQueue.queue.filter(item => item.status === 'pending').length
+            };
+          }
+        }
       }
-
-      // Get current queue position and status
-      const queuePosition = boostQueue.getQueuePosition(businessId);
-      const estimatedStartTime = boostQueue.getEstimatedStartTime(businessId);
-      const isCurrentlyActive = boostQueue.isBusinessActive(businessId);
-      const timeRemaining = boostQueue.getCurrentBoostTimeRemaining();
 
       successResponseHelper(res, {
         success: true,
         message: 'Boost queue status retrieved successfully',
         data: {
+          subscription: {
+            _id: boostSubscription._id,
+            status: boostSubscription.status,
+            expiresAt: boostSubscription.expiresAt
+          },
+          queueInfo: queueInfo,
           business: {
             _id: business._id,
             businessName: business.businessName,
-            category: business.category
-          },
-          subscription: {
-            _id: subscription._id,
-            status: subscription.status,
-            boostQueueInfo: subscription.boostQueueInfo
-          },
-          queueStatus: {
-            position: queuePosition,
-            estimatedStartTime,
-            estimatedEndTime: estimatedStartTime ? new Date(estimatedStartTime.getTime() + 24 * 60 * 60 * 1000) : null,
-            isCurrentlyActive,
-            timeRemaining: isCurrentlyActive ? timeRemaining : null,
-            totalInQueue: boostQueue.queue.filter(item => item.status === 'pending').length,
-            currentlyActiveBusiness: boostQueue.currentlyActive.business ? {
-              _id: boostQueue.currentlyActive.business,
-              boostStartTime: boostQueue.currentlyActive.boostStartTime,
-              boostEndTime: boostQueue.currentlyActive.boostEndTime
-            } : null
+            isBoosted: business.isBoosted,
+            isBoostActive: business.isBoostActive,
+            boostExpiryAt: business.boostExpiryAt
           }
         }
       });
@@ -3335,6 +4046,390 @@ class BusinessSubscriptionController {
       errorResponseHelper(res, {
         success: false,
         message: 'Failed to fetch business payment history',
+        error: error.message
+      });
+    }
+  }
+
+  /**
+   * Handle boost queue management and automatic activation
+   * This method should be called by a cron job or scheduled task
+   */
+  static async handleBoostQueueManagement(req, res) {
+    try {
+      // Get all boost queues
+      const boostQueues = await BoostQueue.find({}).populate('category', 'title name');
+      
+      const results = [];
+      
+      for (const boostQueue of boostQueues) {
+        const queueResult = {
+          categoryId: boostQueue.category._id,
+          categoryName: boostQueue.category.title,
+          actions: []
+        };
+        
+        // Check if current boost has expired
+        if (boostQueue.currentlyActive.business && boostQueue.currentlyActive.boostEndTime) {
+          const now = new Date();
+          const boostEndTime = new Date(boostQueue.currentlyActive.boostEndTime);
+          
+          if (now > boostEndTime) {
+            // Current boost has expired, activate next business
+            const previousActiveBusiness = boostQueue.currentlyActive.business;
+            
+            await boostQueue.expireCurrentBoost();
+            
+            // Update the expired business's subscription and status
+            const expiredSubscription = await Subscription.findOne({
+              business: previousActiveBusiness,
+              subscriptionType: 'boost',
+              status: 'active'
+            });
+            
+            if (expiredSubscription) {
+              expiredSubscription.status = 'expired';
+              expiredSubscription.boostQueueInfo.isCurrentlyActive = false;
+              await expiredSubscription.save();
+            }
+            
+            // Update the expired business's boost status
+            const expiredBusiness = await Business.findById(previousActiveBusiness);
+            if (expiredBusiness) {
+              expiredBusiness.isBoosted = false;
+              expiredBusiness.isBoostActive = false;
+              expiredBusiness.boostExpiryAt = null;
+              await expiredBusiness.save();
+            }
+            
+            queueResult.actions.push({
+              action: 'expired_boost',
+              businessId: previousActiveBusiness,
+              message: 'Boost expired and business status updated'
+            });
+            
+            // Check if there's a next business to activate
+            if (boostQueue.currentlyActive.business) {
+              const nextBusiness = boostQueue.currentlyActive.business;
+              const nextSubscription = await Subscription.findOne({
+                business: nextBusiness,
+                subscriptionType: 'boost',
+                status: 'active'
+              });
+              
+              if (nextSubscription) {
+                // Update subscription with active status
+                nextSubscription.boostQueueInfo.isCurrentlyActive = true;
+                nextSubscription.boostQueueInfo.boostStartTime = boostQueue.currentlyActive.boostStartTime;
+                nextSubscription.boostQueueInfo.boostEndTime = boostQueue.currentlyActive.boostEndTime;
+                nextSubscription.boostQueueInfo.queuePosition = 0;
+                await nextSubscription.save();
+              }
+              
+              // Update business boost status
+              const nextBusinessDoc = await Business.findById(nextBusiness);
+              if (nextBusinessDoc) {
+                nextBusinessDoc.isBoosted = true;
+                nextBusinessDoc.isBoostActive = true;
+                nextBusinessDoc.boostExpiryAt = boostQueue.currentlyActive.boostEndTime;
+                await nextBusinessDoc.save();
+              }
+              
+              queueResult.actions.push({
+                action: 'activated_boost',
+                businessId: nextBusiness,
+                message: 'Next business boost activated'
+              });
+            }
+          }
+        }
+        
+        // Check for pending businesses that should be activated
+        const pendingBusinesses = boostQueue.queue.filter(item => item.status === 'pending');
+        for (const pendingItem of pendingBusinesses) {
+          if (pendingItem.estimatedStartTime && new Date() >= new Date(pendingItem.estimatedStartTime)) {
+            // This business should start its boost
+            if (!boostQueue.currentlyActive.business) {
+              // No business currently active, activate this one
+              await boostQueue.activateNext();
+              
+              // Update subscription
+              const subscription = await Subscription.findById(pendingItem.subscription);
+              if (subscription) {
+                subscription.boostQueueInfo.isCurrentlyActive = true;
+                subscription.boostQueueInfo.boostStartTime = boostQueue.currentlyActive.boostStartTime;
+                subscription.boostQueueInfo.boostEndTime = boostQueue.currentlyActive.boostEndTime;
+                subscription.boostQueueInfo.queuePosition = 0;
+                await subscription.save();
+              }
+              
+              // Update business status
+              const business = await Business.findById(pendingItem.business);
+              if (business) {
+                business.isBoosted = true;
+                business.isBoostActive = true;
+                business.boostExpiryAt = boostQueue.currentlyActive.boostEndTime;
+                await business.save();
+              }
+              
+              queueResult.actions.push({
+                action: 'scheduled_activation',
+                businessId: pendingItem.business,
+                message: 'Scheduled boost activation completed'
+              });
+            }
+          }
+        }
+        
+        results.push(queueResult);
+      }
+      
+      successResponseHelper(res, {
+        success: true,
+        message: 'Boost queue management completed',
+        data: {
+          processedQueues: results.length,
+          results: results
+        }
+      });
+    } catch (error) {
+      console.error('Error handling boost queue management:', error);
+      errorResponseHelper(res, {
+        success: false,
+        message: 'Failed to handle boost queue management',
+        error: error.message
+      });
+    }
+  }
+
+  /**
+   * Get subscription upgrade history for a business
+   */
+  static async getSubscriptionUpgradeHistory(req, res) {
+    try {
+      const { businessId } = req.params;
+
+      // Verify business exists and user has access
+      const business = await Business.findById(businessId);
+      if (!business) {
+        return errorResponseHelper(res, {
+          success: false,
+          message: 'Business not found'
+        });
+      }
+
+      // Verify business ownership
+      if (business.businessOwner.toString() !== req.businessOwner._id.toString()) {
+        return errorResponseHelper(res, {
+          success: false,
+          message: 'Access denied. You can only manage your own businesses.'
+        });
+      }
+
+      // Find all subscriptions for this business that are upgrades or have been upgraded
+      const upgradeSubscriptions = await Subscription.find({
+        business: businessId,
+        subscriptionType: 'business',
+        $or: [
+          { 'metadata.upgradeFrom': { $exists: true } }, // New subscriptions that are upgrades
+          { status: 'upgraded' } // Old subscriptions that have been upgraded
+        ]
+      })
+        .populate('paymentPlan', 'name planType price features maxBusinesses maxReviews')
+        .sort({ createdAt: -1 });
+
+      // Organize upgrade history
+      const upgradeHistory = [];
+      const processedIds = new Set();
+
+      for (const subscription of upgradeSubscriptions) {
+        if (processedIds.has(subscription._id.toString())) continue;
+
+        if (subscription.status === 'upgraded' && subscription.metadata?.upgradedTo) {
+          // This is an old subscription that was upgraded
+          const upgradedToSubscription = upgradeSubscriptions.find(sub => 
+            sub._id.toString() === subscription.metadata.upgradedTo
+          );
+
+          if (upgradedToSubscription) {
+            upgradeHistory.push({
+              type: 'upgrade',
+              originalSubscription: {
+                _id: subscription._id,
+                planName: subscription.metadata?.planName || 'Unknown Plan',
+                status: subscription.status,
+                createdAt: subscription.createdAt,
+                upgradedAt: subscription.metadata?.upgradedAt
+              },
+              newSubscription: {
+                _id: upgradedToSubscription._id,
+                planName: upgradedToSubscription.metadata?.planName || 'Unknown Plan',
+                status: upgradedToSubscription.status,
+                createdAt: upgradedToSubscription.createdAt
+              },
+              upgradeDetails: {
+                upgradeType: subscription.metadata?.upgradeType || 'upgrade',
+                priceDifference: upgradedToSubscription.metadata?.priceDifference || 0,
+                upgradeReason: subscription.metadata?.upgradeReason || 'user_requested'
+              }
+            });
+
+            processedIds.add(subscription._id.toString());
+            processedIds.add(upgradedToSubscription._id.toString());
+          }
+        } else if (subscription.metadata?.upgradeFrom && !subscription.metadata?.originalSubscriptionId) {
+          // This is a new subscription that is an upgrade but doesn't have the original subscription linked
+          upgradeHistory.push({
+            type: 'upgrade',
+            originalSubscription: {
+              planName: subscription.metadata.upgradeFrom,
+              status: 'upgraded'
+            },
+            newSubscription: {
+              _id: subscription._id,
+              planName: subscription.metadata?.planName || 'Unknown Plan',
+              status: subscription.status,
+              createdAt: subscription.createdAt
+            },
+            upgradeDetails: {
+              upgradeType: subscription.metadata?.upgradeType || 'upgrade',
+              priceDifference: subscription.metadata?.priceDifference || 0,
+              upgradeReason: subscription.metadata?.upgradeReason || 'user_requested'
+            }
+          });
+
+          processedIds.add(subscription._id.toString());
+        }
+      }
+
+      // Add any remaining subscriptions that haven't been processed
+      for (const subscription of upgradeSubscriptions) {
+        if (!processedIds.has(subscription._id.toString())) {
+          upgradeHistory.push({
+            type: 'standalone',
+            subscription: {
+              _id: subscription._id,
+              planName: subscription.metadata?.planName || 'Unknown Plan',
+              status: subscription.status,
+              createdAt: subscription.createdAt
+            }
+          });
+        }
+      }
+
+      successResponseHelper(res, {
+        success: true,
+        message: 'Subscription upgrade history retrieved successfully',
+        data: {
+          business: {
+            _id: business._id,
+            businessName: business.businessName
+          },
+          upgradeHistory: upgradeHistory,
+          summary: {
+            totalUpgrades: upgradeHistory.filter(item => item.type === 'upgrade').length,
+            totalSubscriptions: upgradeSubscriptions.length,
+            latestUpgrade: upgradeHistory.length > 0 ? upgradeHistory[0] : null
+          }
+        }
+      });
+    } catch (error) {
+      console.error('Error fetching subscription upgrade history:', error);
+      errorResponseHelper(res, {
+        success: false,
+        message: 'Failed to fetch subscription upgrade history',
+        error: error.message
+      });
+    }
+  }
+
+  /**
+   * Get boost queue status for a business
+   */
+  static async getBoostQueueStatus(req, res) {
+    try {
+      const { businessId } = req.params;
+
+      // Verify business exists and user has access
+      const business = await Business.findById(businessId).populate('category', 'title name');
+      if (!business) {
+        return errorResponseHelper(res, {
+          success: false,
+          message: 'Business not found'
+        });
+      }
+
+      // Verify business ownership
+      if (business.businessOwner.toString() !== req.businessOwner._id.toString()) {
+        return errorResponseHelper(res, {
+          success: false,
+          message: 'Access denied. You can only manage your own businesses.'
+        });
+      }
+
+      // Find boost subscription
+      const boostSubscription = await Subscription.findOne({
+        business: businessId,
+        subscriptionType: 'boost',
+        status: { $in: ['active', 'pending'] }
+      });
+
+      if (!boostSubscription) {
+        return errorResponseHelper(res, {
+          success: false,
+          message: 'No boost subscription found'
+        });
+      }
+
+      // Get boost queue information
+      let queueInfo = null;
+      if (boostSubscription.boostQueueInfo?.queueId) {
+        const boostQueue = await BoostQueue.findById(boostSubscription.boostQueueInfo.queueId);
+        if (boostQueue) {
+          const queueItem = boostQueue.queue.find(item => 
+            item.business.toString() === businessId
+          );
+          
+          if (queueItem) {
+            queueInfo = {
+              position: queueItem.position,
+              status: queueItem.status,
+              estimatedStartTime: queueItem.estimatedStartTime,
+              estimatedEndTime: queueItem.estimatedEndTime,
+              boostStartTime: queueItem.boostStartTime,
+              boostEndTime: queueItem.boostEndTime,
+              isCurrentlyActive: queueItem.status === 'active',
+              categoryName: business.category.title,
+              totalInQueue: boostQueue.queue.filter(item => item.status === 'pending').length
+            };
+          }
+        }
+      }
+
+      successResponseHelper(res, {
+        success: true,
+        message: 'Boost queue status retrieved successfully',
+        data: {
+          subscription: {
+            _id: boostSubscription._id,
+            status: boostSubscription.status,
+            expiresAt: boostSubscription.expiresAt
+          },
+          queueInfo: queueInfo,
+          business: {
+            _id: business._id,
+            businessName: business.businessName,
+            isBoosted: business.isBoosted,
+            isBoostActive: business.isBoostActive,
+            boostExpiryAt: business.boostExpiryAt
+          }
+        }
+      });
+    } catch (error) {
+      console.error('Error getting boost queue status:', error);
+      errorResponseHelper(res, {
+        success: false,
+        message: 'Failed to get boost queue status',
         error: error.message
       });
     }

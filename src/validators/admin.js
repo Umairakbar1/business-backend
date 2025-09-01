@@ -643,7 +643,7 @@ const paymentPlanValidator = Joi.object({
   features: Joi.when('planType', {
     is: 'business',
     then: Joi.array()
-      .items(Joi.string().valid('query', 'review', 'embeded', 'boost'))
+      .items(Joi.string().valid('query', 'review', 'embedded', 'boost'))
       .min(1)
       .required()
       .messages({

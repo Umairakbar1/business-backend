@@ -604,7 +604,7 @@ class PaymentPlanController {
       }
 
       // Validate feature values
-      const validFeatures = ['query', 'review', 'embeded'];
+      const validFeatures = ['query', 'review', 'embedded',"boost"];
       const invalidFeatures = features.filter(feature => !validFeatures.includes(feature));
       if (invalidFeatures.length > 0) {
         return res.status(400).json({

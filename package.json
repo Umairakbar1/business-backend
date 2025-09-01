@@ -6,6 +6,8 @@
   "scripts": {
     "start": "node src/app.js",
     "nodemon": "nodemon src/app.js",
+    "boost-cron": "node boost-queue-cron.js",
+    "test-subscription": "node test-subscription-logic.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "type": "module",

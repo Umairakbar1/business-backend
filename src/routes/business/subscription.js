@@ -71,8 +71,8 @@ router.patch('/:businessId/business/cancel', authorizedAccessBusiness, businessS
 // Get boost queue status
 router.get('/:businessId/boost/queue-status', authorizedAccessBusiness, businessSubscriptionController.getBoostQueueStatus);
 
-// Get boost queue position
-router.get('/:businessId/boost/queue-position', authorizedAccessBusiness, businessSubscriptionController.getBoostQueuePosition);
+// Handle boost queue management (for cron jobs/scheduled tasks)
+router.post('/boost-queue-management', businessSubscriptionController.handleBoostQueueManagement);
 
 // Get payment history for all businesses owned by the user
 router.get('/payment-history', verifyBusinessOwnerToken, businessSubscriptionController.getPaymentHistory);

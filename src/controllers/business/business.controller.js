@@ -350,40 +350,57 @@ export const createBusiness = async (req, res) => {
 
 export const getMyBusinesses = async (req, res) => {
   try {
-    const { page = 1, limit = 10, search, status, sortBy = 'createdAt', sortOrder = 'desc' } = req.query;
+    const { page = 1, limit = 10, queryText, status, sortBy = 'createdAt', sortOrder = 'desc' } = req.query;
     
     // Build filter object
     const filter = { businessOwner: req.businessOwner?._id };
     
-    // Add search functionality
-    if (search) {
+    // Add queryText functionality - only if it has meaningful content
+    if (queryText && queryText.trim() !== '' && queryText !== 'null' && queryText !== 'undefined') {
       filter.$or = [
-        { businessName: { $regex: search, $options: 'i' } },
-        { email: { $regex: search, $options: 'i' } },
-        { phoneNumber: { $regex: search, $options: 'i' } }
+        { businessName: { $regex: queryText.trim(), $options: 'i' } },
+        { email: { $regex: queryText.trim(), $options: 'i' } },
+        { phoneNumber: { $regex: queryText.trim(), $options: 'i' } }
       ];
     }
     
-    // Add status filter
-    if (status) {
-      filter.status = status;
+    // Add status filter - only if it has meaningful content
+    if (status && status.trim() !== '' && status !== 'null' && status !== 'undefined') {
+      filter.status = status.trim();
     }
     
-    // Build sort object
+    // Build sort object - only if sortBy is valid
     const sort = {};
-    sort[sortBy] = sortOrder === 'desc' ? -1 : 1;
+    if (sortBy && sortBy.trim() !== '' && sortBy !== 'null' && sortBy !== 'undefined') {
+      sort[sortBy.trim()] = sortOrder === 'desc' ? -1 : 1;
+    } else {
+      // Default sorting if no valid sortBy provided
+      sort.createdAt = sortOrder === 'desc' ? -1 : 1;
+    }
+    
+    // Validate and calculate pagination parameters
+    const pageNum = parseInt(page);
+    const limitNum = parseInt(limit);
+    
+    // Ensure valid pagination values
+    const validPage = isNaN(pageNum) || pageNum < 1 ? 1 : pageNum;
+    const validLimit = isNaN(limitNum) || limitNum < 1 ? 10 : limitNum;
     
     // Calculate pagination
-    const skip = (parseInt(page) - 1) * parseInt(limit);
+    const skip = (validPage - 1) * validLimit;
     
     // Get businesses with pagination
     const businesses = await Business.find(filter)
       .sort(sort)
       .skip(skip)
-      .limit(parseInt(limit));
+      .limit(validLimit);
     
     // Get total count for pagination
     const total = await Business.countDocuments(filter);
+    
+    // Log the final filter and pagination for debugging
+    console.log('🔍 getMyBusinesses - Final filter:', JSON.stringify(filter, null, 2));
+    console.log('📊 getMyBusinesses - Pagination:', { page: validPage, limit: validLimit, skip, total });
     
     // Import Category and SubCategory models
     const Category = (await import('../../models/admin/category.js')).default;
@@ -535,10 +552,10 @@ export const getMyBusinesses = async (req, res) => {
       message: 'Businesses retrieved successfully',
       data: populatedBusinesses,
       pagination: {
-        currentPage: parseInt(page),
-        totalPages: Math.ceil(total / parseInt(limit)),
+        currentPage: validPage,
+        totalPages: Math.ceil(total / validLimit),
         totalItems: total,
-        itemsPerPage: parseInt(limit)
+        itemsPerPage: validLimit
       }
     });
   } catch (error) {
@@ -1498,7 +1515,7 @@ export const createPlanPaymentSession = async (req, res) => {
       name: `${plan.charAt(0).toUpperCase() + plan.slice(1)} Plan`,
       description: `Upgrade to ${plan} plan`,
       planType: plan,
-      features: ['query', 'review', 'embeded']
+      features: ['query', 'review', 'embedded',"boost"]
     });
 
     const stripePrice = await StripeHelper.createPrice({
