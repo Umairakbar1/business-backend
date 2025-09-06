@@ -1,7 +1,7 @@
 import LogCategory from '../../models/admin/logCategory.js';
 import LogSubCategory from '../../models/admin/logSubCategory.js';
 import Blog from '../../models/admin/blog.js';
-import { successResponseHelper, errorResponseHelper } from '../../helpers/utilityHelper.js';
+import { successResponseHelper, errorResponseHelper, generateSlug } from '../../helpers/utilityHelper.js';
 import { uploadImageWithThumbnail, deleteFile } from '../../helpers/cloudinaryHelper.js';
 
 const createLogCategory = async (req, res) => {
@@ -18,6 +18,9 @@ const createLogCategory = async (req, res) => {
       return errorResponseHelper(res, {message:'Category is required', code:'00400'});
     }
 
+    // Generate slug from title
+    const slug = generateSlug(title);
+
     // Check if category with same name already exists
     const existingCategory = await LogCategory.findOne({ 
       title: { $regex: new RegExp(`^${title}$`, 'i') } 
@@ -25,6 +28,12 @@ const createLogCategory = async (req, res) => {
     
     if (existingCategory) {
       return errorResponseHelper(res, {message:'Category with this name already exists', code:'00400'});
+    }
+
+    // Check if slug already exists
+    const existingSlug = await LogCategory.findOne({ slug });
+    if (existingSlug) {
+      return errorResponseHelper(res, {message:'Category with this slug already exists', code:'00400'});
     }
 
     // Handle image upload to Cloudinary
@@ -84,6 +93,7 @@ const createLogCategory = async (req, res) => {
 
     const category = new LogCategory({
       title,
+      slug,
       description,
       image: imageData,
       status,
@@ -126,12 +136,12 @@ const createLogCategory = async (req, res) => {
 
 const getAllLogCategories = async (req, res) => {
   try {
-    const { page = 1, limit = 10, search, status, sortBy = 'createdAt', sortOrder = 'desc' } = req.query;
+    const { page = 1, limit = 10, queryText, status, sortBy = 'createdAt', sortOrder = 'desc' } = req.query;
     
     // Build filter object
     const filter = {};
-    if (search) {
-      filter.title = { $regex: search, $options: 'i' };
+    if (queryText) {
+      filter.title = { $regex: queryText, $options: 'i' };
     }
     if (status) {
       filter.status = status;
@@ -152,8 +162,7 @@ const getAllLogCategories = async (req, res) => {
     // Get subcategories for all categories
     const categoryIds = categories.map(cat => cat._id);
     const subcategories = await LogSubCategory.find({ 
-      categoryId: { $in: categoryIds },
-      status: 'active'
+      categoryId: { $in: categoryIds }
     }).select('title description status categoryId createdAt');
 
     // Group subcategories by category
@@ -246,6 +255,18 @@ const updateLogCategory = async (req, res) => {
       }
     }
 
+    // Generate slug from title if title is being updated
+    let slug = existingCategory.slug;
+    if (title && title !== existingCategory.title) {
+      slug = generateSlug(title);
+      
+      // Check if slug already exists (excluding current category)
+      const existingSlug = await LogCategory.findOne({ slug, _id: { $ne: id } });
+      if (existingSlug) {
+        return errorResponseHelper(res, {message:'Log category with this slug already exists', code:'00400'});
+      }
+    }
+
     // Prevent circular reference if updating parent
     if (parent && parent.toString() === id) {
       return errorResponseHelper(res, {message:'Category cannot be its own parent', code:'00400'});
@@ -306,6 +327,7 @@ const updateLogCategory = async (req, res) => {
       id,
       { 
         ...(title && { title }),
+        ...(slug && { slug }),
         ...(description !== undefined && { description }),
         ...(imageData && { image: imageData }),
         ...(status && { status }),
@@ -485,7 +507,13 @@ const bulkUpdateLogCategoryStatus = async (req, res) => {
 // Single status change for log category
 const changeLogCategoryStatus = async (req, res) => {
   try {
-    const { id, status } = req.params;
+    const { id } = req.params;
+    const {status} = req.body;
+    // Validate status
+    if (!['active', 'inactive'].includes(status)) {
+      return errorResponseHelper(res, { message: 'Invalid status. Must be "active" or "inactive"', code: '00400' });
+    }
+    
     const category = await LogCategory.findByIdAndUpdate(id, { status }, { new: true })
       .populate('parent', 'title');
     
@@ -494,16 +522,12 @@ const changeLogCategoryStatus = async (req, res) => {
     }
 
     // Update subcategories status based on category status
-    if (status === 'active') {
-      await LogSubCategory.updateMany({ categoryId: id }, { status: 'active' });
-    } else {
-      await LogSubCategory.updateMany({ categoryId: id }, { status: 'inactive' });
-    }
+    await LogSubCategory.updateMany({ categoryId: id }, { status });
 
     // Get subcategories for this category
     const subcategories = await LogSubCategory.find({ 
       categoryId: id,
-      status: status === 'active' ? 'active' : 'inactive'
+      status: status
     }).select('title description status categoryId createdAt');
 
     // Attach subcategories to the category
@@ -513,7 +537,7 @@ const changeLogCategoryStatus = async (req, res) => {
     };
 
     return successResponseHelper(res, { 
-      message: 'Log category status updated successfully', 
+      message: `Log category status updated to ${status} successfully`, 
       data: categoryWithSubcategories 
     });
   } catch (error) {

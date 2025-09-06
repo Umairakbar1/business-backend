@@ -155,7 +155,7 @@ const subCategoryValidator = Joi.object({
   description: Joi.string()
     .max(500)
     .optional()
-    .trim()
+    .trim().allow("")
     .messages({
       'string.max': 'Subcategory description cannot exceed 500 characters'
     }),
@@ -702,6 +702,21 @@ const paymentPlanValidator = Joi.object({
     })
   }),
 
+  category: Joi.when('planType', {
+    is: 'boost',
+    then: Joi.string()
+      .pattern(/^[0-9a-fA-F]{24}$/)
+      .required()
+      .messages({
+        'string.empty': 'Category is required for boost plans',
+        'string.pattern.base': 'Category must be a valid MongoDB ObjectId',
+        'any.required': 'Category is required for boost plans'
+      }),
+    otherwise: Joi.forbidden().messages({
+      'any.unknown': 'Category is only allowed for boost plans'
+    })
+  }),
+
   discount: Joi.number()
     .min(0)
     .max(7)
@@ -758,7 +773,7 @@ const subscriptionValidator = Joi.object({
 
 // Update validators
 const paymentPlanUpdateValidator = paymentPlanValidator.fork(
-  ['name', 'description', 'planType', 'price', 'currency', 'features', 'isPopular', 'sortOrder', 'maxBoostPerDay', 'discount'],
+  ['name', 'description', 'planType', 'price', 'currency', 'features', 'isPopular', 'sortOrder', 'maxBoostPerDay', 'validityHours', 'category', 'discount'],
   (schema) => schema.optional()
 );
 

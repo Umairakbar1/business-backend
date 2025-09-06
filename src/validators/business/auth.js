@@ -124,7 +124,10 @@ export const registerBusinessValidation = (req, res, next) => {
     ).optional(),
     // Business URLs validation
     businessUrls: Joi.alternatives().try(
-      Joi.array().items(Joi.string().uri()).max(5),
+      Joi.array().items(Joi.object({
+        label: Joi.string().required(),
+        link: Joi.string().uri().required()
+      })).max(5),
       Joi.string().optional().allow(null, '') // Allow string format for FormData
     ).optional(),
     about: Joi.string().optional().allow(null, ''),

@@ -2,7 +2,7 @@ import mongoose from "mongoose";
 
 const { Schema, model } = mongoose;
 
-const EmailVerificationSchema = new Schema({
+const BusinessEmailVerificationSchema = new Schema({
     email: { 
         type: String, 
         required: true, 
@@ -10,14 +10,19 @@ const EmailVerificationSchema = new Schema({
         lowercase: true,
         trim: true
     },
-    name: {
+    firstName: {
         type: String,
         required: true,
         trim: true
     },
-    password: {
+    lastName: {
         type: String,
-        required: true
+        required: true,
+        trim: true
+    },
+    phoneNumber: {
+        type: String,
+        trim: true
     },
     otp: {
         code: String,
@@ -45,10 +50,10 @@ const EmailVerificationSchema = new Schema({
 });
 
 // Index for automatic cleanup of expired records
-EmailVerificationSchema.index({ "otp.expiresAt": 1 }, { expireAfterSeconds: 0 });
+BusinessEmailVerificationSchema.index({ "otp.expiresAt": 1 }, { expireAfterSeconds: 0 });
 
 // Method to generate OTP
-EmailVerificationSchema.methods.generateOTP = function() {
+BusinessEmailVerificationSchema.methods.generateOTP = function() {
     // Generate a random 6-digit OTP
     const min = 100000;
     const max = 999999;
@@ -62,7 +67,7 @@ EmailVerificationSchema.methods.generateOTP = function() {
 };
 
 // Method to verify OTP
-EmailVerificationSchema.methods.verifyOTP = function(code) {
+BusinessEmailVerificationSchema.methods.verifyOTP = function(code) {
     if (!this.otp || !this.otp.code || !this.otp.expiresAt) {
         return false;
     }
@@ -90,9 +95,9 @@ EmailVerificationSchema.methods.verifyOTP = function(code) {
 };
 
 // Method to check if verification is still valid
-EmailVerificationSchema.methods.isVerificationValid = function() {
+BusinessEmailVerificationSchema.methods.isVerificationValid = function() {
     return this.status === "verified" && this.isVerified;
 };
 
-const EmailVerification = model('EmailVerification', EmailVerificationSchema);
-export default EmailVerification;
+const BusinessEmailVerification = model('BusinessEmailVerification', BusinessEmailVerificationSchema);
+export default BusinessEmailVerification;

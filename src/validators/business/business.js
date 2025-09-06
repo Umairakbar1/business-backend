@@ -68,7 +68,10 @@ export const businessJoiSchema = Joi.object({
   })).optional(),
   removeImages: Joi.array().items(Joi.string()).optional(),
   removeLogo: Joi.boolean().optional(),
-  businessUrls: Joi.array().items(Joi.string().uri()).max(5).optional(),
+  businessUrls: Joi.array().items(Joi.object({
+    label: Joi.string().required(),
+    link: Joi.string().uri().required()
+  })).max(5).optional(),
 }).unknown(true); // Allow unknown fields
 
 export const businessStatusJoiSchema = Joi.object({

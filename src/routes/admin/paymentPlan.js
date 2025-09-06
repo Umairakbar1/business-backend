@@ -18,6 +18,15 @@ router.get('/business', paymentPlanController.getBusinessPlans);
 // Get boost plans (public endpoint for frontend)
 router.get('/boost', paymentPlanController.getBoostPlans);
 
+// Get boost plan by category
+router.get('/boost/category/:categoryId', paymentPlanController.getBoostPlansByCategory);
+
+// Check if category is available for boost plan
+router.get('/boost/check-category/:categoryId', paymentPlanController.checkCategoryAvailability);
+
+// Get available categories for boost plans
+router.get('/boost/available-categories', paymentPlanController.getAvailableCategoriesForBoost);
+
 // Get payment plan by ID
 router.get('/:id', authorizedAccessAdmin, paymentPlanController.getPaymentPlanById);
 

@@ -13,7 +13,8 @@ class StripeHelper {
         description: productData.description,
         metadata: {
           planType: productData.planType,
-          features: JSON.stringify(productData.features)
+          features: JSON.stringify(productData.features),
+          category: productData.category
         }
       });
       return product;
@@ -45,7 +46,8 @@ class StripeHelper {
         currency: priceData.currency.toLowerCase(),
         // One-time payment for both business and boost plans
         metadata: {
-          planType: priceData.planType
+          planType: priceData.planType,
+          category: priceData.category
         }
       });
       return price;
@@ -88,7 +90,8 @@ class StripeHelper {
         expand: ['latest_invoice.payment_intent'],
         metadata: {
           businessId: subscriptionData.businessId,
-          planType: subscriptionData.planType
+          planType: subscriptionData.planType,
+          category: subscriptionData.category
         }
       });
       return subscription;
@@ -146,7 +149,8 @@ class StripeHelper {
         customer: paymentData.customerId,
         metadata: {
           businessId: paymentData.businessId,
-          planType: paymentData.planType
+          planType: paymentData.planType,
+          category: paymentData.category
         }
       });
       return paymentIntent;
@@ -243,7 +247,8 @@ class StripeHelper {
           businessId: paymentIntentData.businessId,
           planType: paymentIntentData.planType,
           planId: paymentIntentData.planId || '',
-          subscriptionType: paymentIntentData.subscriptionType || 'one_time'
+          subscriptionType: paymentIntentData.subscriptionType || 'one_time',
+          category: paymentIntentData.category
         },
         automatic_payment_methods: {
           enabled: true,
@@ -274,7 +279,8 @@ class StripeHelper {
         metadata: {
           businessId: sessionData.businessId,
           planType: sessionData.planType,
-          planId: sessionData.planId
+          planId: sessionData.planId,
+          category: sessionData.category
         }
       };
 

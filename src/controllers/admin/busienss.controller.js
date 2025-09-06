@@ -727,6 +727,30 @@ export const updateBusiness = async (req, res) => {
       });
     }
     
+    // Process businessUrls - handle JSON string format
+    if (updateData.businessUrls) {
+      try {
+        if (typeof updateData.businessUrls === 'string') {
+          // Try to parse as JSON string
+          updateData.businessUrls = JSON.parse(updateData.businessUrls);
+        }
+        
+        // Ensure it's an array and validate each item
+        if (Array.isArray(updateData.businessUrls)) {
+          updateData.businessUrls = updateData.businessUrls.filter(urlObj => {
+            return urlObj && typeof urlObj === 'object' && urlObj.label && urlObj.link;
+          });
+        } else {
+          updateData.businessUrls = [];
+        }
+        
+        console.log("Processed businessUrls:", updateData.businessUrls);
+      } catch (parseError) {
+        console.log("Error parsing businessUrls:", parseError);
+        updateData.businessUrls = [];
+      }
+    }
+    
     // Convert category to ObjectId if it's a string
     if (updateData.category && typeof updateData.category === 'string') {
       try {

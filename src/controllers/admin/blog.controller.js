@@ -1,6 +1,6 @@
 import Blog from '../../models/admin/blog.js';
 import Media from '../../models/admin/media.js';
-import { errorResponseHelper, successResponseHelper } from '../../helpers/utilityHelper.js';
+import { errorResponseHelper, successResponseHelper, generateSlug } from '../../helpers/utilityHelper.js';
 import { uploadImageWithThumbnail, deleteFile } from '../../helpers/cloudinaryHelper.js';
 
 // Create a new blog post
@@ -11,10 +11,19 @@ const createBlog = async (req, res) => {
         console.log('Request file:', req.file);
         console.log('User:', req.user);
         
-        const { title, author,description, content, category, subCategory, status = 'draft', enableComments = true, tags, metaTitle, metaDescription, metaKeywords, authorName, authorEmail, authorModel = 'Admin' } = req.body;
+        const { title, author,description, content, category, subCategory, status = 'draft', enableComments = true, tags, metaTitle, metaDescription, metaKeywords, authorName, authorEmail, authorDescription, authorModel = 'Admin' } = req.body;
 
         if (!title || !description || !content || !category) {
             return errorResponseHelper(res, { message: "Title, description, content, and category are required", code: '00400' });
+        }
+
+        // Generate slug from title
+        const slug = generateSlug(title);
+
+        // Check if blog with same slug already exists
+        const existingBlog = await Blog.findOne({ slug });
+        if (existingBlog) {
+            return errorResponseHelper(res, { message: "Blog with this title already exists", code: '00400' });
         }
 
         // Validate authorModel
@@ -27,8 +36,8 @@ const createBlog = async (req, res) => {
         const finalAuthorEmail = authorEmail || req.user.email;
         const finalAuthorModel = authorModel || 'Admin'; // Default to Admin for admin routes
 
-        if (!finalAuthorName || !finalAuthorEmail) {
-            return errorResponseHelper(res, { message: "Author name and email are required", code: '00400' });
+        if (!finalAuthorName) {
+            return errorResponseHelper(res, { message: "Author name is required", code: '00400' });
         }
 
         // Parse tags from JSON string if needed
@@ -67,6 +76,7 @@ const createBlog = async (req, res) => {
 
         const blogData = {
             title,
+            slug,
             description,
             content,
             category,
@@ -81,6 +91,7 @@ const createBlog = async (req, res) => {
             authorModel: finalAuthorModel,
             authorName: finalAuthorName,
             authorEmail: finalAuthorEmail,
+            authorDescription,
             publishedAt: status === 'published' ? new Date() : null
         };
 
@@ -304,12 +315,25 @@ const getBlogById = async (req, res) => {
 const updateBlog = async (req, res) => {
     try {
         const { id } = req.params;
-        const { title, description, content, category, subCategory, status, enableComments, tags, metaTitle, metaDescription, metaKeywords, authorName, authorEmail, authorModel, author } = req.body;
+        const { title, description, content, category, subCategory, status, enableComments, tags, metaTitle, metaDescription, metaKeywords, authorName, authorEmail, authorDescription, authorModel, author } = req.body;
 
         const blog = await Blog.findById(id);
 
         if (!blog) {
             return errorResponseHelper(res, { message: "Blog post not found", code: '00404' });
+        }
+
+        // Generate slug from title if title is being updated
+        if (title !== undefined) {
+            const newSlug = generateSlug(title);
+            
+            // Check if slug already exists (excluding current blog)
+            const existingBlog = await Blog.findOne({ slug: newSlug, _id: { $ne: id } });
+            if (existingBlog) {
+                return errorResponseHelper(res, { message: "Blog with this title already exists", code: '00400' });
+            }
+            
+            blog.slug = newSlug;
         }
 
         // Validate authorModel if provided
@@ -362,6 +386,7 @@ const updateBlog = async (req, res) => {
         // Update author information if provided
         if (authorName !== undefined) blog.authorName = authorName;
         if (authorEmail !== undefined) blog.authorEmail = authorEmail;
+        if (authorDescription !== undefined) blog.authorDescription = authorDescription;
         if (authorModel !== undefined) blog.authorModel = authorModel;
         if (author !== undefined) blog.author = author;
         // Handle status change

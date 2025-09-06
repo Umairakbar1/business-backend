@@ -36,15 +36,16 @@ const sendEmail = (email, subject, description, otp) => {
 
         transporter.sendMail(mailOptions, (error, info) => {
             if (error) {
-                reject(error)
+                console.error('Nodemailer error:', error);
+                reject(error);
             } else {
-                console.log('Email sent: ' + info.response);
-                resolve(info.response)
+                console.log('Email sent successfully:', info.response);
+                resolve(info.response);
             }
         });
-    })
+    });
 };
 
 export {
     sendEmail
-}
+};

@@ -17,10 +17,8 @@ const createSubCategory = async (req, res) => {
 
     const { title, description, categoryId, status = 'active' } = value;
 
-    // Generate slug from title if not provided
-    if (!value.slug) {
-      value.slug = generateSlug(title);
-    }
+    // Generate slug from title
+    value.slug = generateSlug(title);
 
     // Check if category exists
     const category = await Category.findById(categoryId);
@@ -240,13 +238,8 @@ const updateSubCategory = async (req, res) => {
 
     const { title, description, categoryId, status } = value;
 
-    // Generate slug from title if not provided or if title is being updated
-    if (!value.slug && title) {
-      value.slug = generateSlug(title);
-    } else if (title && title !== subCategory.title) {
-      // If title is being updated, regenerate slug
-      value.slug = generateSlug(title);
-    }
+    // Generate slug from title
+    value.slug = generateSlug(title);
 
     // If categoryId is being updated, check if new category exists
     if (categoryId && categoryId !== subCategory.categoryId.toString()) {
@@ -475,6 +468,7 @@ const getSubCategoriesByCategory = async (req, res) => {
     return successResponseHelper(res, {
       message: 'Subcategories retrieved successfully',
       data: subCategoriesWithBusinessCount,
+      category: category,
       pagination: {
         currentPage: parseInt(page),
         totalPages,

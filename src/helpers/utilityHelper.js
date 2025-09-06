@@ -118,15 +118,16 @@ const asyncWrapper = async (_callBack = async () => false) => {
  */
 export const generateSlug = (title) => {
   if (!title) return '';
-  
+
   return title
     .toLowerCase()
     .trim()
-    .replace(/\s+/g, '_') // Replace spaces with underscores
-    .replace(/[^a-z0-9_]/g, '') // Remove special characters except underscores
-    .replace(/_+/g, '_') // Replace multiple underscores with single underscore
-    .replace(/^_|_$/g, ''); // Remove leading and trailing underscores
+    .replace(/\s+/g, '-')       // Replace spaces with hyphens
+    .replace(/[^a-z0-9-]/g, '') // Remove special characters except hyphens
+    .replace(/-+/g, '-')        // Replace multiple hyphens with single hyphen
+    .replace(/^-|-$/g, '');     // Remove leading and trailing hyphens
 };
+
 
 export {
   serverErrorHelper,

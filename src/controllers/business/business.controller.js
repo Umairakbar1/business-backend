@@ -219,6 +219,30 @@ export const createBusiness = async (req, res) => {
     
     console.log("Location data being saved:", locationData);
     
+    // Process businessUrls - handle JSON string format
+    if (data.businessUrls) {
+      try {
+        if (typeof data.businessUrls === 'string') {
+          // Try to parse as JSON string
+          data.businessUrls = JSON.parse(data.businessUrls);
+        }
+        
+        // Ensure it's an array and validate each item
+        if (Array.isArray(data.businessUrls)) {
+          data.businessUrls = data.businessUrls.filter(urlObj => {
+            return urlObj && typeof urlObj === 'object' && urlObj.label && urlObj.link;
+          });
+        } else {
+          data.businessUrls = [];
+        }
+        
+        console.log("Processed businessUrls:", data.businessUrls);
+      } catch (parseError) {
+        console.log("Error parsing businessUrls:", parseError);
+        data.businessUrls = [];
+      }
+    }
+    
     // Assign features based on plan
     let features = [];
     if (plan === 'bronze') features = ['query_ticketing'];

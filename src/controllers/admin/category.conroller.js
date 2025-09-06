@@ -13,10 +13,8 @@ const createCategory = async (req, res) => {
       return errorResponseHelper(res, { message: error.details[0].message, code: '00400' });
     }
 
-    // Generate slug from title if not provided
-    if (!value.slug) {
-      value.slug = generateSlug(value.title);
-    }
+    // Generate slug from title
+    value.slug = generateSlug(value.title);
 
     // Check if category with same name already exists
     const existingCategory = await Category.findOne({ 
@@ -75,6 +73,7 @@ const createCategory = async (req, res) => {
     await category.save();
 
     // Handle subcategories if provided
+    let createdSubcategories = [];
     if (req.body.subcategories) {
       let subcategoriesArray = req.body.subcategories;
       
@@ -104,13 +103,28 @@ const createCategory = async (req, res) => {
           }).save();
         });
 
-        await Promise.all(subcategoryPromises);
+        createdSubcategories = await Promise.all(subcategoryPromises);
       }
     }
 
+    // Get all subcategories for this category (including any existing ones)
+    const allSubcategories = await SubCategory.find({ 
+      categoryId: category._id 
+    }).select('title slug description image status categoryId');
+
+    // Get business count for this category
+    const businessCount = await Business.countDocuments({ category: category._id });
+
+    // Prepare response data with subcategories
+    const categoryWithSubcategories = {
+      ...category.toObject(),
+      subcategories: allSubcategories,
+      businessCount: businessCount
+    };
+
     return successResponseHelper(res, {
       message: 'Category created successfully',
-      data: category
+      data: categoryWithSubcategories
     });
   } catch (error) {
     console.error('Create category error:', error);
@@ -233,8 +247,21 @@ const getCategoryById = async (req, res) => {
 const updateCategory = async (req, res) => {
   try {
     const { id } = req.params;
-    const { error, value } = categoryValidator.validate(req.body);
     
+    // Clean the request body to remove fields that shouldn't be validated
+    const cleanBody = { ...req.body };
+    
+    // Remove subcategories and businessCount from validation as they come from getAllCategories response
+    delete cleanBody.subcategories;
+    delete cleanBody.businessCount;
+    
+    // If image is an object (from getAllCategories response), extract the URL for validation
+    // But only if we're not uploading a new image (no req.file)
+    if (!req.file && cleanBody.image && typeof cleanBody.image === 'object' && cleanBody.image.url) {
+      cleanBody.image = cleanBody.image.url;
+    }
+    
+    const { error, value } = categoryValidator.validate(cleanBody);
     if (error) {
       return errorResponseHelper(res, { message: error.details[0].message, code: '00400' });
     }
@@ -244,10 +271,8 @@ const updateCategory = async (req, res) => {
       return errorResponseHelper(res, { message: 'Category not found', code: '00404' });
     }
 
-    // Generate slug from title if not provided
-    if (!value.slug) {
-      value.slug = generateSlug(value.title);
-    }
+    // Generate slug from title
+    value.slug = generateSlug(value.title);
 
     // Check if category with same name already exists (excluding current category)
     const duplicateCategory = await Category.findOne({ 
@@ -316,6 +341,10 @@ const updateCategory = async (req, res) => {
         
         return errorResponseHelper(res, {message: errorMessage, code:'00500'});
       }
+    } else {
+      // If no new image is uploaded, preserve the existing image object
+      // Remove image from value to avoid validation issues, we'll handle it separately
+      delete value.image;
     }
 
     const updatedCategory = await Category.findByIdAndUpdate(
@@ -324,9 +353,24 @@ const updateCategory = async (req, res) => {
       { new: true, runValidators: true }
     ).populate('parentCategory', 'title');
 
+    // Get all subcategories for this category
+    const subcategories = await SubCategory.find({ 
+      categoryId: updatedCategory._id 
+    }).select('title slug description image status categoryId');
+
+    // Get business count for this category
+    const businessCount = await Business.countDocuments({ category: updatedCategory._id });
+
+    // Prepare response data with subcategories
+    const categoryWithSubcategories = {
+      ...updatedCategory.toObject(),
+      subcategories: subcategories,
+      businessCount: businessCount
+    };
+
     return successResponseHelper(res, {
       message: 'Category updated successfully',
-      data: updatedCategory
+      data: categoryWithSubcategories
     });
   } catch (error) {
     console.error('Update category error:', error);

@@ -1,10 +1,10 @@
 import Business from '../../models/business/business.js';
 import BusinessOwner from '../../models/business/businessOwner.js';
+import BusinessEmailVerification from '../../models/business/businessEmailVerification.js';
 import { 
   errorResponseHelper, 
   successResponseHelper, 
   serverErrorHelper,
-  // generateOTP, // Commented out - using dummy OTP for testing
 } from '../../helpers/utilityHelper.js';
 import { 
   signAccessTokenBusiness, 
@@ -13,7 +13,7 @@ import {
   signPasswordResetToken,
   verifyPasswordResetToken
 } from "../../helpers/jwtHelper.js";
-// import { sendEmail } from '../../helpers/sendGridHelper.js'; // Commented out - using dummy OTP for testing
+import { sendEmail } from '../../helpers/nodemailerHelper.js';
 import { uploadImageWithThumbnail } from '../../helpers/cloudinaryHelper.js';
 import { cleanupUploadedFiles } from '../../middleware/cloudinaryUpload.js';
 
@@ -54,17 +54,40 @@ export const businessOwnerSignup = async (req, res) => {
       });
     }
 
+    // Check if there's already a pending verification for this email
+    const existingVerification = await BusinessEmailVerification.findOne({ email });
+    
+    let emailVerification;
+    
+    if (existingVerification) {
+      // Update existing verification with new data
+      existingVerification.firstName = firstName;
+      existingVerification.lastName = lastName;
+      existingVerification.phoneNumber = phoneNumber || null;
+      existingVerification.status = "pending";
+      existingVerification.attempts = 0;
+      emailVerification = existingVerification;
+    } else {
+      // Create new email verification record
+      emailVerification = new BusinessEmailVerification({
+        firstName,
+        lastName,
+        email,
+        phoneNumber: phoneNumber || null
+      });
+    }
+
     // Generate OTP
-    const tempOtp = "775511"; // For testing - in production, generate random 6-digit OTP
+    const otp = emailVerification.generateOTP();
+    await emailVerification.save();
     
     // Generate OTP verification token (expires in 5 minutes)
-    const otpVerificationToken = signOtpVerificationToken(email, tempOtp);
+    const otpVerificationToken = signOtpVerificationToken(email, otp);
 
     // Send OTP via email
     try {
-      // Commented out for testing - using dummy OTP
-      // await sendEmail(email, "Business Owner Account Verification", `Your verification code is: ${tempOtp}`);
-      console.log(`[TESTING] OTP for ${email}: ${tempOtp}`);
+      await sendEmail(email, "Business Owner Account Verification", "Your verification code is:", otp);
+      console.log(`OTP sent to ${email}: ${otp}`);
       
       return successResponseHelper(res, {
         message: 'OTP sent to your email. Please verify to complete registration.',
@@ -77,6 +100,7 @@ export const businessOwnerSignup = async (req, res) => {
         }
       });
     } catch (emailError) {
+      console.error('Email sending error:', emailError);
       return errorResponseHelper(res, { 
         message: 'Failed to send OTP. Please try again.',
         code: '00500'
@@ -109,15 +133,34 @@ export const resendOtp = async (req, res) => {
       });
     }
 
+    // Check if there's already a pending verification for this email
+    const existingVerification = await BusinessEmailVerification.findOne({ email });
+    
+    if (!existingVerification) {
+      return errorResponseHelper(res, { 
+        message: 'No pending verification found for this email. Please start the registration process.',
+        code: '00404'
+      });
+    }
+
+    // Update verification with new data
+    existingVerification.firstName = firstName;
+    existingVerification.lastName = lastName;
+    existingVerification.phoneNumber = phoneNumber || null;
+    existingVerification.status = "pending";
+    existingVerification.attempts = 0;
+
     // Generate new OTP
-    const tempOtp = "775511"; // For testing
+    const otp = existingVerification.generateOTP();
+    await existingVerification.save();
     
     // Generate new OTP verification token
-    const otpVerificationToken = signOtpVerificationToken(email, tempOtp);
+    const otpVerificationToken = signOtpVerificationToken(email, otp);
 
     // Send new OTP via email
     try {
-      console.log(`[TESTING] New OTP for ${email}: ${tempOtp}`);
+      await sendEmail(email, "Business Owner Account Verification", "Your new verification code is:", otp);
+      console.log(`New OTP sent to ${email}: ${otp}`);
       
       return successResponseHelper(res, {
         message: 'New OTP sent to your email.',
@@ -130,6 +173,7 @@ export const resendOtp = async (req, res) => {
         }
       });
     } catch (emailError) {
+      console.error('Email sending error:', emailError);
       return errorResponseHelper(res, { 
         message: 'Failed to send OTP. Please try again.',
         code: '00500'
@@ -163,44 +207,25 @@ export const verifyOtpAndCreateBusinessOwner = async (req, res) => {
       });
     }
 
-    // Validate OTP format
-    if (!/^\d{6}$/.test(otp)) {
-      console.log("Invalid OTP format:", otp);
+    // Find email verification record
+    const emailVerification = await BusinessEmailVerification.findOne({ email });
+    if (!emailVerification) {
       return errorResponseHelper(res, { 
-        message: 'OTP must be exactly 6 digits',
+        message: 'No verification found for this email. Please start the registration process.',
+        code: '00404'
+      });
+    }
+
+    // Verify OTP
+    if (!emailVerification.verifyOTP(otp)) {
+      await emailVerification.save(); // Save the updated attempts
+      return errorResponseHelper(res, { 
+        message: 'Invalid or expired OTP. Please check your email and try again.',
         code: '00400'
       });
     }
 
-    // Verify OTP (using dummy OTP for testing)
-    if (otp !== "775511") {
-      console.log("Invalid OTP provided:", otp);
-      return errorResponseHelper(res, { 
-        message: 'Invalid OTP. Please check your email and try again.',
-        code: '00400'
-      });
-    }
-
-    console.log("OTP verification passed, checking existing business owner...");
-
-    // Test database connection
-    try {
-      await BusinessOwner.findOne({ email: 'test@test.com' });
-      console.log("Database connection test successful");
-    } catch (dbError) {
-      console.error("Database connection error:", dbError);
-      return serverErrorHelper(req, res, 500, new Error("Database connection failed"));
-    }
-
-    // Check if business owner already exists
-    const existingBusinessOwner = await BusinessOwner.findOne({ email });
-    if (existingBusinessOwner) {
-      console.log("Business owner already exists:", existingBusinessOwner.email);
-      return errorResponseHelper(res, { 
-        message: 'Business owner account already exists with this email',
-        code: '00409'
-      });
-    }
+    await emailVerification.save(); // Save the verification status
 
     console.log("Email verified successfully, generating token for account creation...");
 
@@ -279,6 +304,15 @@ export const setBusinessOwnerCredentials = async (req, res) => {
     if (tokenData && tokenData.isPendingCreation) {
       console.log("Creating new business owner account from OTP verification...");
       
+      // Get the email verification record
+      const emailVerification = await BusinessEmailVerification.findOne({ email: tokenData.email });
+      if (!emailVerification || !emailVerification.isVerificationValid()) {
+        return errorResponseHelper(res, { 
+          message: 'Email verification not found or invalid. Please complete the verification process.',
+          code: '00400'
+        });
+      }
+      
       // Create the business owner account
       const newBusinessOwner = new BusinessOwner({
         firstName: tokenData.firstName,
@@ -293,6 +327,9 @@ export const setBusinessOwnerCredentials = async (req, res) => {
 
       await newBusinessOwner.save();
       console.log("Business owner account created successfully:", newBusinessOwner._id);
+
+      // Clean up the email verification record
+      await BusinessEmailVerification.findByIdAndDelete(emailVerification._id);
 
       // Generate access token for the new account
       const accessToken = signAccessTokenBusiness(newBusinessOwner._id);
@@ -799,16 +836,16 @@ export const requestPasswordReset = async (req, res) => {
     }
 
     // Generate OTP for password reset
-    const tempOtp = "775511"; // For testing - in production, generate random 6-digit OTP
+    const otp = existingBusinessOwner.generateOTP();
+    await existingBusinessOwner.save();
     
     // Generate password reset token (expires in 15 minutes)
     const passwordResetToken = signPasswordResetToken(email);
 
     // Send OTP via email
     try {
-      // Commented out for testing - using dummy OTP
-      // await sendEmail(email, "Password Reset Verification", `Your verification code is: ${tempOtp}. This code will expire in 15 minutes.`);
-      console.log(`[TESTING] Password Reset OTP for ${email}: ${tempOtp}`);
+      await sendEmail(email, "Password Reset Verification", "Your verification code is:", otp);
+      console.log(`Password Reset OTP sent to ${email}: ${otp}`);
       
       return successResponseHelper(res, {
         message: 'OTP sent to your email. Please verify to complete password reset.',
@@ -878,16 +915,17 @@ export const verifyPasswordResetOtp = async (req, res) => {
       });
     }
 
-    // For production, you would store the OTP in a temporary storage (Redis/database) with expiration
-    // For now, we'll use a simple approach - in production, implement proper OTP storage and verification
-    
-    // Verify OTP (using dummy OTP for testing)
-    if (otp !== "775511") {
+    // Verify OTP
+    if (!existingBusinessOwner.verifyOTP(otp)) {
       return errorResponseHelper(res, { 
-        message: 'Invalid OTP. Please check your email and try again.',
+        message: 'Invalid or expired OTP. Please check your email and try again.',
         code: '00400'
       });
     }
+
+    // Clear OTP after successful verification
+    existingBusinessOwner.otp = undefined;
+    await existingBusinessOwner.save();
 
     // Generate new password reset token for the final step
     const finalPasswordResetToken = signPasswordResetToken(email);

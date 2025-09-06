@@ -30,13 +30,5 @@ const LogSubCategorySchema = new mongoose.Schema({
     timestamps: true
 });
 
-// Create slug from name before saving
-LogSubCategorySchema.pre('save', function(next) {
-    if (this.isModified('title')) {
-        this.slug = this.title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
-    }
-    next();
-});
-
 const LogSubCategory = model('LogSubCategory', LogSubCategorySchema);
 export default LogSubCategory; 

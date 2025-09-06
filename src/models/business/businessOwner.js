@@ -135,13 +135,16 @@ BusinessOwnerSchema.methods.comparePassword = async function(candidatePassword) 
 
 // Method to generate OTP
 BusinessOwnerSchema.methods.generateOTP = function() {
-  // For testing purposes, use dummy OTP
-  const otp = "775511";
+  // Generate a random 6-digit OTP
+  const min = 100000;
+  const max = 999999;
+  const otp = Math.floor(Math.random() * (max - min + 1)) + min;
+  
   this.otp = {
-    code: otp,
+    code: otp.toString(),
     expiresAt: new Date(Date.now() + 10 * 60 * 1000) // 10 minutes
   };
-  return otp;
+  return otp.toString();
 };
 
 // Method to verify OTP

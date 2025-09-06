@@ -33,7 +33,8 @@ class PaymentPlanController {
         sortOrder,
         maxBoostPerDay,
         validityHours,
-        discount
+        discount,
+        category
       } = req.body;
 
       // Validate business plan constraints
@@ -73,6 +74,25 @@ class PaymentPlanController {
             message: 'Boost plans cannot have daily boost limits (they are the boost themselves)'
           });
         }
+        if (!category) {
+          return res.status(400).json({
+            success: false,
+            message: 'Boost plans must have a category associated'
+          });
+        }
+        
+        // Check if a boost plan already exists for this category
+        const existingPlan = await PaymentPlan.findOne({
+          planType: 'boost',
+          category: category
+        });
+        
+        if (existingPlan) {
+          return res.status(400).json({
+            success: false,
+            message: `A boost plan already exists for this category. Category: ${existingPlan.category ? existingPlan.category.title : 'Unknown'}, Plan: ${existingPlan.name}`
+          });
+        }
       }
 
       // Create product in Stripe
@@ -103,23 +123,24 @@ class PaymentPlanController {
         stripePriceId: stripePrice.id,
         isPopular,
         sortOrder,
-        // Business plans: can have daily boost limits, no validity period
-        // Boost plans: must have validity period, no daily boost limits
+        // Business plans: can have daily boost limits, no validity period, no category
+        // Boost plans: must have validity period, must have category, no daily boost limits
         maxBoostPerDay: planType === 'business' ? (maxBoostPerDay || 0) : undefined,
         validityHours: planType === 'boost' ? (validityHours || 24) : undefined,
+        category: planType === 'boost' ? category : undefined,
         discount
       });
 
       await paymentPlan.save();
 
-      res.status(201).json({
+      successResponseHelper(res, {
         success: true,
         message: 'Payment plan created successfully',
         data: paymentPlan
       });
     } catch (error) {
       console.error('Error creating payment plan:', error);
-      res.status(500).json({
+      successResponseHelper(res, {
         success: false,
         message: 'Failed to create payment plan',
         error: error.message
@@ -132,13 +153,20 @@ class PaymentPlanController {
    */
   static async getAllPaymentPlans(req, res) {
     try {
-      const { planType, isActive } = req.query;
+      const { planType, status } = req.query;
       
       const filter = {};
       if (planType) filter.planType = planType;
-      if (isActive !== undefined) filter.isActive = isActive === 'true';
+      if (status !== undefined && status !== '') {
+        if (status === 'active') {
+          filter.isActive = true;
+        } else if (status === 'inactive') {
+          filter.isActive = false;
+        }
+      }
 
       const paymentPlans = await PaymentPlan.find(filter)
+        .populate('category', 'title description')
         .sort({ sortOrder: 1, createdAt: -1 });
 
       // Enhance plans with type-specific information
@@ -152,19 +180,24 @@ class PaymentPlanController {
         } else if (plan.planType === 'boost') {
           planData.planDuration = `${plan.validityHours} hours`;
           planData.planCategory = 'Temporary Boost';
+          // Add category information for boost plans
+          if (plan.category) {
+            planData.categoryName = plan.category.title;
+            planData.categoryDescription = plan.category.description;
+          }
         }
         
         return planData;
       });
 
-      res.status(200).json({
+        successResponseHelper(res, {
         success: true,
         message: 'Payment plans retrieved successfully',
         data: enhancedPlans
       });
     } catch (error) {
       console.error('Error fetching payment plans:', error);
-      res.status(500).json({
+      errorResponseHelper(res, {
         success: false,
         message: 'Failed to fetch payment plans',
         error: error.message
@@ -179,7 +212,8 @@ class PaymentPlanController {
     try {
       const { id } = req.params;
       
-      const paymentPlan = await PaymentPlan.findById(id);
+      const paymentPlan = await PaymentPlan.findById(id)
+        .populate('category', 'title description');
       if (!paymentPlan) {
         return res.status(404).json({
           success: false,
@@ -187,14 +221,14 @@ class PaymentPlanController {
         });
       }
 
-      res.status(200).json({
+      successResponseHelper(res, {
         success: true,
         message: 'Payment plan retrieved successfully',
         data: paymentPlan
       });
     } catch (error) {
       console.error('Error fetching payment plan:', error);
-      res.status(500).json({
+      errorResponseHelper(res, {
         success: false,
         message: 'Failed to fetch payment plan',
         error: error.message
@@ -257,6 +291,29 @@ class PaymentPlanController {
             message: 'Boost plans cannot have daily boost limits (they are the boost themselves)'
           });
         }
+        // Ensure category is provided for boost plans
+        if (updateData.category !== undefined && !updateData.category) {
+          return res.status(400).json({
+            success: false,
+            message: 'Boost plans must have a category associated'
+          });
+        }
+        
+        // Check if updating category would conflict with existing plan
+        if (updateData.category && updateData.category !== currentPlan.category) {
+          const existingPlan = await PaymentPlan.findOne({
+            planType: 'boost',
+            category: updateData.category,
+            _id: { $ne: id } // Exclude current plan from check
+          });
+          
+          if (existingPlan) {
+            return res.status(400).json({
+              success: false,
+              message: `A boost plan already exists for this category. Category: ${existingPlan.category ? existingPlan.category.title : 'Unknown'}, Plan: ${existingPlan.name}`
+            });
+          }
+        }
       }
 
       const paymentPlan = await PaymentPlan.findById(id);
@@ -291,16 +348,16 @@ class PaymentPlanController {
         id,
         updateData,
         { new: true, runValidators: true }
-      );
+      ).populate('category', 'title description');
 
-      res.status(200).json({
+      successResponseHelper(res, {
         success: true,
         message: 'Payment plan updated successfully',
         data: updatedPaymentPlan
       });
     } catch (error) {
       console.error('Error updating payment plan:', error);
-      res.status(500).json({
+      errorResponseHelper(res, {
         success: false,
         message: 'Failed to update payment plan',
         error: error.message
@@ -340,13 +397,13 @@ class PaymentPlanController {
       // Delete from database
       await PaymentPlan.findByIdAndDelete(id);
 
-      res.status(200).json({
+      successResponseHelper(res, {
         success: true,
         message: 'Payment plan deleted successfully'
       });
     } catch (error) {
       console.error('Error deleting payment plan:', error);
-      res.status(500).json({
+      errorResponseHelper(res, {
         success: false,
         message: 'Failed to delete payment plan',
         error: error.message
@@ -372,14 +429,14 @@ class PaymentPlanController {
       paymentPlan.isActive = !paymentPlan.isActive;
       await paymentPlan.save();
 
-      res.status(200).json({
+      successResponseHelper(res, {
         success: true,
         message: `Payment plan ${paymentPlan.isActive ? 'activated' : 'deactivated'} successfully`,
         data: paymentPlan
       });
     } catch (error) {
       console.error('Error toggling payment plan status:', error);
-      res.status(500).json({
+      errorResponseHelper(res, {
         success: false,
         message: 'Failed to toggle payment plan status',
         error: error.message
@@ -412,14 +469,14 @@ class PaymentPlanController {
       paymentPlan.isActive = true;
       await paymentPlan.save();
 
-      res.status(200).json({
+      successResponseHelper(res, {
         success: true,
         message: 'Payment plan activated successfully',
         data: paymentPlan
       });
     } catch (error) {
       console.error('Error activating payment plan:', error);
-      res.status(500).json({
+      errorResponseHelper(res, {
         success: false,
         message: 'Failed to activate payment plan',
         error: error.message
@@ -452,14 +509,14 @@ class PaymentPlanController {
       paymentPlan.isActive = false;
       await paymentPlan.save();
 
-      res.status(200).json({
+      successResponseHelper(res, {
         success: true,
         message: 'Payment plan deactivated successfully',
         data: paymentPlan
       });
     } catch (error) {
       console.error('Error deactivating payment plan:', error);
-      res.status(500).json({
+      errorResponseHelper(res, {
         success: false,
         message: 'Failed to deactivate payment plan',
         error: error.message
@@ -472,11 +529,21 @@ class PaymentPlanController {
    */
   static async getBusinessPlans(req, res) {
     try {
-      const businessPlans = await PaymentPlan.find({
-        planType: 'business',
-        isActive: true
-      }).sort({ sortOrder: 1, price: 1 });
+      const filter = { planType: 'business' };
+      const sortOptions = {};
+      const { status, sortBy = 'sortOrder', sortOrder = 'asc', page = 1, limit = 10, queryText = '' } = req.query;
+      if (status !== undefined && status !== '') filter.isActive = status === 'active';
+      if (queryText && queryText.trim()) {
+        filter.name = { $regex: queryText.trim(), $options: 'i' };
+      }
+      sortOptions[sortBy] = sortOrder === 'desc' ? -1 : 1;
 
+      const skip = (page - 1) * limit;
+      const businessPlans = await PaymentPlan.find(filter)
+        .sort(sortOptions)
+        .skip(skip)
+        .limit(parseInt(limit));
+      const total = await PaymentPlan.countDocuments(filter);
       // Enhance business plans with lifetime information
       const enhancedBusinessPlans = businessPlans.map(plan => {
         const planData = plan.toObject();
@@ -486,14 +553,20 @@ class PaymentPlanController {
         return planData;
       });
 
-      res.status(200).json({
+      successResponseHelper(res, {
         success: true,
         message: 'Business plans (lifetime) retrieved successfully',
-        data: enhancedBusinessPlans
+        data: enhancedBusinessPlans,
+        pagination: {
+          currentPage: parseInt(page),
+          totalPages: Math.ceil(total / limit),
+          totalItems: total,
+          pageSize: parseInt(limit)
+        }
       });
     } catch (error) {
       console.error('Error fetching business plans:', error);
-      res.status(500).json({
+      errorResponseHelper(res, {
         success: false,
         message: 'Failed to fetch business plans',
         error: error.message
@@ -506,10 +579,10 @@ class PaymentPlanController {
    */
   static async getBoostPlans(req, res) {
     try {
-        const { isActive, sortBy = 'sortOrder', sortOrder = 'asc', page = 1, limit = 10, queryText = '' } = req.query;
-      
+        const {   status,sortBy = 'sortOrder', sortOrder = 'asc', page = 1, limit = 10, queryText = '' } = req.query;
+        console.log("status",status); 
       const filter = { planType: 'boost' };
-      if (isActive !== undefined && isActive !== '') filter.isActive = isActive === 'true';
+      if (status !== undefined && status !== '') filter.isActive = status === 'active';
       
       const sortOptions = {};
       sortOptions[sortBy] = sortOrder === 'desc' ? -1 : 1;
@@ -523,6 +596,7 @@ class PaymentPlanController {
       const boostPlans = await PaymentPlan.find(filter)
         .sort(sortOptions)
         .populate('features', 'name description')
+        .populate('category', 'title description')
         .skip(skip)
         .limit(parseInt(limit));
 
@@ -533,10 +607,15 @@ class PaymentPlanController {
         const planData = plan.toObject();
         planData.planDuration = `${plan.validityHours} hours`;
         planData.planCategory = 'Temporary Boost';
+        // Add category information for boost plans
+        if (plan.category) {
+          planData.categoryName = plan.category.title;
+          planData.categoryDescription = plan.category.description;
+        }
         return planData;
       });
 
-      res.status(200).json({
+      successResponseHelper(res, {
         success: true,
         message: 'Boost plans retrieved successfully',
         data: enhancedBoostPlans,
@@ -549,7 +628,7 @@ class PaymentPlanController {
       });
     } catch (error) {
       console.error('Error fetching boost plans:', error);
-      res.status(500).json({
+      errorResponseHelper(res, {
         success: false,
         message: 'Failed to fetch boost plans',
         error: error.message
@@ -572,14 +651,14 @@ class PaymentPlanController {
         });
       }
 
-      res.status(200).json({
+      successResponseHelper(res, {
         success: true,
         message: 'Plan features retrieved successfully',
         data: paymentPlan.features || []
       });
     } catch (error) {
       console.error('Error fetching plan features:', error);
-      res.status(500).json({
+      errorResponseHelper(res, {
         success: false,
         message: 'Failed to fetch plan features',
         error: error.message
@@ -626,14 +705,14 @@ class PaymentPlanController {
         });
       }
 
-      res.status(200).json({
+      successResponseHelper(res, {
         success: true,
         message: 'Plan features updated successfully',
         data: paymentPlan
       });
     } catch (error) {
       console.error('Error updating plan features:', error);
-      res.status(500).json({
+      errorResponseHelper(res, {
         success: false,
         message: 'Failed to update plan features',
         error: error.message
@@ -661,7 +740,7 @@ class PaymentPlanController {
       const discountPercentage = paymentPlan.discount || 0;
       const discountedPrice = originalPrice - (originalPrice * (discountPercentage / 100));
 
-      res.status(200).json({
+      successResponseHelper(res, {
         success: true,
         message: 'Plan pricing retrieved successfully',
         data: {
@@ -674,7 +753,7 @@ class PaymentPlanController {
       });
     } catch (error) {
       console.error('Error fetching plan pricing:', error);
-      res.status(500).json({
+      errorResponseHelper(res, {
         success: false,
         message: 'Failed to fetch plan pricing',
         error: error.message
@@ -718,13 +797,13 @@ class PaymentPlanController {
           { new: true, runValidators: true }
         );
 
-        res.status(200).json({
+          successResponseHelper(res, {
           success: true,
           message: 'Plan pricing updated successfully',
           data: updatedPaymentPlan
         });
       } else {
-        res.status(200).json({
+        successResponseHelper(res, {
           success: true,
           message: 'No pricing changes detected',
           data: paymentPlan
@@ -732,7 +811,7 @@ class PaymentPlanController {
       }
     } catch (error) {
       console.error('Error updating plan pricing:', error);
-      res.status(500).json({
+      errorResponseHelper(res, {
         success: false,
         message: 'Failed to update plan pricing',
         error: error.message
@@ -751,7 +830,7 @@ class PaymentPlanController {
       const totalBusinessPlans = await PaymentPlan.countDocuments({ planType: 'business' });
       const totalBoostPlans = await PaymentPlan.countDocuments({ planType: 'boost' });
 
-      res.status(200).json({
+      successResponseHelper(res, {
         success: true,
         message: 'Payment plan statistics retrieved successfully',
         data: {
@@ -764,7 +843,7 @@ class PaymentPlanController {
       });
     } catch (error) {
       console.error('Error fetching payment plan statistics:', error);
-      res.status(500).json({
+      errorResponseHelper(res, {
         success: false,
         message: 'Failed to fetch payment plan statistics',
         error: error.message
@@ -791,14 +870,14 @@ class PaymentPlanController {
         { isActive }
       );
 
-      res.status(200).json({
+      successResponseHelper(res, {
         success: true,
         message: `Successfully updated ${result.modifiedCount} payment plans`,
         data: { modifiedCount: result.modifiedCount }
       });
     } catch (error) {
       console.error('Error bulk updating payment plan status:', error);
-      res.status(500).json({
+      errorResponseHelper(res, {
         success: false,
         message: 'Failed to bulk update payment plan status',
         error: error.message
@@ -839,14 +918,14 @@ class PaymentPlanController {
       // Delete from database
       const result = await PaymentPlan.deleteMany({ _id: { $in: planIds } });
 
-      res.status(200).json({
+      successResponseHelper(res, {
         success: true,
         message: `Successfully deleted ${result.deletedCount} payment plans`,
         data: { deletedCount: result.deletedCount }
       });
     } catch (error) {
       console.error('Error bulk deleting payment plans:', error);
-      res.status(500).json({
+      errorResponseHelper(res, {
         success: false,
         message: 'Failed to bulk delete payment plans',
         error: error.message
@@ -869,14 +948,14 @@ class PaymentPlanController {
         });
       }
 
-      res.status(200).json({
+      successResponseHelper(res, {
         success: true,
         message: 'Plan subscriptions retrieved successfully',
         data: [] // TODO: Implement actual subscription data
       });
     } catch (error) {
       console.error('Error fetching plan subscriptions:', error);
-      res.status(500).json({
+      errorResponseHelper(res, {
         success: false,
         message: 'Failed to fetch plan subscriptions',
         error: error.message
@@ -899,14 +978,14 @@ class PaymentPlanController {
         });
       }
 
-      res.status(200).json({
+      successResponseHelper(res, {
         success: true,
         message: 'Active subscriptions retrieved successfully',
         data: [] // TODO: Implement actual active subscription data
       });
     } catch (error) {
       console.error('Error fetching active subscriptions:', error);
-      res.status(500).json({
+      errorResponseHelper(res, {
         success: false,
         message: 'Failed to fetch active subscriptions',
         error: error.message
@@ -921,7 +1000,8 @@ class PaymentPlanController {
     try {
       const { id } = req.params;
       
-      const paymentPlan = await PaymentPlan.findById(id);
+      const paymentPlan = await PaymentPlan.findById(id)
+        .populate('category', 'title description');
       if (!paymentPlan) {
         return res.status(404).json({
           success: false,
@@ -957,16 +1037,21 @@ class PaymentPlanController {
         planDetails.validityHours = paymentPlan.validityHours;
         planDetails.planDuration = `${paymentPlan.validityHours} hours`;
         planDetails.planCategory = 'Temporary Boost';
+        // Add category information for boost plans
+        if (paymentPlan.category) {
+          planDetails.categoryName = paymentPlan.category.title;
+          planDetails.categoryDescription = paymentPlan.category.description;
+        }
       }
 
-      res.status(200).json({
+      successResponseHelper(res, {
         success: true,
         message: 'Plan details retrieved successfully',
         data: planDetails
       });
     } catch (error) {
       console.error('Error fetching plan details:', error);
-      res.status(500).json({
+      errorResponseHelper(res, {
         success: false,
         message: 'Failed to fetch plan details',
         error: error.message
@@ -989,7 +1074,7 @@ class PaymentPlanController {
         });
       }
 
-      res.status(200).json({
+      successResponseHelper(res, {
         success: true,
         message: 'Plan analytics retrieved successfully',
         data: {
@@ -1002,7 +1087,7 @@ class PaymentPlanController {
       });
     } catch (error) {
       console.error('Error fetching plan analytics:', error);
-      res.status(500).json({
+      errorResponseHelper(res, {
         success: false,
         message: 'Failed to fetch plan analytics',
         error: error.message
@@ -1048,14 +1133,14 @@ class PaymentPlanController {
         { new: true, runValidators: true }
       );
 
-      res.status(200).json({
+      successResponseHelper(res, {
         success: true,
         message: 'Plan validity updated successfully',
         data: updatedPaymentPlan
       });
     } catch (error) {
       console.error('Error updating plan validity:', error);
-      res.status(500).json({
+      errorResponseHelper(res, {
         success: false,
         message: 'Failed to update plan validity',
         error: error.message
@@ -1092,14 +1177,14 @@ class PaymentPlanController {
         });
       }
 
-      res.status(200).json({
+      successResponseHelper(res, {
         success: true,
         message: 'Plan discount updated successfully',
         data: paymentPlan
       });
     } catch (error) {
       console.error('Error updating plan discount:', error);
-      res.status(500).json({
+      errorResponseHelper(res, {
         success: false,
         message: 'Failed to update plan discount',
         error: error.message
@@ -1122,7 +1207,7 @@ class PaymentPlanController {
         });
       }
 
-      res.status(200).json({
+      successResponseHelper(res, {
         success: true,
         message: 'Revenue stats retrieved successfully',
         data: {
@@ -1135,9 +1220,133 @@ class PaymentPlanController {
       });
     } catch (error) {
       console.error('Error fetching revenue stats:', error);
-      res.status(500).json({
+      errorResponseHelper(res, {
         success: false,
         message: 'Failed to fetch revenue stats',
+        error: error.message
+      });
+    }
+  }
+
+  /**
+   * Get available categories for boost plans
+   */
+  static async getAvailableCategoriesForBoost(req, res) {
+    try {
+      // Import Category model
+      const Category = (await import('../../models/admin/category.js')).default;
+      
+      // Get all active categories
+      const allCategories = await Category.find({ status: 'active' });
+      
+      // Get categories that already have boost plans
+      const categoriesWithPlans = await PaymentPlan.find({
+        planType: 'boost'
+      }).distinct('category');
+      
+      // Filter out categories that already have boost plans
+      const availableCategories = allCategories.filter(category => 
+        !categoriesWithPlans.includes(category._id.toString())
+      );
+
+      successResponseHelper(res, {
+        success: true,
+        message: 'Available categories for boost plans retrieved successfully',
+        data: availableCategories
+      });
+    } catch (error) {
+      console.error('Error fetching available categories for boost plans:', error);
+      errorResponseHelper(res, {
+        success: false,
+        message: 'Failed to fetch available categories for boost plans',
+        error: error.message
+      });
+    }
+  }
+
+  /**
+   * Check if category is available for boost plan
+   */
+  static async checkCategoryAvailability(req, res) {
+    try {
+      const { categoryId } = req.params;
+      
+      const existingPlan = await PaymentPlan.findOne({
+        planType: 'boost',
+        category: categoryId
+      }).populate('category', 'title description');
+      
+      if (existingPlan) {
+        return errorResponseHelper(res, {
+          success: false,
+          message: 'Category already has a boost plan',
+          data: {
+            isAvailable: false,
+            existingPlan: {
+              id: existingPlan._id,
+              name: existingPlan.name,
+              categoryName: existingPlan.category ? existingPlan.category.title : 'Unknown'
+            }
+          }
+        });
+      } 
+
+      successResponseHelper(res, {
+        success: true,
+        message: 'Category is available for boost plan',
+        data: {
+          isAvailable: true,
+          categoryId: categoryId
+        }
+      });
+    } catch (error) {
+      console.error('Error checking category availability:', error);
+      errorResponseHelper(res, {
+        success: false,
+        message: 'Failed to check category availability',
+        error: error.message
+      });
+    }
+  }
+
+  /**
+   * Get boost plans by category
+   */
+  static async getBoostPlansByCategory(req, res) {
+    try {
+      const { categoryId } = req.params;
+      
+      const boostPlan = await PaymentPlan.findOne({
+        planType: 'boost',
+        category: categoryId
+      }).populate('category', 'title description');
+      
+      if (!boostPlan) {
+        return errorResponseHelper(res, {
+          success: false,
+          message: 'No boost plan found for this category'
+        });
+      }
+
+      const planData = boostPlan.toObject();
+      planData.planDuration = `${boostPlan.validityHours} hours`;
+      planData.planCategory = 'Temporary Boost';
+      
+      if (boostPlan.category) {
+        planData.categoryName = boostPlan.category.title;
+        planData.categoryDescription = boostPlan.category.description;
+      }
+
+      successResponseHelper(res, {
+        success: true,
+        message: 'Boost plan for category retrieved successfully',
+        data: planData
+      });
+    } catch (error) {
+      console.error('Error fetching boost plan by category:', error);
+      errorResponseHelper(res, {
+        success: false,
+        message: 'Failed to fetch boost plan by category',
         error: error.message
       });
     }
@@ -1148,10 +1357,16 @@ class PaymentPlanController {
    */
   static async getAllBoostPlans(req, res) {
     try {
-      const { isActive, sortBy = 'sortOrder', sortOrder = 'asc', page = 1, limit = 10, queryText = '' } = req.query;
+      const { status, sortBy = 'sortOrder', sortOrder = 'asc', page = 1, limit = 10, queryText = '' } = req.query;
       
       const filter = { planType: 'boost' };
-      if (isActive !== undefined && isActive !== '') filter.isActive = isActive === 'true';
+      if (status !== undefined && status !== '') {
+        if (status === 'active') {
+          filter.isActive = true;
+        } else if (status === 'inactive') {
+          filter.isActive = false;
+        }
+      }
 
       const sortOptions = {};
       sortOptions[sortBy] = sortOrder === 'desc' ? -1 : 1;
@@ -1165,6 +1380,7 @@ class PaymentPlanController {
       const boostPlans = await PaymentPlan.find(filter)
         .sort(sortOptions)
         .populate('features', 'name description')
+        .populate('category', 'title description')
         .skip(skip)
         .limit(parseInt(limit));
 
@@ -1174,12 +1390,17 @@ class PaymentPlanController {
         planData.planDuration = `${plan.validityHours} hours`;
         planData.planCategory = 'Temporary Boost';
         planData.validityDays = Math.round(plan.validityHours / 24 * 10) / 10; // Convert to days with 1 decimal
+        // Add category information for boost plans
+        if (plan.category) {
+          planData.categoryName = plan.category.title;
+          planData.categoryDescription = plan.category.description;
+        }
         return planData;
       });
 
       const total = await PaymentPlan.countDocuments(filter);
 
-      res.status(200).json({
+      successResponseHelper(res, {
         success: true,
         message: 'Boost plans retrieved successfully',
         data: enhancedBoostPlans,
@@ -1192,7 +1413,7 @@ class PaymentPlanController {
       });
     } catch (error) {
       console.error('Error fetching boost plans:', error);
-      res.status(500).json({
+      errorResponseHelper(res, {
         success: false,
         message: 'Failed to fetch boost plans',
         error: error.message
@@ -1205,10 +1426,16 @@ class PaymentPlanController {
    */
   static async getAllBusinessPlans(req, res) {
     try {
-      const { page = 1, limit = 10, queryText = '', isActive, sortBy = 'sortOrder', sortOrder = 'asc' } = req.query;
+      const { page = 1, limit = 10, queryText = '', status, sortBy = 'sortOrder', sortOrder = 'asc' } = req.query;
       
       const filter = { planType: 'business' };
-      if (isActive !== undefined && isActive !== '') filter.isActive = isActive === 'true';
+      if (status !== undefined && status !== '') {
+        if (status === 'active') {
+          filter.isActive = true;
+        } else if (status === 'inactive') {
+          filter.isActive = false;
+        }
+      }
       
       // Add text search filter for plan name
       if (queryText && queryText.trim()) {
@@ -1240,7 +1467,7 @@ class PaymentPlanController {
         return planData;
       });
 
-      res.status(200).json({
+      successResponseHelper(res, {
         success: true,
         message: 'Business plans retrieved successfully',
         data: enhancedBusinessPlans,
@@ -1253,7 +1480,7 @@ class PaymentPlanController {
       });
     } catch (error) {
       console.error('Error fetching business plans:', error);
-      res.status(500).json({
+      errorResponseHelper(res, {
         success: false,
         message: 'Failed to fetch business plans',
         error: error.message

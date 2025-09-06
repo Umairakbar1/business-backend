@@ -6,7 +6,7 @@ import { GLOBAL_ENUMS } from '../../config/globalConfig.js';
  * 
  * Supports two plan types:
  * 1. Business Plans: Lifetime subscriptions with business features and daily boost limits
- * 2. Boost Plans: Temporary plans with validity period (no business features)
+ * 2. Boost Plans: Temporary plans with validity period (no business features) and category association
  * 
  * The pre-save middleware ensures plan type constraints are enforced.
  */
@@ -63,6 +63,15 @@ const paymentPlanSchema = new mongoose.Schema({
     default: 0
   },
 
+  // Category reference for boost plans
+  category: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Category',
+    required: function() {
+      return this.planType === 'boost';
+    }
+  },
+
   // Daily boost usage limit for business plans only
   maxBoostPerDay: {
     type: Number,
@@ -97,13 +106,14 @@ const paymentPlanSchema = new mongoose.Schema({
 // Pre-save middleware to ensure plan type constraints
 paymentPlanSchema.pre('save', function(next) {
   if (this.planType === 'business') {
-    // Business plans: no validity hours, can have maxBoostPerDay
+    // Business plans: no validity hours, no category, can have maxBoostPerDay
     this.validityHours = undefined;
+    this.category = undefined;
     if (this.maxBoostPerDay === undefined) {
       this.maxBoostPerDay = 0; // Default to 0 if not specified
     }
   } else if (this.planType === 'boost') {
-    // Boost plans: must have validity hours, no maxBoostPerDay
+    // Boost plans: must have validity hours, must have category, no maxBoostPerDay
     this.maxBoostPerDay = undefined;
     if (this.validityHours === undefined) {
       this.validityHours = 24; // Default to 24 hours if not specified
@@ -116,5 +126,7 @@ paymentPlanSchema.pre('save', function(next) {
 paymentPlanSchema.index({ planType: 1, isActive: 1 });
 paymentPlanSchema.index({ stripeProductId: 1 });
 paymentPlanSchema.index({ stripePriceId: 1 });
+paymentPlanSchema.index({ category: 1 }); // Index for category queries
+paymentPlanSchema.index({ planType: 1, category: 1 }, { unique: true, sparse: true }); // Unique constraint for boost plans per category
 
 export default mongoose.model('PaymentPlan', paymentPlanSchema);

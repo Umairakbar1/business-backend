@@ -8,7 +8,7 @@ import {
   successResponseHelper,
 } from "../../helpers/utilityHelper.js";
 import { signAccessToken, signPasswordResetToken, verifyPasswordResetToken } from "../../helpers/jwtHelper.js";
-import { sendEmail } from "../../helpers/sendGridHelper.js";
+import { sendEmail } from "../../helpers/nodemailerHelper.js";
 
 // Generate unique username from name
 const generateUniqueUsername = async (name) => {
@@ -92,9 +92,8 @@ const sendRegistrationOtp = async (req, res) => {
 
   // Send OTP via email
   try {
-    // Commented out for testing - using dummy OTP
-    // await sendEmail(email, "Email Verification for Registration", `Your OTP is: ${otp}`);
-    console.log(`[TESTING] Registration OTP for ${email}: ${otp}`);
+    await sendEmail(email, "Email Verification for Registration", "Your OTP is:", otp);
+    console.log(`Registration OTP sent to ${email}: ${otp}`);
     return successResponseHelper(res, { 
       message: "OTP sent to your email for verification",
       email: email
@@ -220,9 +219,8 @@ const sendOtp = async (req, res) => {
 
   // Send OTP via email
   try {
-    // Commented out for testing - using dummy OTP
-    // await sendEmail(email, "Email Verification", otp);
-    console.log(`[TESTING] User OTP for ${email}: ${otp}`);
+    await sendEmail(email, "Email Verification", "Your OTP is:", otp);
+    console.log(`User OTP sent to ${email}: ${otp}`);
     return successResponseHelper(res, { message: "OTP sent to your email" });
   } catch (error) {
     return serverErrorHelper(req, res, 500, error);
@@ -467,10 +465,9 @@ const requestPasswordReset = async (req, res) => {
 
     // Send OTP via email
     try {
-      // Commented out for testing - using dummy OTP
-      // await sendEmail(email, "Password Reset Verification", `Your verification code is: ${otp}. This code will expire in 10 minutes.`);
-      console.log(`[TESTING] Password Reset OTP for ${email}: ${otp}`);
-      console.log(`[TESTING] Fresh token generated for ${email}`);
+      await sendEmail(email, "Password Reset Verification", "Your verification code is:", otp);
+      console.log(`Password Reset OTP sent to ${email}: ${otp}`);
+      console.log(`Fresh token generated for ${email}`);
       
       return successResponseHelper(res, {
         message: 'OTP sent to your email. Please verify to complete password reset.',

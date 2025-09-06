@@ -7,6 +7,11 @@ const BlogSchema = new mongoose.Schema({
         required: true,
         trim: true
     },
+    slug: {
+        type: String,
+        unique: true,
+        lowercase: true
+    },
     description: {
         type: String,
         required: true
@@ -33,9 +38,12 @@ const BlogSchema = new mongoose.Schema({
     },
     authorEmail: {
         type: String,
-        required: true,
         trim: true,
         lowercase: true
+    },
+    authorDescription: {
+        type: String,
+        trim: true
     },
     category: {
         type: mongoose.Schema.Types.ObjectId,

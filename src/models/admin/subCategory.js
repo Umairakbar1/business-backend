@@ -45,14 +45,6 @@ const SubCategorySchema = new mongoose.Schema({
 }, {
     timestamps: true
 });
-
-// Create slug from title before saving
-SubCategorySchema.pre('save', function(next) {
-    if (this.isModified('title') && !this.slug) {
-        this.slug = this.title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
-    }
-    next();
-});
   
 const SubCategory = model('SubCategory', SubCategorySchema);
 export default SubCategory;
