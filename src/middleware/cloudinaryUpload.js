@@ -606,7 +606,8 @@ export const uploadMultipleImagesToCloudinary = cloudinaryImageUpload.array('ima
 
 // Multiple media upload middleware for Cloudinary (images and videos)
 export const uploadMultipleMediaToCloudinary = cloudinaryMediaUpload.array('media', 10);
-
+// Multiple media upload middleware for Cloudinary (images and videos)
+export const uploadQueryMultipleMediaToCloudinary = cloudinaryMediaUpload.array('document', 10);
 // Multiple documents upload middleware for Cloudinary
 export const uploadMultipleDocumentsToCloudinary = cloudinaryDocumentUpload.array('document', 5);
 

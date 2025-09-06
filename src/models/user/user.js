@@ -49,7 +49,7 @@ const UserSchema = new Schema({
     status: { 
         type: String, 
         enum: GLOBAL_ENUMS.userStatus, 
-        default: "Active" 
+        default: "active" 
     },
     userName: { type: String, required: true, unique: true },
     avatar: { type: String, default: GLOBAL_ENUMS.defaultProfilePhoto }, // URL to profile image
