@@ -31,7 +31,6 @@ export const getBusinessListings = async (req, res) => {
     if (req.query.lat && req.query.lng) {
       lat = req.query.lat;
       lng = req.query.lng;
-      console.log('📍 Found lat/lng in query params:', { lat, lng });
     } else if (location) {
       try {
         // If location is a JSON string, parse it
@@ -46,7 +45,6 @@ export const getBusinessListings = async (req, res) => {
           lng = location.lng;
         }
       } catch (error) {
-        console.log('Error parsing location:', error);
         // Fallback to text-based search
         parsedLocation = location;
       }
@@ -70,9 +68,7 @@ export const getBusinessListings = async (req, res) => {
       // Validate and convert categoryId to ObjectId
       if (mongoose.Types.ObjectId.isValid(categoryId)) {
         filter.category = new mongoose.Types.ObjectId(categoryId);
-        console.log('📂 Category filter set:', categoryId);
       } else {
-        console.log('❌ Invalid categoryId format:', categoryId);
         return res.status(400).json({
           success: false,
           message: 'Invalid category ID format'
@@ -92,7 +88,6 @@ export const getBusinessListings = async (req, res) => {
       const validSubcategoryIds = subcategoryIds.filter(id => mongoose.Types.ObjectId.isValid(id));
       
       if (validSubcategoryIds.length === 0) {
-        console.log('❌ No valid subcategory IDs found:', subcategoryIds);
         return res.status(400).json({
           success: false,
           message: 'Invalid subcategory ID format(s)'
@@ -120,18 +115,13 @@ export const getBusinessListings = async (req, res) => {
     let userLat, userLng;
     const DEFAULT_RADIUS = 100; // Increased to 100km radius to find more businesses
     const searchRadius = radius ? parseFloat(radius) : DEFAULT_RADIUS;
-    
-         console.log('📍 Raw lat/lng values:', { lat, lng, type: typeof lat });
      
      if (lat && lng) {
        userLat = parseFloat(lat);
        userLng = parseFloat(lng);
        
-       console.log('📍 Parsed coordinates:', { userLat, userLng, isNaN: { lat: isNaN(userLat), lng: isNaN(userLng) } });
-       
        if (!isNaN(userLat) && !isNaN(userLng)) {
          hasCoordinates = true;
-         console.log('📍 Using coordinates for filtering:', { userLat, userLng });
         
         // Add geospatial filter for businesses with coordinates
         // Check both location.lat/lng and location.coordinates (GeoJSON)
@@ -158,8 +148,6 @@ export const getBusinessListings = async (req, res) => {
       }
     }
     
-    console.log('🔍 Final filter:', JSON.stringify(filter, null, 2));
-    console.log('📍 Has coordinates:', hasCoordinates);
     
     // Handle rating filter - support for 3.0+, 4.0+, 4.5+ format
     let ratingFilter = null;
@@ -181,12 +169,10 @@ export const getBusinessListings = async (req, res) => {
     
     // Debug: Check total businesses without location filter
     const totalBusinesses = await Business.countDocuments({});
-    console.log('📍 Total businesses in database:', totalBusinesses);
     
     // Debug: Check businesses for specific category if categoryId is provided
     if (categoryId) {
       const categoryBusinesses = await Business.countDocuments({ category: filter.category });
-      console.log('📂 Businesses in category:', categoryBusinesses);
       
       // Get sample business from this category to verify structure
       const sampleCategoryBusiness = await Business.findOne({ category: filter.category })
@@ -194,14 +180,6 @@ export const getBusinessListings = async (req, res) => {
         .populate('category', 'title')
         .populate('subcategories', 'title');
       
-      if (sampleCategoryBusiness) {
-        console.log('📂 Sample business in category:', {
-          name: sampleCategoryBusiness.businessName,
-          category: sampleCategoryBusiness.category,
-          subcategories: sampleCategoryBusiness.subcategories,
-          hasLocation: !!sampleCategoryBusiness.location
-        });
-      }
     }
     
     // Debug: Check businesses with coordinates
@@ -221,20 +199,16 @@ export const getBusinessListings = async (req, res) => {
         }
       ]
     });
-         console.log('📍 Businesses with coordinates:', businessesWithCoords);
-     
      // Debug: Check businesses with specific coordinates format
      const businessesWithLatLng = await Business.countDocuments({
        'location.lat': { $exists: true, $ne: null },
        'location.lng': { $exists: true, $ne: null }
      });
-     console.log('📍 Businesses with lat/lng format:', businessesWithLatLng);
      
      const businessesWithGeoJSON = await Business.countDocuments({
        'location.coordinates': { $exists: true, $ne: null },
        $expr: { $eq: [{ $size: '$location.coordinates' }, 2] }
      });
-     console.log('📍 Businesses with GeoJSON format:', businessesWithGeoJSON);
      
      // Debug: Get a sample business to see its location structure
      const sampleBusiness = await Business.findOne({
@@ -244,15 +218,6 @@ export const getBusinessListings = async (req, res) => {
        ]
      }).select('businessName location');
      
-     if (sampleBusiness) {
-       console.log('📍 Sample business location structure:', {
-         name: sampleBusiness.businessName,
-         location: sampleBusiness.location,
-         hasLatLng: sampleBusiness.location?.lat && sampleBusiness.location?.lng,
-         hasCoordinates: sampleBusiness.location?.coordinates && sampleBusiness.location?.coordinates.length === 2
-       });
-     }
-
     // Aggregate to filter by average rating if needed - Only approved reviews
     let pipeline = [
       { $match: filter },
@@ -369,7 +334,6 @@ export const getBusinessListings = async (req, res) => {
     
     // Add distance calculation if coordinates are provided
     if (hasCoordinates) {
-      console.log('📍 Adding distance calculation to pipeline');
       pipeline.push({
         $addFields: {
           distance: {
@@ -456,8 +420,6 @@ export const getBusinessListings = async (req, res) => {
            distance: { $lte: searchRadius }
          }
        });
-       
-       console.log(`📍 Added radius filtering (${searchRadius}km)`);
     }
     
     // Add subscription filter for claimed businesses
@@ -547,12 +509,9 @@ export const getBusinessListings = async (req, res) => {
     
     const businesses = await Business.aggregate(pipeline);
     
-    console.log('📍 Found businesses:', businesses.length, 'Total available:', totalCount);
     
     // If no businesses found with coordinates, try without location filter
     if (businesses.length === 0 && hasCoordinates) {
-      console.log('📍 No businesses found with coordinates, trying without location filter...');
-      
       // Remove location filter and try again
       const fallbackFilter = { ...filter };
       delete fallbackFilter.$and;
@@ -724,7 +683,6 @@ export const getBusinessListings = async (req, res) => {
       ];
       
       const fallbackBusinesses = await Business.aggregate(fallbackPipeline);
-      console.log('📍 Found businesses without location filter:', fallbackBusinesses.length);
       
       if (fallbackBusinesses.length > 0) {
         return res.json({
@@ -739,19 +697,6 @@ export const getBusinessListings = async (req, res) => {
             note: 'No businesses found in your specified location. Showing businesses from other areas instead.'
           }
         });
-      }
-    }
-    
-    if (businesses.length > 0) {
-      console.log('📍 Sample business location data:', {
-        name: businesses[0].businessName,
-        location: businesses[0].location,
-        hasLatLng: businesses[0].location?.lat && businesses[0].location?.lng,
-        hasCoordinates: businesses[0].location?.coordinates && businesses[0].location?.coordinates.length === 2
-      });
-      
-      if (hasCoordinates && businesses[0].distance !== undefined) {
-        console.log('📍 Distance calculation working:', businesses[0].distance);
       }
     }
     

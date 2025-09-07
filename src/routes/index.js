@@ -38,6 +38,8 @@ import userReviewRoutes from "./user/review.js";
 import userBlogsRoutes from "./user/blogs.js";
 import userCommentsRoutes from "./user/comments.js";
 import userRepliesRoutes from "./user/replies.js";
+import userMetaRoutes from "./user/meta.js";
+
 import mediaRoutes from "./media.js";
 import { getMetadataByUrl } from "../controllers/admin/metadata.controller.js";
 import { getBrandLogo } from "../controllers/admin/brandLogo.controller.js";
@@ -101,6 +103,7 @@ router.use("/user/review", userReviewRoutes);
 router.use("/user/blogs", userBlogsRoutes);
 router.use("/user/comments", userCommentsRoutes);
 router.use("/user/replies", userRepliesRoutes);
+router.use("/user/meta", userMetaRoutes);
 
 // Media routes
 router.use("/media", mediaRoutes);
