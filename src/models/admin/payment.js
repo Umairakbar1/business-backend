@@ -223,4 +223,4 @@ paymentSchema.statics.getPaymentStats = async function(businessId = null) {
   return stats;
 };
 
-export default mongoose.model('Payment', paymentSchema);
+export default mongoose.model('AdminPayment', paymentSchema);

@@ -63,7 +63,19 @@ const notificationSchema = new mongoose.Schema({
       'system_maintenance',
       'security_alert',
       'feature_update',
-      'promotion_offer'
+      'promotion_offer',
+      // New categories
+      'business_registration',
+      'business_update',
+      'business_status_change',
+      'owner_registration',
+      'subscription_purchase',
+      'subscription_upgrade',
+      'boost_purchase',
+      'boost_cancel',
+      'query_created',
+      'query_updated',
+      'query_status_change'
     ],
     required: true
   },

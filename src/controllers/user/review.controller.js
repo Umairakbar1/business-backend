@@ -97,6 +97,63 @@ export const submitReview = async (req, res) => {
     });
     await review.save();
     
+    // Send notifications for new review submission
+    try {
+      const NotificationHelper = (await import('../../helpers/notificationHelper.js')).default;
+      const Business = (await import('../../models/business/business.js')).default;
+      const Admin = (await import('../../models/admin/admin.js')).default;
+      
+      // Get business details
+      const business = await Business.findById(businessId);
+      if (business) {
+        // Send notification to business owner
+        await NotificationHelper.sendReviewNotifications.newReviewSubmitted(
+          business.businessOwner,
+          {
+            reviewId: review._id,
+            businessId: businessId,
+            businessName: business.businessName,
+            reviewerName: req.user.name,
+            rating: rating,
+            title: title,
+            submissionDate: new Date(),
+            actor: {
+              type: 'user',
+              id: userId,
+              name: req.user.name,
+              email: req.user.email
+            }
+          }
+        );
+        
+        // Send notification to all admins
+        const admins = await Admin.find({ status: 'active' });
+        for (const admin of admins) {
+          await NotificationHelper.sendReviewNotifications.newReviewAdminNotification(
+            admin._id,
+            {
+              reviewId: review._id,
+              businessId: businessId,
+              businessName: business.businessName,
+              reviewerName: req.user.name,
+              rating: rating,
+              title: title,
+              submissionDate: new Date(),
+              actor: {
+                type: 'user',
+                id: userId,
+                name: req.user.name,
+                email: req.user.email
+              }
+            }
+          );
+        }
+      }
+    } catch (notificationError) {
+      console.error('Error sending review submission notifications:', notificationError);
+      // Don't fail the request if notifications fail
+    }
+    
     return successResponseHelper(res, { 
       message: 'Review submitted successfully and pending approval', 
       review: {

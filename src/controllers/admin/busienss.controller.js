@@ -388,6 +388,32 @@ export const changeStatusOfBusiness = async (req, res) => {
     // Add subscription and boost status to business
     const businessWithSubscriptionStatus = addSubscriptionAndBoostStatus(business);
     
+    // Send notifications for business status change
+    try {
+      const NotificationHelper = (await import('../../helpers/notificationHelper.js')).default;
+      
+      // Send notification to business owner
+      await NotificationHelper.sendBusinessNotifications.businessStatusChanged(
+        business.businessOwner._id,
+        {
+          businessId: business._id,
+          businessName: business.businessName,
+          oldStatus: business.status, // This might need to be tracked differently
+          newStatus: status,
+          changeDate: new Date(),
+          actor: {
+            type: 'admin',
+            id: req.user._id,
+            name: `${req.user.firstName} ${req.user.lastName}`,
+            email: req.user.email
+          }
+        }
+      );
+    } catch (notificationError) {
+      console.error('Error sending business status change notifications:', notificationError);
+      // Don't fail the request if notifications fail
+    }
+    
     return successResponseHelper(res, { message: 'Business status updated successfully', data: businessWithSubscriptionStatus });
   } catch (error) {
     console.error('Update business status error:', error);

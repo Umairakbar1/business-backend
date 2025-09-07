@@ -1,5 +1,6 @@
 import Subscription from '../../models/admin/subscription.js';
 import PaymentPlan from '../../models/admin/paymentPlan.js';
+import Payment from '../../models/business/payment.js';
 import Business from '../../models/business/business.js';
 import BoostQueue from '../../models/business/boostQueue.js';
 import StripeHelper from '../../helpers/stripeHelper.js';
@@ -7,6 +8,25 @@ import { errorResponseHelper, successResponseHelper } from '../../helpers/utilit
 import { sendSubscriptionNotifications, sendPaymentNotifications } from '../../helpers/notificationHelper.js';
 
 class BusinessSubscriptionController {
+  /**
+   * Helper function to clean up businessUrls array to remove invalid entries
+   */
+  static cleanBusinessUrls(business) {
+    if (business.businessUrls && Array.isArray(business.businessUrls)) {
+      business.businessUrls = business.businessUrls.filter(url => 
+        url && 
+        typeof url === 'object' && 
+        url.label && 
+        url.link && 
+        typeof url.label === 'string' && 
+        typeof url.link === 'string' &&
+        url.label.trim() !== '' &&
+        url.link.trim() !== ''
+      );
+    }
+    return business;
+  }
+
   /**
    * Helper function to safely update metadata without Mongoose Map issues
    */
@@ -74,6 +94,9 @@ class BusinessSubscriptionController {
           code: 'BUSINESS_NOT_FOUND'
         });
       }
+
+      // Clean up businessUrls to remove invalid entries before any operations
+      BusinessSubscriptionController.cleanBusinessUrls(business);
 
       // Verify business ownership
       if (business.businessOwner.toString() !== req.businessOwner._id.toString()) {
@@ -316,11 +339,50 @@ class BusinessSubscriptionController {
       await subscription.save();
       console.log('Subscription saved successfully:', subscription._id);
 
-        successResponseHelper(res, {
+      // Create Payment record with invoice number for pending payment
+      let paymentRecord = null;
+      try {
+        paymentRecord = await Payment.create({
+          businessId: businessId,
+          paymentPlanId: paymentPlanId,
+          subscriptionId: subscription._id,
+          planType: paymentPlan.planType,
+          paymentType: paymentPlan.planType,
+          status: 'pending',
+          amount: paymentPlan.price,
+          currency: paymentPlan.currency,
+          discount: 0,
+          finalAmount: paymentPlan.price,
+          stripePaymentIntentId: paymentIntent.id,
+          stripeCustomerId: stripeCustomer.id,
+          paymentMethod: 'card',
+          businessName: business.businessName,
+          businessEmail: business.email,
+          planName: paymentPlan.name,
+          planDescription: paymentPlan.description || 'Subscription Plan',
+          features: paymentPlan.features || [],
+          maxBoostPerDay: paymentPlan.maxBoostPerDay || 0,
+          validityHours: paymentPlan.validityHours || null,
+          notes: 'Payment pending - subscription created'
+        });
+
+        console.log('Payment record created with invoice number:', paymentRecord.invoiceNumber);
+      } catch (paymentError) {
+        console.error('Failed to create payment record:', paymentError);
+        // Don't fail the main operation if payment record creation fails
+      }
+
+      return successResponseHelper(res, {
         success: true,
         message: 'Subscription created successfully. Please complete payment.',
         data: {
           subscription,
+          payment: paymentRecord ? {
+            invoiceNumber: paymentRecord.invoiceNumber,
+            amount: paymentRecord.amount,
+            currency: paymentRecord.currency,
+            status: paymentRecord.status
+          } : null,
           clientSecret: paymentIntent.client_secret,
           paymentIntentId: paymentIntent.id
         }
@@ -1804,6 +1866,9 @@ class BusinessSubscriptionController {
         });
       }
 
+      // Clean up businessUrls to remove invalid entries before any operations
+      BusinessSubscriptionController.cleanBusinessUrls(business);
+
       // Verify subscription exists
       const subscription = await Subscription.findById(subscriptionId);
       if (!subscription) {
@@ -1949,6 +2014,59 @@ class BusinessSubscriptionController {
 
       await business.save();
 
+      // Update existing Payment record status to completed
+      let paymentRecord = null;
+      try {
+        // Find the existing payment record for this subscription
+        paymentRecord = await Payment.findOne({
+          subscriptionId: subscription._id,
+          stripePaymentIntentId: paymentIntentId
+        });
+
+        if (paymentRecord) {
+          // Update the existing payment record
+          paymentRecord.status = 'completed';
+          paymentRecord.stripeChargeId = paymentIntentId;
+          paymentRecord.receiptUrl = `https://receipt.stripe.com/${paymentIntentId}`;
+          await paymentRecord.save();
+          
+          console.log('Payment record updated to completed with invoice number:', paymentRecord.invoiceNumber);
+        } else {
+          // If no existing payment record found, create a new one
+          const paymentPlan = await PaymentPlan.findById(subscription.paymentPlan);
+          
+          paymentRecord = await Payment.create({
+            businessId: businessId,
+            paymentPlanId: subscription.paymentPlan,
+            subscriptionId: subscription._id,
+            planType: subscription.subscriptionType,
+            paymentType: subscription.metadata?.upgradeFrom ? 'upgrade' : subscription.subscriptionType,
+            status: 'completed',
+            amount: subscription.amount,
+            currency: subscription.currency,
+            discount: 0,
+            finalAmount: subscription.amount,
+            stripePaymentIntentId: paymentIntentId,
+            stripeCustomerId: subscription.stripeCustomerId,
+            stripeChargeId: paymentIntentId,
+            paymentMethod: 'card',
+            businessName: business.businessName,
+            businessEmail: business.businessEmail,
+            planName: paymentPlan?.name || 'Unknown Plan',
+            planDescription: paymentPlan?.description || 'Subscription Plan',
+            features: paymentPlan?.features || [],
+            maxBoostPerDay: paymentPlan?.maxBoostPerDay || 0,
+            validityHours: paymentPlan?.validityHours || null,
+            notes: subscription.metadata?.upgradeFrom ? `Upgraded from ${subscription.metadata.upgradeFrom}` : null
+          });
+
+          console.log('Payment record created with invoice number:', paymentRecord.invoiceNumber);
+        }
+      } catch (paymentError) {
+        console.error('Failed to update/create payment record:', paymentError);
+        // Don't fail the main operation if payment record update fails
+      }
+
       // Send notifications based on subscription type
       try {
         const paymentPlan = await PaymentPlan.findById(subscription.paymentPlan);
@@ -1998,6 +2116,12 @@ class BusinessSubscriptionController {
         message: 'Payment confirmed and subscription activated',
         data: {
           subscription,
+          payment: paymentRecord ? {
+            invoiceNumber: paymentRecord.invoiceNumber,
+            amount: paymentRecord.amount,
+            currency: paymentRecord.currency,
+            status: paymentRecord.status
+          } : null,
           business: {
             _id: business._id,
             businessName: business.businessName,
@@ -2046,6 +2170,9 @@ class BusinessSubscriptionController {
           code: 'BUSINESS_NOT_FOUND'
         });
       }
+
+      // Clean up businessUrls to remove invalid entries before any operations
+      BusinessSubscriptionController.cleanBusinessUrls(business);
 
       // Validate that business has a category
       if (!business.category || !business.category._id) {
@@ -2208,11 +2335,50 @@ class BusinessSubscriptionController {
         existingPendingBoostSubscription.stripeCustomerId = stripeCustomer.id;
         await existingPendingBoostSubscription.save();
 
+        // Create Payment record with invoice number for updated pending boost payment
+        let paymentRecord = null;
+        try {
+          paymentRecord = await Payment.create({
+            businessId: businessId,
+            paymentPlanId: paymentPlanId,
+            subscriptionId: existingPendingBoostSubscription._id,
+            planType: 'boost',
+            paymentType: 'boost',
+            status: 'pending',
+            amount: paymentPlan.price,
+            currency: paymentPlan.currency,
+            discount: 0,
+            finalAmount: paymentPlan.price,
+            stripePaymentIntentId: paymentIntent.id,
+            stripeCustomerId: stripeCustomer.id,
+            paymentMethod: 'card',
+            businessName: business.businessName,
+            businessEmail: business.email,
+            planName: paymentPlan.name,
+            planDescription: paymentPlan.description || 'Boost Plan',
+            features: paymentPlan.features || [],
+            maxBoostPerDay: paymentPlan.maxBoostPerDay || 0,
+            validityHours: paymentPlan.validityHours || 24,
+            notes: 'Payment pending - boost subscription updated'
+          });
+
+          console.log('Payment record created with invoice number:', paymentRecord.invoiceNumber);
+        } catch (paymentError) {
+          console.error('Failed to create payment record:', paymentError);
+          // Don't fail the main operation if payment record creation fails
+        }
+
         return successResponseHelper(res, {
           success: true,
           message: 'Existing pending boost subscription updated. Please complete payment.',
           data: {
             subscription: existingPendingBoostSubscription,
+            payment: paymentRecord ? {
+              invoiceNumber: paymentRecord.invoiceNumber,
+              amount: paymentRecord.amount,
+              currency: paymentRecord.currency,
+              status: paymentRecord.status
+            } : null,
             clientSecret: paymentIntent.client_secret,
             paymentIntentId: paymentIntent.id,
             isUpdated: true
@@ -2289,6 +2455,39 @@ class BusinessSubscriptionController {
       });
 
       await subscription.save();
+
+      // Create Payment record with invoice number for new boost payment
+      let paymentRecord = null;
+      try {
+        paymentRecord = await Payment.create({
+          businessId: businessId,
+          paymentPlanId: paymentPlanId,
+          subscriptionId: subscription._id,
+          planType: 'boost',
+          paymentType: 'boost',
+          status: 'pending',
+          amount: paymentPlan.price,
+          currency: paymentPlan.currency,
+          discount: 0,
+          finalAmount: paymentPlan.price,
+          stripePaymentIntentId: paymentIntent.id,
+          stripeCustomerId: stripeCustomer.id,
+          paymentMethod: 'card',
+          businessName: business.businessName,
+          businessEmail: business.email,
+          planName: paymentPlan.name,
+          planDescription: paymentPlan.description || 'Boost Plan',
+          features: paymentPlan.features || [],
+          maxBoostPerDay: paymentPlan.maxBoostPerDay || 0,
+          validityHours: paymentPlan.validityHours || 24,
+          notes: 'Payment pending - boost subscription created'
+        });
+
+        console.log('Payment record created with invoice number:', paymentRecord.invoiceNumber);
+      } catch (paymentError) {
+        console.error('Failed to create payment record:', paymentError);
+        // Don't fail the main operation if payment record creation fails
+      }
 
       // Update business with boost subscription ID but keep boost status false until active
       business.boostSubscriptionId = subscription._id;
@@ -2428,16 +2627,22 @@ class BusinessSubscriptionController {
         message: message,
         data: {
           subscription,
+          payment: paymentRecord ? {
+            invoiceNumber: paymentRecord.invoiceNumber,
+            amount: paymentRecord.amount,
+            currency: paymentRecord.currency,
+            status: paymentRecord.status
+          } : null,
           clientSecret: paymentIntent.client_secret,
           paymentIntentId: paymentIntent.id,
-                      queueInfo: {
-              position: queueItem.position,
-              estimatedStartTime: queueItem.estimatedStartTime,
-              estimatedEndTime: queueItem.estimatedEndTime,
-              categoryName: business.category.title,
-              isCurrentlyActive: isImmediatelyActivated,
-              status: queueItem.status
-            }
+          queueInfo: {
+            position: queueItem.position,
+            estimatedStartTime: queueItem.estimatedStartTime,
+            estimatedEndTime: queueItem.estimatedEndTime,
+            categoryName: business.category.title,
+            isCurrentlyActive: isImmediatelyActivated,
+            status: queueItem.status
+          }
         }
       });
     } catch (error) {

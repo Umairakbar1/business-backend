@@ -285,6 +285,471 @@ export const sendSystemNotifications = {
   }
 };
 
+// Business registration and management notifications
+export const sendBusinessNotifications = {
+  // Business registration completed
+  async businessRegistrationCompleted(businessId, businessData) {
+    return await NotificationService.sendToUser(businessId, 'business', {
+      title: 'Business Registration Successful',
+      body: `Welcome! Your business "${businessData.businessName}" has been successfully registered.`,
+      type: 'system',
+      category: 'business_registration',
+      actionUrl: '/dashboard',
+      data: {
+        businessId: businessId,
+        businessName: businessData.businessName,
+        category: businessData.category,
+        registrationDate: businessData.registrationDate
+      },
+      priority: 'high'
+    });
+  },
+
+  // Business registration notification for admin
+  async businessRegistrationAdminNotification(adminId, businessData) {
+    return await NotificationService.sendToUser(adminId, 'admin', {
+      title: 'New Business Registration',
+      body: `New business "${businessData.businessName}" has been registered and requires review.`,
+      type: 'system',
+      category: 'business_registration',
+      actionUrl: '/admin/businesses',
+      data: {
+        businessId: businessData.businessId,
+        businessName: businessData.businessName,
+        ownerName: businessData.ownerName,
+        category: businessData.category,
+        registrationDate: businessData.registrationDate
+      },
+      priority: 'normal'
+    });
+  },
+
+  // Business profile updated
+  async businessProfileUpdated(businessId, businessData) {
+    return await NotificationService.sendToUser(businessId, 'business', {
+      title: 'Business Profile Updated',
+      body: `Your business profile has been successfully updated.`,
+      type: 'system',
+      category: 'business_update',
+      actionUrl: '/dashboard/profile',
+      data: {
+        businessId: businessId,
+        businessName: businessData.businessName,
+        updatedFields: businessData.updatedFields,
+        updateDate: businessData.updateDate
+      },
+      priority: 'normal'
+    });
+  },
+
+  // Business profile update notification for admin
+  async businessProfileUpdateAdminNotification(adminId, businessData) {
+    return await NotificationService.sendToUser(adminId, 'admin', {
+      title: 'Business Profile Updated',
+      body: `Business "${businessData.businessName}" has updated their profile.`,
+      type: 'system',
+      category: 'business_update',
+      actionUrl: '/admin/businesses',
+      data: {
+        businessId: businessData.businessId,
+        businessName: businessData.businessName,
+        updatedFields: businessData.updatedFields,
+        updateDate: businessData.updateDate
+      },
+      priority: 'low'
+    });
+  },
+
+  // Business status changed
+  async businessStatusChanged(businessId, statusData) {
+    return await NotificationService.sendToUser(businessId, 'business', {
+      title: 'Business Status Updated',
+      body: `Your business status has been changed to "${statusData.newStatus}".`,
+      type: 'system',
+      category: 'business_status_change',
+      actionUrl: '/dashboard/profile',
+      data: {
+        businessId: businessId,
+        businessName: statusData.businessName,
+        oldStatus: statusData.oldStatus,
+        newStatus: statusData.newStatus,
+        reason: statusData.reason,
+        changeDate: statusData.changeDate
+      },
+      priority: 'high'
+    });
+  },
+
+  // Business status change notification for admin
+  async businessStatusChangeAdminNotification(adminId, statusData) {
+    return await NotificationService.sendToUser(adminId, 'admin', {
+      title: 'Business Status Changed',
+      body: `Business "${statusData.businessName}" status changed from "${statusData.oldStatus}" to "${statusData.newStatus}".`,
+      type: 'system',
+      category: 'business_status_change',
+      actionUrl: '/admin/businesses',
+      data: {
+        businessId: statusData.businessId,
+        businessName: statusData.businessName,
+        oldStatus: statusData.oldStatus,
+        newStatus: statusData.newStatus,
+        reason: statusData.reason,
+        changeDate: statusData.changeDate
+      },
+      priority: 'normal'
+    });
+  }
+};
+
+// Owner signup notifications
+export const sendOwnerNotifications = {
+  // New owner signup notification for admin
+  async newOwnerSignupAdminNotification(adminId, ownerData) {
+    return await NotificationService.sendToUser(adminId, 'admin', {
+      title: 'New Business Owner Registration',
+      body: `New business owner "${ownerData.ownerName}" has registered and requires verification.`,
+      type: 'system',
+      category: 'owner_registration',
+      actionUrl: '/admin/users',
+      data: {
+        ownerId: ownerData.ownerId,
+        ownerName: ownerData.ownerName,
+        email: ownerData.email,
+        businessName: ownerData.businessName,
+        registrationDate: ownerData.registrationDate
+      },
+      priority: 'normal'
+    });
+  }
+};
+
+// Enhanced review notifications
+export const sendEnhancedReviewNotifications = {
+  // New review received (enhanced)
+  async newReviewReceived(businessId, reviewData) {
+    return await NotificationService.sendToUser(businessId, 'business', {
+      title: 'New Review Received',
+      body: `You received a ${reviewData.rating}-star review from ${reviewData.reviewerName}.`,
+      type: 'review',
+      category: 'review_received',
+      actionUrl: '/dashboard/reviews',
+      data: {
+        reviewId: reviewData.reviewId,
+        rating: reviewData.rating,
+        reviewerName: reviewData.reviewerName,
+        comment: reviewData.comment,
+        businessName: reviewData.businessName
+      },
+      priority: 'normal'
+    });
+  },
+
+  // New review notification for admin
+  async newReviewAdminNotification(adminId, reviewData) {
+    return await NotificationService.sendToUser(adminId, 'admin', {
+      title: 'New Review Posted',
+      body: `A ${reviewData.rating}-star review was posted for "${reviewData.businessName}".`,
+      type: 'review',
+      category: 'review_received',
+      actionUrl: '/admin/reviews',
+      data: {
+        reviewId: reviewData.reviewId,
+        rating: reviewData.rating,
+        reviewerName: reviewData.reviewerName,
+        businessName: reviewData.businessName,
+        comment: reviewData.comment
+      },
+      priority: 'low'
+    });
+  }
+};
+
+// Enhanced subscription notifications
+export const sendEnhancedSubscriptionNotifications = {
+  // Subscription purchased
+  async subscriptionPurchased(businessId, subscriptionData) {
+    return await NotificationService.sendToUser(businessId, 'business', {
+      title: 'Subscription Purchased',
+      body: `Your ${subscriptionData.planName} subscription has been successfully purchased.`,
+      type: 'subscription',
+      category: 'subscription_purchase',
+      actionUrl: '/dashboard/subscriptions',
+      data: {
+        subscriptionId: subscriptionData.subscriptionId,
+        planName: subscriptionData.planName,
+        amount: subscriptionData.amount,
+        currency: subscriptionData.currency,
+        duration: subscriptionData.duration
+      },
+      priority: 'high'
+    });
+  },
+
+  // Subscription purchase notification for admin
+  async subscriptionPurchaseAdminNotification(adminId, subscriptionData) {
+    return await NotificationService.sendToUser(adminId, 'admin', {
+      title: 'New Subscription Purchase',
+      body: `Business "${subscriptionData.businessName}" purchased ${subscriptionData.planName} subscription.`,
+      type: 'subscription',
+      category: 'subscription_purchase',
+      actionUrl: '/admin/subscriptions',
+      data: {
+        subscriptionId: subscriptionData.subscriptionId,
+        businessId: subscriptionData.businessId,
+        businessName: subscriptionData.businessName,
+        planName: subscriptionData.planName,
+        amount: subscriptionData.amount,
+        currency: subscriptionData.currency
+      },
+      priority: 'normal'
+    });
+  },
+
+  // Subscription upgraded
+  async subscriptionUpgraded(businessId, subscriptionData) {
+    return await NotificationService.sendToUser(businessId, 'business', {
+      title: 'Subscription Upgraded',
+      body: `Your subscription has been upgraded from ${subscriptionData.oldPlanName} to ${subscriptionData.newPlanName}.`,
+      type: 'subscription',
+      category: 'subscription_upgrade',
+      actionUrl: '/dashboard/subscriptions',
+      data: {
+        subscriptionId: subscriptionData.subscriptionId,
+        oldPlanName: subscriptionData.oldPlanName,
+        newPlanName: subscriptionData.newPlanName,
+        priceDifference: subscriptionData.priceDifference,
+        upgradeDate: subscriptionData.upgradeDate
+      },
+      priority: 'high'
+    });
+  },
+
+  // Subscription upgrade notification for admin
+  async subscriptionUpgradeAdminNotification(adminId, subscriptionData) {
+    return await NotificationService.sendToUser(adminId, 'admin', {
+      title: 'Subscription Upgraded',
+      body: `Business "${subscriptionData.businessName}" upgraded from ${subscriptionData.oldPlanName} to ${subscriptionData.newPlanName}.`,
+      type: 'subscription',
+      category: 'subscription_upgrade',
+      actionUrl: '/admin/subscriptions',
+      data: {
+        subscriptionId: subscriptionData.subscriptionId,
+        businessId: subscriptionData.businessId,
+        businessName: subscriptionData.businessName,
+        oldPlanName: subscriptionData.oldPlanName,
+        newPlanName: subscriptionData.newPlanName,
+        priceDifference: subscriptionData.priceDifference
+      },
+      priority: 'normal'
+    });
+  }
+};
+
+// Enhanced boost notifications
+export const sendEnhancedBoostNotifications = {
+  // Boost purchased
+  async boostPurchased(businessId, boostData) {
+    return await NotificationService.sendToUser(businessId, 'business', {
+      title: 'Boost Purchased',
+      body: `Your ${boostData.boostType} boost has been successfully purchased and activated.`,
+      type: 'boost',
+      category: 'boost_purchase',
+      actionUrl: '/dashboard/boost',
+      data: {
+        boostId: boostData.boostId,
+        boostType: boostData.boostType,
+        category: boostData.category,
+        duration: boostData.duration,
+        amount: boostData.amount,
+        currency: boostData.currency
+      },
+      priority: 'high'
+    });
+  },
+
+  // Boost purchase notification for admin
+  async boostPurchaseAdminNotification(adminId, boostData) {
+    return await NotificationService.sendToUser(adminId, 'admin', {
+      title: 'New Boost Purchase',
+      body: `Business "${boostData.businessName}" purchased ${boostData.boostType} boost.`,
+      type: 'boost',
+      category: 'boost_purchase',
+      actionUrl: '/admin/boosts',
+      data: {
+        boostId: boostData.boostId,
+        businessId: boostData.businessId,
+        businessName: boostData.businessName,
+        boostType: boostData.boostType,
+        category: boostData.category,
+        amount: boostData.amount,
+        currency: boostData.currency
+      },
+      priority: 'normal'
+    });
+  },
+
+  // Boost canceled
+  async boostCanceled(businessId, boostData) {
+    return await NotificationService.sendToUser(businessId, 'business', {
+      title: 'Boost Canceled',
+      body: `Your ${boostData.boostType} boost has been canceled. Refund will be processed within 3-5 business days.`,
+      type: 'boost',
+      category: 'boost_cancel',
+      actionUrl: '/dashboard/boost',
+      data: {
+        boostId: boostData.boostId,
+        boostType: boostData.boostType,
+        refundAmount: boostData.refundAmount,
+        currency: boostData.currency,
+        cancelDate: boostData.cancelDate
+      },
+      priority: 'normal'
+    });
+  },
+
+  // Boost cancel notification for admin
+  async boostCancelAdminNotification(adminId, boostData) {
+    return await NotificationService.sendToUser(adminId, 'admin', {
+      title: 'Boost Canceled',
+      body: `Business "${boostData.businessName}" canceled their ${boostData.boostType} boost.`,
+      type: 'boost',
+      category: 'boost_cancel',
+      actionUrl: '/admin/boosts',
+      data: {
+        boostId: boostData.boostId,
+        businessId: boostData.businessId,
+        businessName: boostData.businessName,
+        boostType: boostData.boostType,
+        refundAmount: boostData.refundAmount,
+        currency: boostData.currency
+      },
+      priority: 'normal'
+    });
+  }
+};
+
+// Enhanced query ticket notifications
+export const sendEnhancedQueryTicketNotifications = {
+  // Query ticket created
+  async queryTicketCreated(businessId, ticketData) {
+    return await NotificationService.sendToUser(businessId, 'business', {
+      title: 'Support Ticket Created',
+      body: `Your support ticket "${ticketData.subject}" has been created successfully. Ticket ID: ${ticketData.ticketId}`,
+      type: 'query',
+      category: 'query_created',
+      actionUrl: '/dashboard/support',
+      data: {
+        ticketId: ticketData.ticketId,
+        subject: ticketData.subject,
+        priority: ticketData.priority,
+        category: ticketData.category,
+        createdDate: ticketData.createdDate
+      },
+      priority: 'normal'
+    });
+  },
+
+  // Query ticket created notification for admin
+  async queryTicketCreatedAdminNotification(adminId, ticketData) {
+    return await NotificationService.sendToUser(adminId, 'admin', {
+      title: 'New Support Ticket',
+      body: `New support ticket from "${ticketData.businessName}": "${ticketData.subject}"`,
+      type: 'query',
+      category: 'query_created',
+      actionUrl: '/admin/support',
+      data: {
+        ticketId: ticketData.ticketId,
+        businessId: ticketData.businessId,
+        businessName: ticketData.businessName,
+        subject: ticketData.subject,
+        priority: ticketData.priority,
+        category: ticketData.category
+      },
+      priority: 'normal'
+    });
+  },
+
+  // Query ticket updated
+  async queryTicketUpdated(businessId, ticketData) {
+    return await NotificationService.sendToUser(businessId, 'business', {
+      title: 'Support Ticket Updated',
+      body: `Your support ticket "${ticketData.subject}" has been updated.`,
+      type: 'query',
+      category: 'query_updated',
+      actionUrl: '/dashboard/support',
+      data: {
+        ticketId: ticketData.ticketId,
+        subject: ticketData.subject,
+        updateType: ticketData.updateType,
+        updatedBy: ticketData.updatedBy,
+        updateDate: ticketData.updateDate
+      },
+      priority: 'normal'
+    });
+  },
+
+  // Query ticket updated notification for admin
+  async queryTicketUpdatedAdminNotification(adminId, ticketData) {
+    return await NotificationService.sendToUser(adminId, 'admin', {
+      title: 'Support Ticket Updated',
+      body: `Support ticket "${ticketData.subject}" has been updated by ${ticketData.updatedBy}.`,
+      type: 'query',
+      category: 'query_updated',
+      actionUrl: '/admin/support',
+      data: {
+        ticketId: ticketData.ticketId,
+        businessId: ticketData.businessId,
+        businessName: ticketData.businessName,
+        subject: ticketData.subject,
+        updateType: ticketData.updateType,
+        updatedBy: ticketData.updatedBy
+      },
+      priority: 'low'
+    });
+  },
+
+  // Query ticket status changed
+  async queryTicketStatusChanged(businessId, ticketData) {
+    return await NotificationService.sendToUser(businessId, 'business', {
+      title: 'Support Ticket Status Updated',
+      body: `Your support ticket "${ticketData.subject}" status has been changed to "${ticketData.newStatus}".`,
+      type: 'query',
+      category: 'query_status_change',
+      actionUrl: '/dashboard/support',
+      data: {
+        ticketId: ticketData.ticketId,
+        subject: ticketData.subject,
+        oldStatus: ticketData.oldStatus,
+        newStatus: ticketData.newStatus,
+        updatedBy: ticketData.updatedBy,
+        updateDate: ticketData.updateDate
+      },
+      priority: 'normal'
+    });
+  },
+
+  // Query ticket status change notification for admin
+  async queryTicketStatusChangeAdminNotification(adminId, ticketData) {
+    return await NotificationService.sendToUser(adminId, 'admin', {
+      title: 'Support Ticket Status Changed',
+      body: `Support ticket "${ticketData.subject}" status changed to "${ticketData.newStatus}" by ${ticketData.updatedBy}.`,
+      type: 'query',
+      category: 'query_status_change',
+      actionUrl: '/admin/support',
+      data: {
+        ticketId: ticketData.ticketId,
+        businessId: ticketData.businessId,
+        businessName: ticketData.businessName,
+        subject: ticketData.subject,
+        oldStatus: ticketData.oldStatus,
+        newStatus: ticketData.newStatus,
+        updatedBy: ticketData.updatedBy
+      },
+      priority: 'low'
+    });
+  }
+};
+
 // Promotion notifications
 export const sendPromotionNotifications = {
   // Promotion offer
@@ -382,5 +847,12 @@ export default {
   sendSystemNotifications,
   sendPromotionNotifications,
   sendBulkNotifications,
-  notificationUtils
+  notificationUtils,
+  // New notification categories
+  sendBusinessNotifications,
+  sendOwnerNotifications,
+  sendEnhancedReviewNotifications,
+  sendEnhancedSubscriptionNotifications,
+  sendEnhancedBoostNotifications,
+  sendEnhancedQueryTicketNotifications
 };

@@ -1,6 +1,6 @@
 import Subscription from '../../models/admin/subscription.js';
 import BoostQueue from '../../models/business/boostQueue.js';
-import Payment from '../../models/admin/payment.js';
+import AdminAdminPayment from '../../models/admin/payment.js';
 import Business from '../../models/business/business.js';
 import { errorResponseHelper, successResponseHelper } from '../../helpers/utilityHelper.js';
 
@@ -135,7 +135,7 @@ export const getBoostStats = async (req, res) => {
       ]),
 
       // Boost revenue
-      Payment.aggregate([
+      AdminPayment.aggregate([
         {
           $match: {
             status: 'completed',

@@ -1,7 +1,7 @@
 import User from '../../models/user/user.js';
 import Business from '../../models/business/business.js';
 import Subscription from '../../models/admin/subscription.js';
-import Payment from '../../models/admin/payment.js';
+import AdminAdminPayment from '../../models/admin/payment.js';
 import { errorResponseHelper, successResponseHelper } from '../../helpers/utilityHelper.js';
 
 /**
@@ -32,7 +32,7 @@ export const getDashboardStats = async (req, res) => {
         status: 'active', 
         subscriptionType: 'business' 
       }),
-      Payment.aggregate([
+      AdminPayment.aggregate([
         { $match: { status: 'completed' } },
         { $group: { _id: null, total: { $sum: '$finalAmount' } } }
       ]),
@@ -51,7 +51,7 @@ export const getDashboardStats = async (req, res) => {
         subscriptionType: 'business',
         createdAt: { $gte: currentMonth }
       }),
-      Payment.aggregate([
+      AdminPayment.aggregate([
         { 
           $match: { 
             status: 'completed',
@@ -82,7 +82,7 @@ export const getDashboardStats = async (req, res) => {
         subscriptionType: 'business',
         createdAt: { $gte: previousMonth, $lt: currentMonth }
       }),
-      Payment.aggregate([
+      AdminPayment.aggregate([
         { 
           $match: { 
             status: 'completed',
@@ -112,7 +112,7 @@ export const getDashboardStats = async (req, res) => {
     const [
       recentUsers,
       recentBusinesses,
-      recentPayments
+      recentAdminPayments
     ] = await Promise.all([
       User.countDocuments({ 
         status: 'Active',
@@ -122,7 +122,7 @@ export const getDashboardStats = async (req, res) => {
         status: 'active',
         createdAt: { $gte: lastWeek }
       }),
-      Payment.countDocuments({ 
+      AdminPayment.countDocuments({ 
         status: 'completed',
         createdAt: { $gte: lastWeek }
       })
@@ -134,12 +134,12 @@ export const getDashboardStats = async (req, res) => {
     ]);
 
     // Get payment status breakdown
-    const paymentStatusBreakdown = await Payment.aggregate([
+    const paymentStatusBreakdown = await AdminPayment.aggregate([
       { $group: { _id: '$status', count: { $sum: 1 } } }
     ]);
 
     // Get top earning months (last 6 months)
-    const monthlyEarnings = await Payment.aggregate([
+    const monthlyEarnings = await AdminPayment.aggregate([
       { 
         $match: { 
           status: 'completed',
@@ -200,7 +200,7 @@ export const getDashboardStats = async (req, res) => {
         last7Days: {
           users: recentUsers || 0,
           businesses: recentBusinesses || 0,
-          payments: recentPayments || 0
+          payments: recentAdminPayments || 0
         }
       },
       breakdowns: {
@@ -255,11 +255,11 @@ export const getQuickStats = async (req, res) => {
         subscriptionType: 'boost',
         expiresAt: { $gt: currentDate }
       }),
-      Payment.aggregate([
+      AdminPayment.aggregate([
         { $match: { status: 'completed' } },
         { $group: { _id: null, total: { $sum: '$finalAmount' } } }
       ]),
-      Payment.aggregate([
+      AdminPayment.aggregate([
         { 
           $match: { 
             status: 'completed',

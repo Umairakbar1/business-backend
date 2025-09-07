@@ -8,6 +8,8 @@ import { uploadImageWithThumbnail } from '../../helpers/cloudinaryHelper.js';
 import axios from 'axios';
 import Joi from 'joi';
 import { errorResponseHelper, successResponseHelper } from '../../helpers/utilityHelper.js';
+import NotificationHelper from '../../helpers/notificationHelper.js';
+import Admin from '../../models/admin/admin.js';
 
 // Helper function to populate subscription data for a business
 const populateSubscriptionData = async (businessObj) => {
@@ -362,6 +364,37 @@ export const createBusiness = async (req, res) => {
     
     // Populate subscription data
     const businessWithSubscription = await populateSubscriptionData(businessObj);
+    
+    // Send notifications
+    try {
+      // Send notification to business owner
+      await NotificationHelper.sendBusinessNotifications.businessRegistrationCompleted(
+        businessObj._id,
+        {
+          businessName: businessObj.businessName,
+          category: businessObj.category,
+          registrationDate: new Date()
+        }
+      );
+
+      // Send notification to all admins
+      const admins = await Admin.find({ status: 'active' });
+      for (const admin of admins) {
+        await NotificationHelper.sendBusinessNotifications.businessRegistrationAdminNotification(
+          admin._id,
+          {
+            businessId: businessObj._id,
+            businessName: businessObj.businessName,
+            ownerName: `${req.user.firstName} ${req.user.lastName}`,
+            category: businessObj.category,
+            registrationDate: new Date()
+          }
+        );
+      }
+    } catch (notificationError) {
+      console.error('Error sending business registration notifications:', notificationError);
+      // Don't fail the request if notifications fail
+    }
     
     return successResponseHelper(res, {
       message: 'Business created successfully',
@@ -1013,6 +1046,36 @@ export const updateBusiness = async (req, res) => {
     
     // Populate subscription data
     const businessWithSubscription = await populateSubscriptionData(businessObj);
+    
+    // Send notifications
+    try {
+      // Send notification to business owner
+      await NotificationHelper.sendBusinessNotifications.businessProfileUpdated(
+        businessObj._id,
+        {
+          businessName: businessObj.businessName,
+          updatedFields: Object.keys(req.body),
+          updateDate: new Date()
+        }
+      );
+
+      // Send notification to all admins
+      const admins = await Admin.find({ status: 'active' });
+      for (const admin of admins) {
+        await NotificationHelper.sendBusinessNotifications.businessProfileUpdateAdminNotification(
+          admin._id,
+          {
+            businessId: businessObj._id,
+            businessName: businessObj.businessName,
+            updatedFields: Object.keys(req.body),
+            updateDate: new Date()
+          }
+        );
+      }
+    } catch (notificationError) {
+      console.error('Error sending business update notifications:', notificationError);
+      // Don't fail the request if notifications fail
+    }
     
     return successResponseHelper(res, {
       message: 'Business updated successfully',
@@ -1865,6 +1928,39 @@ const handleCheckoutSessionCompleted = async (session) => {
     // Update business with businessSubscriptionId
     business.businessSubscriptionId = subscription._id;
     await business.save();
+
+    // Send notifications
+    try {
+      // Send notification to business owner
+      await NotificationHelper.sendEnhancedSubscriptionNotifications.subscriptionPurchased(
+        businessId,
+        {
+          subscriptionId: subscription._id,
+          planName: plan,
+          amount: session.amount_total / 100, // Convert from cents
+          currency: session.currency,
+          duration: '30 days'
+        }
+      );
+
+      // Send notification to all admins
+      const admins = await Admin.find({ status: 'active' });
+      for (const admin of admins) {
+        await NotificationHelper.sendEnhancedSubscriptionNotifications.subscriptionPurchaseAdminNotification(
+          admin._id,
+          {
+            subscriptionId: subscription._id,
+            businessId: businessId,
+            businessName: business.businessName,
+            planName: plan,
+            amount: session.amount_total / 100,
+            currency: session.currency
+          }
+        );
+      }
+    } catch (notificationError) {
+      console.error('Error sending subscription purchase notifications:', notificationError);
+    }
 
     console.log('Business plan updated successfully:', businessId, plan);
   } catch (error) {

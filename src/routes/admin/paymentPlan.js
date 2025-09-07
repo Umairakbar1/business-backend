@@ -7,10 +7,10 @@ import { paymentPlanValidator, paymentPlanUpdateValidator } from '../../validato
 const router = express.Router();
 
 // Create payment plan
-router.post('/', authorizedAccessAdmin, validate(paymentPlanValidator), paymentPlanController.createPaymentPlan);
+router.post('/', authorizedAccessAdmin, validate(paymentPlanValidator), paymentPlanController.createAdminPaymentPlan);
 
 // Get all payment plans
-router.get('/', authorizedAccessAdmin, paymentPlanController.getAllPaymentPlans);
+router.get('/', authorizedAccessAdmin, paymentPlanController.getAllAdminPaymentPlans);
 
 // Get business plans (public endpoint for frontend)
 router.get('/business', paymentPlanController.getBusinessPlans);
@@ -28,25 +28,25 @@ router.get('/boost/check-category/:categoryId', paymentPlanController.checkCateg
 router.get('/boost/available-categories', paymentPlanController.getAvailableCategoriesForBoost);
 
 // Get payment plan by ID
-router.get('/:id', authorizedAccessAdmin, paymentPlanController.getPaymentPlanById);
+router.get('/:id', authorizedAccessAdmin, paymentPlanController.getAdminPaymentPlanById);
 
 // Get detailed plan information with type-specific details
 router.get('/:id/details', authorizedAccessAdmin, paymentPlanController.getPlanDetails);
 
 // Update payment plan
-router.put('/:id', authorizedAccessAdmin, validate(paymentPlanUpdateValidator), paymentPlanController.updatePaymentPlan);
+router.put('/:id', authorizedAccessAdmin, validate(paymentPlanUpdateValidator), paymentPlanController.updateAdminPaymentPlan);
 
 // Delete payment plan
-router.delete('/:id', authorizedAccessAdmin, paymentPlanController.deletePaymentPlan);
+router.delete('/:id', authorizedAccessAdmin, paymentPlanController.deleteAdminPaymentPlan);
 
 // Toggle payment plan status
-router.post('/toggle-status/:id', authorizedAccessAdmin, paymentPlanController.togglePaymentPlanStatus);
+router.post('/toggle-status/:id', authorizedAccessAdmin, paymentPlanController.toggleAdminPaymentPlanStatus);
 
 // Activate payment plan
-router.post('/:id/activate', authorizedAccessAdmin, paymentPlanController.activatePaymentPlan);
+router.post('/:id/activate', authorizedAccessAdmin, paymentPlanController.activateAdminPaymentPlan);
 
 // Deactivate payment plan
-router.post('/:id/deactivate', authorizedAccessAdmin, paymentPlanController.deactivatePaymentPlan);
+router.post('/:id/deactivate', authorizedAccessAdmin, paymentPlanController.deactivateAdminPaymentPlan);
 
 // Get plan features
 router.get('/:id/features', authorizedAccessAdmin, paymentPlanController.getPlanFeatures);
@@ -83,7 +83,7 @@ router.patch('/bulk-status', authorizedAccessAdmin, paymentPlanController.bulkUp
 router.patch('/bulk-delete', authorizedAccessAdmin, paymentPlanController.bulkDelete);
 
 // Get payment plan statistics
-router.get('/stats/summary', authorizedAccessAdmin, paymentPlanController.getPaymentPlanStats);
+router.get('/stats/summary', authorizedAccessAdmin, paymentPlanController.getAdminPaymentPlanStats);
 
 // New comprehensive endpoints for boost plans, business plans, and subscriptions
 router.get('/boost/all', authorizedAccessAdmin, paymentPlanController.getAllBoostPlans);
@@ -91,7 +91,7 @@ router.get('/business/all', authorizedAccessAdmin, paymentPlanController.getAllB
 
 // Business subscription and payment history
 router.get('/subscriptions/history', authorizedAccessAdmin, paymentPlanController.getBusinessSubscriptionHistory);
-router.get('/payments/history', authorizedAccessAdmin, paymentPlanController.getPaymentHistory);
+router.get('/payments/history', authorizedAccessAdmin, paymentPlanController.getAdminPaymentHistory);
 
 // Business overview and analytics
 router.get('/business/:businessId/overview', authorizedAccessAdmin, paymentPlanController.getBusinessOverview);

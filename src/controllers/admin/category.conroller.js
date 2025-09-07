@@ -347,16 +347,182 @@ const updateCategory = async (req, res) => {
       delete value.image;
     }
 
+    // Handle subcategories if provided
+    let updatedSubcategories = [];
+    if (req.body.subcategories) {
+      try {
+        let subcategoriesArray = req.body.subcategories;
+        
+        // If subcategories is a JSON string (from FormData), parse it
+        if (typeof subcategoriesArray === 'string') {
+          try {
+            subcategoriesArray = JSON.parse(subcategoriesArray);
+          } catch (parseError) {
+            console.error('Error parsing subcategories JSON:', parseError);
+            return errorResponseHelper(res, { message: 'Invalid subcategories format', code: '00400' });
+          }
+        }
+        
+        // Check if it's an array
+        if (Array.isArray(subcategoriesArray)) {
+          console.log('Processing subcategories for update:', subcategoriesArray.length);
+          
+          // Get existing subcategories for this category
+          const existingSubcategories = await SubCategory.find({ categoryId: id });
+          const existingSubcategoryMap = new Map();
+          existingSubcategories.forEach(sub => {
+            existingSubcategoryMap.set(sub._id.toString(), sub);
+          });
+          
+          // Process each subcategory
+          for (const subcat of subcategoriesArray) {
+            if (subcat._id) {
+              // Update existing subcategory
+              const existingSub = existingSubcategoryMap.get(subcat._id);
+              if (existingSub) {
+                const subCategorySlug = generateSlug(subcat.title || subcat.subCategoryName);
+                
+                // Check for duplicate names (excluding current subcategory)
+                const duplicateSub = await SubCategory.findOne({
+                  title: { $regex: new RegExp(`^${subcat.title || subcat.subCategoryName}$`, 'i') },
+                  categoryId: id,
+                  _id: { $ne: subcat._id }
+                });
+                
+                if (duplicateSub) {
+                  return errorResponseHelper(res, { 
+                    message: `Subcategory "${subcat.title || subcat.subCategoryName}" already exists in this category`, 
+                    code: '00400' 
+                  });
+                }
+                
+                // Check for duplicate slug (excluding current subcategory)
+                const duplicateSlug = await SubCategory.findOne({
+                  slug: subCategorySlug,
+                  _id: { $ne: subcat._id }
+                });
+                
+                if (duplicateSlug) {
+                  return errorResponseHelper(res, { 
+                    message: `Subcategory with slug "${subCategorySlug}" already exists`, 
+                    code: '00400' 
+                  });
+                }
+                
+                // Update the subcategory
+                const updatedSub = await SubCategory.findByIdAndUpdate(
+                  subcat._id,
+                  {
+                    title: subcat.title || subcat.subCategoryName,
+                    slug: subCategorySlug,
+                    description: subcat.description,
+                    status: subcat.status || 'active',
+                    updatedBy: req.user.id,
+                    updatedAt: Date.now()
+                  },
+                  { new: true }
+                );
+                
+                updatedSubcategories.push(updatedSub);
+                existingSubcategoryMap.delete(subcat._id);
+              }
+            } else {
+              // Create new subcategory
+              const subCategorySlug = generateSlug(subcat.title || subcat.subCategoryName);
+              
+              // Check for duplicate names
+              const duplicateSub = await SubCategory.findOne({
+                title: { $regex: new RegExp(`^${subcat.title || subcat.subCategoryName}$`, 'i') },
+                categoryId: id
+              });
+              
+              if (duplicateSub) {
+                return errorResponseHelper(res, { 
+                  message: `Subcategory "${subcat.title || subcat.subCategoryName}" already exists in this category`, 
+                  code: '00400' 
+                });
+              }
+              
+              // Check for duplicate slug
+              const duplicateSlug = await SubCategory.findOne({ slug: subCategorySlug });
+              if (duplicateSlug) {
+                return errorResponseHelper(res, { 
+                  message: `Subcategory with slug "${subCategorySlug}" already exists`, 
+                  code: '00400' 
+                });
+              }
+              
+              const newSubcategory = new SubCategory({
+                title: subcat.title || subcat.subCategoryName,
+                slug: subCategorySlug,
+                description: subcat.description,
+                categoryId: id,
+                status: subcat.status || 'active',
+                createdBy: req.user.id
+              });
+              
+              await newSubcategory.save();
+              updatedSubcategories.push(newSubcategory);
+            }
+          }
+          
+          // Only delete subcategories that are explicitly marked for deletion
+          // Check if any subcategories have a 'delete' flag or are marked as 'toDelete'
+          const subcategoriesToDelete = subcategoriesArray.filter(subcat => 
+            subcat._id && (subcat.delete === true || subcat.toDelete === true || subcat.status === 'delete')
+          );
+          
+          if (subcategoriesToDelete.length > 0) {
+            console.log('Deleting subcategories marked for deletion:', subcategoriesToDelete.map(s => s.title));
+            
+            const subcategoryIdsToDelete = subcategoriesToDelete.map(s => s._id);
+            
+            // Check if any of these subcategories are being used by businesses
+            const businessesUsingSubcategories = await Business.find({
+              subCategory: { $in: subcategoryIdsToDelete }
+            });
+            
+            if (businessesUsingSubcategories.length > 0) {
+              return errorResponseHelper(res, { 
+                message: 'Cannot delete subcategories that are being used by businesses', 
+                code: '00400' 
+              });
+            }
+            
+            // Delete subcategories
+            await SubCategory.deleteMany({ _id: { $in: subcategoryIdsToDelete } });
+          }
+          
+          // Add remaining existing subcategories that weren't updated or deleted
+          const remainingExistingSubcategories = Array.from(existingSubcategoryMap.values());
+          updatedSubcategories.push(...remainingExistingSubcategories);
+        }
+      } catch (subcategoryError) {
+        console.error('Error handling subcategories:', subcategoryError);
+        return errorResponseHelper(res, { 
+          message: 'Error processing subcategories', 
+          code: '00500' 
+        });
+      }
+    }
+
     const updatedCategory = await Category.findByIdAndUpdate(
       id,
       { ...value, updatedAt: Date.now() },
       { new: true, runValidators: true }
     ).populate('parentCategory', 'title');
 
-    // Get all subcategories for this category
-    const subcategories = await SubCategory.find({ 
-      categoryId: updatedCategory._id 
-    }).select('title slug description image status categoryId');
+    // Get all subcategories for this category (use updated subcategories if available, otherwise fetch from DB)
+    let subcategories;
+    if (updatedSubcategories.length > 0) {
+      // Use the subcategories we just processed
+      subcategories = updatedSubcategories;
+    } else {
+      // Fetch from database
+      subcategories = await SubCategory.find({ 
+        categoryId: updatedCategory._id 
+      }).select('title slug description image status categoryId');
+    }
 
     // Get business count for this category
     const businessCount = await Business.countDocuments({ category: updatedCategory._id });

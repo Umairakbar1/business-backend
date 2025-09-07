@@ -6,6 +6,9 @@ import Admin from '../models/admin/admin.js';
 class NotificationService {
   constructor() {
     this.messaging = admin ? admin.messaging() : null;
+    if (!this.messaging) {
+      console.log('⚠️ Firebase Admin SDK not initialized. Notifications will be saved to database only.');
+    }
   }
 
   /**

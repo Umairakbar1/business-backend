@@ -5,7 +5,7 @@ export { default as Category } from './admin/category.js';
 export { default as SubCategory } from './admin/subCategory.js';
 export { default as BusinessSubscription } from './admin/businessSubsciption.js';
 export { default as Subscription } from './admin/subscription.js';
-export { default as Payment } from './admin/payment.js';
+export { default as AdminPayment } from './admin/payment.js';
 export { default as Media } from './admin/media.js';
 export { default as Coupon } from './admin/coupon.js';
 export { default as QueryTicket } from './admin/queryTicket.js';

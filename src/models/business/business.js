@@ -253,6 +253,21 @@ BusinessSchema.methods.getBusinessInfo = function() {
 
 // Pre-save middleware to automatically populate coordinates for geospatial queries
 BusinessSchema.pre('save', function(next) {
+  // Clean up businessUrls to remove invalid entries
+  if (this.businessUrls && Array.isArray(this.businessUrls)) {
+    this.businessUrls = this.businessUrls.filter(url => 
+      url && 
+      typeof url === 'object' && 
+      url.label && 
+      url.link && 
+      typeof url.label === 'string' && 
+      typeof url.link === 'string' &&
+      url.label.trim() !== '' &&
+      url.link.trim() !== ''
+    );
+  }
+
+  // Handle location coordinates
   if (this.location && this.location.lat && this.location.lng) {
     this.location.coordinates = [this.location.lng, this.location.lat]; // [longitude, latitude]
     this.location.type = 'Point';
@@ -263,6 +278,22 @@ BusinessSchema.pre('save', function(next) {
 // Pre-update middleware for findOneAndUpdate operations
 BusinessSchema.pre('findOneAndUpdate', function(next) {
   const update = this.getUpdate();
+  
+  // Clean up businessUrls to remove invalid entries
+  if (update.businessUrls && Array.isArray(update.businessUrls)) {
+    update.businessUrls = update.businessUrls.filter(url => 
+      url && 
+      typeof url === 'object' && 
+      url.label && 
+      url.link && 
+      typeof url.label === 'string' && 
+      typeof url.link === 'string' &&
+      url.label.trim() !== '' &&
+      url.link.trim() !== ''
+    );
+  }
+
+  // Handle location coordinates
   if (update.location && update.location.lat && update.location.lng) {
     update.location.coordinates = [update.location.lng, update.location.lat];
     update.location.type = 'Point';

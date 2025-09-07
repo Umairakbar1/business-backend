@@ -146,6 +146,34 @@ const verifyRegistrationOtp = async (req, res) => {
   // Delete the email verification record
   await EmailVerification.findByIdAndDelete(emailVerification._id);
 
+  // Send notifications for new user registration
+  try {
+    const NotificationHelper = (await import('../../helpers/notificationHelper.js')).default;
+    const Admin = (await import('../../models/admin/admin.js')).default;
+    
+    // Send notification to all admins about new user registration
+    const admins = await Admin.find({ status: 'active' });
+    for (const admin of admins) {
+      await NotificationHelper.sendUserNotifications.newUserRegistration(
+        admin._id,
+        {
+          userId: user._id,
+          userName: user.name,
+          userEmail: user.email,
+          registrationDate: new Date(),
+          actor: {
+            type: 'system',
+            name: 'System',
+            email: 'system@business.com'
+          }
+        }
+      );
+    }
+  } catch (notificationError) {
+    console.error('Error sending user registration notifications:', notificationError);
+    // Don't fail the request if notifications fail
+  }
+
   // Generate JWT token
   const token = signAccessToken(user._id);
 
