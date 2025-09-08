@@ -93,8 +93,8 @@ const notificationSchema = new mongoose.Schema({
   // Status tracking
   status: {
     type: String,
-    enum: ['sent', 'delivered', 'read', 'failed'],
-    default: 'sent'
+    enum: ['pending', 'sent', 'delivered', 'read', 'failed', 'no_token', 'fcm_failed', 'no_firebase'],
+    default: 'pending'
   },
   readAt: {
     type: Date,

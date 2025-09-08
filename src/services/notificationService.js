@@ -15,63 +15,12 @@ class NotificationService {
    * Send notification to a single user
    */
   async sendToUser(recipientId, recipientType, notificationData) {
+    let fcmToken = null;
+    let fcmResponse = null;
+    let notificationStatus = 'sent';
+
     try {
-      if (!this.messaging) {
-        console.warn('Firebase not initialized, skipping notification');
-        return { success: false, error: 'Firebase not initialized' };
-      }
-
-      // Get recipient's FCM token
-      const fcmToken = await this.getFCMToken(recipientId, recipientType);
-      if (!fcmToken) {
-        console.warn(`No FCM token found for ${recipientType} ${recipientId}`);
-        return { success: false, error: 'No FCM token found' };
-      }
-
-      // Create notification message
-      const message = {
-        token: fcmToken,
-        notification: {
-          title: notificationData.title,
-          body: notificationData.body,
-          image: notificationData.image || null
-        },
-        data: {
-          type: notificationData.type,
-          category: notificationData.category,
-          actionUrl: notificationData.actionUrl || '',
-          ...notificationData.data
-        },
-        android: {
-          priority: notificationData.priority || 'normal',
-          notification: {
-            channelId: 'default',
-            priority: notificationData.priority || 'normal',
-            defaultSound: true,
-            defaultVibrateTimings: true
-          }
-        },
-        apns: {
-          payload: {
-            aps: {
-              sound: 'default',
-              badge: 1
-            }
-          }
-        },
-        webpush: {
-          notification: {
-            icon: '/favicon.ico',
-            badge: '/favicon.ico',
-            requireInteraction: true
-          }
-        }
-      };
-
-      // Send the message
-      const response = await this.messaging.send(message);
-
-      // Save notification to database
+      // Always save notification to database first
       const notification = new Notification({
         recipient: recipientId,
         recipientType: recipientType,
@@ -84,23 +33,107 @@ class NotificationService {
         actionUrl: notificationData.actionUrl,
         actionData: notificationData.data || {},
         priority: notificationData.priority || 'normal',
-        fcmToken: fcmToken,
-        fcmMessageId: response,
-        status: 'sent',
+        status: 'pending',
         metadata: notificationData.metadata || {}
       });
 
       await notification.save();
+      console.log(`📝 Notification saved to database for ${recipientType} ${recipientId}`);
 
-      console.log(`✅ Notification sent to ${recipientType} ${recipientId}: ${response}`);
-      return { success: true, messageId: response, notificationId: notification._id };
+      // Try to send via Firebase if available
+      if (this.messaging) {
+        try {
+          // Get recipient's FCM token
+          fcmToken = await this.getFCMToken(recipientId, recipientType);
+          
+          if (fcmToken) {
+            // Create notification message
+            const message = {
+              token: fcmToken,
+              notification: {
+                title: notificationData.title,
+                body: notificationData.body,
+                image: notificationData.image || null
+              },
+              data: {
+                type: notificationData.type,
+                category: notificationData.category,
+                actionUrl: notificationData.actionUrl || '',
+                ...notificationData.data
+              },
+              android: {
+                priority: notificationData.priority || 'normal',
+                notification: {
+                  channelId: 'default',
+                  priority: notificationData.priority || 'normal',
+                  defaultSound: true,
+                  defaultVibrateTimings: true
+                }
+              },
+              apns: {
+                payload: {
+                  aps: {
+                    sound: 'default',
+                    badge: 1
+                  }
+                }
+              },
+              webpush: {
+                notification: {
+                  icon: '/favicon.ico',
+                  badge: '/favicon.ico',
+                  requireInteraction: true
+                }
+              }
+            };
+
+            // Send the message
+            fcmResponse = await this.messaging.send(message);
+            notificationStatus = 'sent';
+            
+            // Update notification with FCM details
+            notification.fcmToken = fcmToken;
+            notification.fcmMessageId = fcmResponse;
+            notification.status = 'sent';
+            await notification.save();
+
+            console.log(`✅ Notification sent via Firebase to ${recipientType} ${recipientId}: ${fcmResponse}`);
+          } else {
+            console.warn(`No FCM token found for ${recipientType} ${recipientId}, notification saved to database only`);
+            notificationStatus = 'no_token';
+            notification.status = 'no_token';
+            await notification.save();
+          }
+        } catch (fcmError) {
+          console.error(`❌ Firebase notification failed for ${recipientType} ${recipientId}:`, fcmError.message);
+          notificationStatus = 'fcm_failed';
+          notification.status = 'fcm_failed';
+          notification.metadata = {
+            ...notification.metadata,
+            fcmError: fcmError.message
+          };
+          await notification.save();
+        }
+      } else {
+        console.warn('Firebase not initialized, notification saved to database only');
+        notificationStatus = 'no_firebase';
+        notification.status = 'no_firebase';
+        await notification.save();
+      }
+
+      return { 
+        success: true, 
+        messageId: fcmResponse, 
+        notificationId: notification._id,
+        status: notificationStatus
+      };
 
     } catch (error) {
-      console.error(`❌ Failed to send notification to ${recipientType} ${recipientId}:`, error.message);
+      console.error(`❌ Failed to process notification for ${recipientType} ${recipientId}:`, error.message);
       
-      // Save failed notification
+      // Try to save failed notification
       try {
-        const notification = new Notification({
+        const failedNotification = new Notification({
           recipient: recipientId,
           recipientType: recipientType,
           recipientModel: recipientType === 'business' ? 'Business' : 'Admin',
@@ -118,7 +151,7 @@ class NotificationService {
             error: error.message
           }
         });
-        await notification.save();
+        await failedNotification.save();
       } catch (saveError) {
         console.error('Failed to save failed notification:', saveError.message);
       }

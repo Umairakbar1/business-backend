@@ -1351,3 +1351,290 @@ export const getSearchSuggestions = async (req, res) => {
   }
 };
 
+// 7. Get aggregated homepage data: top categories and subcategories with related businesses
+export const getHomePageData = async (req, res) => {
+  try {
+    const {
+      categoriesLimit = 8,
+      businessesPerCategory = 10,
+      subcategoriesPerCategory = 10,
+      topSubcategoriesLimit = 12,
+    } = req.query;
+
+    // Helper: coerce to numbers safely
+    const toNum = (v, d) => {
+      const n = Number(v);
+      return Number.isFinite(n) && n > 0 ? n : d;
+    };
+
+    // For the "most businesses" section we only need two categories
+    const catLimit = toNum(categoriesLimit, 8);
+    const mostBusinessCatLimit = 2;
+    const bizPerCat = toNum(businessesPerCategory, 10);
+    const subPerCat = toNum(subcategoriesPerCategory, 10);
+    const topSubLimit = toNum(topSubcategoriesLimit, 12);
+
+    // Optional location filtering
+    let hasCoordinates = false;
+    let userLat = null;
+    let userLng = null;
+    const DEFAULT_RADIUS = 100;
+    const searchRadius = req.query.radius ? parseFloat(req.query.radius) : DEFAULT_RADIUS;
+    if (req.query.lat && req.query.lng) {
+      const lat = parseFloat(req.query.lat);
+      const lng = parseFloat(req.query.lng);
+      if (!isNaN(lat) && !isNaN(lng)) {
+        hasCoordinates = true;
+        userLat = lat;
+        userLng = lng;
+      }
+    }
+
+    // 1) Top categories by business count
+    const categoriesByBusinessCountAgg = await Business.aggregate([
+      { $match: { status: 'active' } },
+      {
+        $group: {
+          _id: '$category',
+          businessCount: { $sum: 1 },
+        },
+      },
+      { $sort: { businessCount: -1 } },
+      { $limit: mostBusinessCatLimit },
+      {
+        $lookup: {
+          from: 'categories',
+          localField: '_id',
+          foreignField: '_id',
+          as: 'category',
+        },
+      },
+      { $unwind: '$category' },
+      {
+        $project: {
+          _id: '$category._id',
+          title: '$category.title',
+          slug: '$category.slug',
+          description: '$category.description',
+          image: '$category.image',
+          color: '$category.color',
+          businessCount: 1,
+        },
+      },
+    ]);
+
+    // For each category, fetch a limited set of businesses and subcategories
+    const categoriesMostBusinesses = await Promise.all(
+      categoriesByBusinessCountAgg.map(async (cat) => {
+        const [businesses, subcategories] = await Promise.all([
+          // Populate businesses for this category similar to getBusinessListings
+          Business.aggregate([
+            { $match: { status: 'active', category: cat._id } },
+            // Ensure subcategories is always an array
+            { $addFields: { subcategories: { $cond: { if: { $isArray: '$subcategories' }, then: '$subcategories', else: [] } } } },
+            // Distance calculation when coordinates provided
+            ...(hasCoordinates ? [
+              {
+                $addFields: {
+                  distance: {
+                    $let: {
+                      vars: { userLat: userLat, userLng: userLng },
+                      in: {
+                        $cond: {
+                          if: {
+                            $or: [
+                              { $and: [ { $ne: ['$location.lat', null] }, { $ne: ['$location.lng', null] } ] },
+                              { $and: [ { $ne: ['$location.coordinates', null] }, { $expr: { $eq: [{ $size: '$location.coordinates' }, 2] } } ] }
+                            ]
+                          },
+                          then: {
+                            $let: {
+                              vars: {
+                                businessLat: { $cond: { if: { $ne: ['$location.lat', null] }, then: '$location.lat', else: { $arrayElemAt: ['$location.coordinates', 1] } } },
+                                businessLng: { $cond: { if: { $ne: ['$location.lng', null] }, then: '$location.lng', else: { $arrayElemAt: ['$location.coordinates', 0] } } }
+                              },
+                              in: {
+                                $multiply: [
+                                  { $acos: { $add: [
+                                    { $multiply: [ { $sin: { $multiply: [{ $divide: [{ $multiply: ['$$businessLat', 0.0174533] }, 2] }, 2] } }, { $sin: { $multiply: [{ $divide: [{ $multiply: ['$$userLat', 0.0174533] }, 2] }, 2] } } ] },
+                                    { $multiply: [ { $cos: { $multiply: ['$$businessLat', 0.0174533] } }, { $cos: { $multiply: ['$$userLat', 0.0174533] } }, { $cos: { $multiply: [{ $subtract: ['$$businessLng', '$$userLng'] }, 0.0174533] } } ] }
+                                  ] } },
+                                  6371
+                                ]
+                              }
+                            }
+                          },
+                          else: null
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              { $match: { distance: { $lte: searchRadius } } },
+            ] : []),
+            // Reviews and ratings (approved only)
+            {
+              $lookup: {
+                from: 'reviews',
+                let: { businessId: '$_id' },
+                pipeline: [
+                  { $match: { $expr: { $eq: ['$businessId', '$$businessId'] }, status: 'approved' } },
+                ],
+                as: 'reviews',
+              },
+            },
+            { $addFields: { avgRating: { $avg: '$reviews.rating' }, reviewsCount: { $size: '$reviews' } } },
+            // Category data
+            {
+              $lookup: {
+                from: 'categories',
+                let: { categoryId: '$category' },
+                pipeline: [
+                  { $match: { $expr: { $eq: ['$_id', '$$categoryId'] }, status: 'active' } },
+                  { $project: { _id: 1, title: 1, description: 1, image: 1, slug: 1 } },
+                ],
+                as: 'categoryData',
+              },
+            },
+            // Subcategory data
+            {
+              $lookup: {
+                from: 'subcategories',
+                let: { subcategoryIds: '$subcategories' },
+                pipeline: [
+                  { $match: { $expr: { $in: ['$_id', '$$subcategoryIds'] }, status: 'active' } },
+                  { $project: { _id: 1, title: 1, description: 1, image: 1, categoryId: 1, slug: 1 } },
+                ],
+                as: 'subcategoryData',
+              },
+            },
+            // Sort boosted first then by distance if available, else by recent
+            { $addFields: { sortOrder: { $cond: { if: { $eq: ['$isBoosted', true] }, then: 0, else: 1 } } } },
+            ...(hasCoordinates ? [ { $sort: { sortOrder: 1, distance: 1, createdAt: -1 } } ] : [ { $sort: { sortOrder: 1, createdAt: -1 } } ]),
+            { $limit: bizPerCat },
+            // Final projection (align with getBusinessListings)
+            {
+              $project: {
+                _id: 1,
+                businessName: 1,
+                email: 1,
+                phoneNumber: 1,
+                address: 1,
+                location: 1,
+                website: 1,
+                logo: 1,
+                description: 1,
+                category: { $arrayElemAt: ['$categoryData', 0] },
+                subcategories: '$subcategoryData',
+                claimed: 1,
+                status: 1,
+                avgRating: 1,
+                reviewsCount: 1,
+                media: 1,
+                createdAt: 1,
+                updatedAt: 1,
+                ...(hasCoordinates ? { distance: 1 } : {}),
+              },
+            },
+          ]),
+          SubCategory.find({ categoryId: cat._id, status: 'active' })
+            .select('_id title slug image')
+            .sort({ title: 1 })
+            .limit(subPerCat)
+            .lean(),
+        ]);
+
+        return { ...cat, businesses, subcategories };
+      })
+    );
+
+    // 2) Categories with most subcategories
+    const categoriesBySubcategoryCount = await SubCategory.aggregate([
+      { $match: { status: 'active' } },
+      { $group: { _id: '$categoryId', subcategoryCount: { $sum: 1 } } },
+      { $sort: { subcategoryCount: -1 } },
+      { $limit: catLimit },
+      {
+        $lookup: {
+          from: 'categories',
+          localField: '_id',
+          foreignField: '_id',
+          as: 'category',
+        },
+      },
+      { $unwind: '$category' },
+      {
+        $project: {
+          _id: '$category._id',
+          title: '$category.title',
+          slug: '$category.slug',
+          description: '$category.description',
+          image: '$category.image',
+          color: '$category.color',
+          subcategoryCount: 1,
+        },
+      },
+    ]);
+
+    const categoriesMostSubcategories = await Promise.all(
+      categoriesBySubcategoryCount.map(async (cat) => {
+        const subcategories = await SubCategory.find({ categoryId: cat._id, status: 'active' })
+          .select('_id title slug image')
+          .sort({ title: 1 })
+          .limit(subPerCat)
+          .lean();
+
+        return { ...cat, subcategories };
+      })
+    );
+
+    // 3) Top categories globally by business count
+    const topCategories = await Business.aggregate([
+      { $match: { status: 'active' } },
+      { $group: { _id: '$category', businessCount: { $sum: 1 } } },
+      { $sort: { businessCount: -1 } },
+      { $limit: topSubLimit },
+      {
+        $lookup: {
+          from: 'categories',
+          localField: '_id',
+          foreignField: '_id',
+          as: 'category',
+        },
+      },
+      { $unwind: '$category' },
+      {
+        $project: {
+          _id: '$category._id',
+          title: '$category.title',
+          slug: '$category.slug',
+          description: '$category.description',
+          image: '$category.image',
+          color: '$category.color',
+          businessCount: 1,
+        },
+      },
+    ]);
+
+    return res.json({
+      success: true,
+      data: {
+        categoriesMostBusinesses,
+        categoriesMostSubcategories,
+        topCategories,
+      },
+      meta: {
+        categoriesLimit: catLimit,
+        businessesPerCategory: bizPerCat,
+        subcategoriesPerCategory: subPerCat,
+        topSubcategoriesLimit: topSubLimit,
+      },
+    });
+  } catch (error) {
+    console.error('❌ Error fetching home page data:', error);
+    console.error('❌ Error stack:', error.stack);
+    return res.status(500).json({ success: false, message: 'Failed to fetch home page data', error: error.message });
+  }
+};
+
