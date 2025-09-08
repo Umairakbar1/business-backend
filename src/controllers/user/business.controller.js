@@ -3,12 +3,29 @@ import Review from '../../models/admin/review.js';
 import Media from '../../models/admin/media.js';
 import Category from '../../models/admin/category.js';
 import SubCategory from '../../models/admin/subCategory.js';
-import Subscription from '../../models/admin/subscription.js';
 import mongoose from 'mongoose';
 
 // 1. Get business listings with filters
 export const getBusinessListings = async (req, res) => {
   try {
+    // Helper functions for success and error responses
+    const successResponse = (data, message = 'Businesses retrieved successfully', meta = {}) => {
+      return res.status(200).json({
+        success: true,
+        message,
+        data,
+        meta
+      });
+    };
+
+    const errorResponse = (message = 'Failed to fetch businesses', statusCode = 500, error = null) => {
+      return res.status(statusCode).json({
+        success: false,
+        message,
+        error: error?.message || error
+      });
+    };
+
     const {
       rating,
       location,
@@ -69,10 +86,7 @@ export const getBusinessListings = async (req, res) => {
       if (mongoose.Types.ObjectId.isValid(categoryId)) {
         filter.category = new mongoose.Types.ObjectId(categoryId);
       } else {
-        return res.status(400).json({
-          success: false,
-          message: 'Invalid category ID format'
-        });
+        return errorResponse('Invalid category ID format', 400);
       }
     }
     
@@ -88,27 +102,45 @@ export const getBusinessListings = async (req, res) => {
       const validSubcategoryIds = subcategoryIds.filter(id => mongoose.Types.ObjectId.isValid(id));
       
       if (validSubcategoryIds.length === 0) {
-        return res.status(400).json({
-          success: false,
-          message: 'Invalid subcategory ID format(s)'
-        });
+        return errorResponse('Invalid subcategory ID format(s)', 400);
       }
       
       const objectIdSubcategories = validSubcategoryIds.map(id => new mongoose.Types.ObjectId(id));
       filter.subcategories = { $in: objectIdSubcategories };
     }
-         // Handle text-based location filtering (only if no coordinates or as fallback)
-     if (parsedLocation && !lat && !lng && parsedLocation !== 'null') {
-       const searchText = typeof parsedLocation === 'string' ? parsedLocation : parsedLocation.description;
-       if (searchText && searchText !== 'null') {
-         filter.$or = [
-           { 'location.description': { $regex: searchText, $options: 'i' } },
-           { city: { $regex: searchText, $options: 'i' } },
-           { state: { $regex: searchText, $options: 'i' } },
-           { address: { $regex: searchText, $options: 'i' } }
-         ];
-       }
-     }
+    // Handle text-based location filtering (only if no coordinates or as fallback)
+    if (parsedLocation && !lat && !lng && parsedLocation !== 'null') {
+      const searchText = typeof parsedLocation === 'string' ? parsedLocation : parsedLocation.description;
+      if (searchText && searchText !== 'null') {
+        console.log('🔍 Text-based location search:', searchText);
+        console.log('🔍 Parsed location object:', parsedLocation);
+        
+        // Check if searchText is a ZIP code (numeric)
+        const isZipCode = /^\d{5}(-\d{4})?$/.test(searchText.trim());
+        
+        if (isZipCode) {
+          // Search by ZIP code
+          filter.$or = [
+            { 'location.postcode': { $regex: searchText.trim(), $options: 'i' } },
+            { 'location.description': { $regex: searchText.trim(), $options: 'i' } },
+            { address: { $regex: searchText.trim(), $options: 'i' } }
+          ];
+        } else {
+          // Search by city name or general location
+          filter.$or = [
+            { 'location.description': { $regex: searchText, $options: 'i' } },
+            { city: { $regex: searchText, $options: 'i' } },
+            { state: { $regex: searchText, $options: 'i' } },
+            { address: { $regex: searchText, $options: 'i' } },
+            { 'location.city': { $regex: searchText, $options: 'i' } },
+            { 'location.state': { $regex: searchText, $options: 'i' } }
+          ];
+        }
+        
+        console.log('🔍 Applied text filter:', filter.$or);
+        console.log('🔍 Final filter object:', JSON.stringify(filter, null, 2));
+      }
+    }
     
     // Handle coordinates-based location filtering
     let hasCoordinates = false;
@@ -210,13 +242,32 @@ export const getBusinessListings = async (req, res) => {
        $expr: { $eq: [{ $size: '$location.coordinates' }, 2] }
      });
      
-     // Debug: Get a sample business to see its location structure
-     const sampleBusiness = await Business.findOne({
-       $or: [
-         { 'location.lat': { $exists: true, $ne: null } },
-         { 'location.coordinates': { $exists: true, $ne: null } }
-       ]
-     }).select('businessName location');
+    // Debug: Get a sample business to see its location structure
+    const sampleBusiness = await Business.findOne({
+      $or: [
+        { 'location.lat': { $exists: true, $ne: null } },
+        { 'location.coordinates': { $exists: true, $ne: null } }
+      ]
+    }).select('businessName location city state address');
+    
+    // Debug: Get businesses with text-based location data
+    const businessesWithTextLocation = await Business.find({
+      $or: [
+        { city: { $exists: true, $ne: null } },
+        { state: { $exists: true, $ne: null } },
+        { address: { $exists: true, $ne: null } },
+        { 'location.description': { $exists: true, $ne: null } }
+      ]
+    }).limit(3).select('businessName location city state address');
+    
+    console.log('🔍 Sample business with coordinates:', sampleBusiness);
+    console.log('🔍 Sample businesses with text location:', businessesWithTextLocation);
+    
+    // Debug: Test the text-based filter if it exists
+    if (filter.$or) {
+      const testBusinesses = await Business.find(filter).limit(5).select('businessName location city state address');
+      console.log('🔍 Businesses matching text filter:', testBusinesses);
+    }
      
     // Aggregate to filter by average rating if needed - Only approved reviews
     let pipeline = [
@@ -516,6 +567,8 @@ export const getBusinessListings = async (req, res) => {
       const fallbackFilter = { ...filter };
       delete fallbackFilter.$and;
       
+      console.log('🔄 No businesses found with coordinates, trying fallback search...');
+      
       const fallbackPipeline = [
         { $match: fallbackFilter },
         // Ensure subcategories is always an array
@@ -685,17 +738,13 @@ export const getBusinessListings = async (req, res) => {
       const fallbackBusinesses = await Business.aggregate(fallbackPipeline);
       
       if (fallbackBusinesses.length > 0) {
-        return res.json({
-          success: true,
-          data: fallbackBusinesses,
-          meta: {
-            total: fallbackBusinesses.length,
-            page: Number(page),
-            limit: Number(limit),
-            hasNextPage: fallbackBusinesses.length === Number(limit),
-            totalPages: Math.ceil(fallbackBusinesses.length / Number(limit)),
-            note: 'No businesses found in your specified location. Showing businesses from other areas instead.'
-          }
+        return successResponse(fallbackBusinesses, 'No businesses found in your specified location. Showing businesses from other areas instead.', {
+          total: fallbackBusinesses.length,
+          page: Number(page),
+          limit: Number(limit),
+          hasNextPage: fallbackBusinesses.length === Number(limit),
+          totalPages: Math.ceil(fallbackBusinesses.length / Number(limit)),
+          note: 'No businesses found in your specified location. Showing businesses from other areas instead.'
         });
       }
     }
@@ -706,24 +755,20 @@ export const getBusinessListings = async (req, res) => {
     const hasNextPage = currentPage < totalPages;
     const hasPrevPage = currentPage > 1;
     
-    // Add metadata about the search
-    const response = {
-      success: true,
-      data: businesses,
-      meta: {
-        total: totalCount,
-        page: currentPage,
-        limit: Number(limit),
-        totalPages,
-        hasNextPage,
-        hasPrevPage,
-        showing: `${(currentPage - 1) * Number(limit) + 1}-${Math.min(currentPage * Number(limit), totalCount)} of ${totalCount} businesses`
-      }
+    // Prepare metadata for the search
+    const meta = {
+      total: totalCount,
+      page: currentPage,
+      limit: Number(limit),
+      totalPages,
+      hasNextPage,
+      hasPrevPage,
+      showing: `${(currentPage - 1) * Number(limit) + 1}-${Math.min(currentPage * Number(limit), totalCount)} of ${totalCount} businesses`
     };
     
     // Add location info if coordinates were used
     if (hasCoordinates) {
-      response.meta.location = {
+      meta.location = {
         userLat,
         userLng,
         radius: searchRadius,
@@ -731,16 +776,24 @@ export const getBusinessListings = async (req, res) => {
       };
     }
     
-    // Add message if no businesses found
+    // Determine message based on results
+    let message = 'Businesses retrieved successfully';
     if (businesses.length === 0) {
-      response.message = hasCoordinates 
-        ? `No businesses found within ${searchRadius}km of your location. Try expanding your search radius or removing location filters.`
-        : 'No businesses found matching your criteria. Try adjusting your filters.';
+      const hasTextLocation = parsedLocation && !lat && !lng && parsedLocation !== 'null';
+      
+      if (hasCoordinates) {
+        message = `No businesses found within ${searchRadius}km of your location. Try expanding your search radius or removing location filters.`;
+      } else if (hasTextLocation) {
+        const searchText = typeof parsedLocation === 'string' ? parsedLocation : parsedLocation.description;
+        message = `No businesses found in "${searchText}". Try searching for a nearby city or removing location filters.`;
+      } else {
+        message = 'No businesses found matching your criteria. Try adjusting your filters.';
+      }
     }
     
-    res.json(response);
+    return successResponse(businesses, message, meta);
   } catch (error) {
-    res.status(500).json({ success: false, message: 'Failed to fetch businesses', error: error.message });
+    return errorResponse('Failed to fetch businesses', 500, error);
   }
 };
 

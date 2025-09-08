@@ -96,56 +96,334 @@ const getAllBlogs = async (req, res) => {
             categoryId, 
             subCategoryId, 
             search,
-            status = 'published' // Only show published blogs to users
         } = req.query;
         
-        const query = { status: 'published' }; // Only published blogs
+        // Import Comment model for aggregation
+        const Comment = (await import('../../models/user/comment.js')).default;
         
-        // Filter by category ID
-        if (categoryId) {
-            query.category = categoryId;
+        // Clean and validate parameters
+        const cleanCategoryId = categoryId && categoryId !== 'null' && categoryId !== 'undefined' ? categoryId : null;
+        const cleanSubCategoryId = subCategoryId && subCategoryId !== 'null' && subCategoryId !== 'undefined' ? subCategoryId : null;
+        const cleanSearch = search && search !== 'null' && search !== 'undefined' && search.trim() !== '' ? search.trim() : null;
+        
+        // If categoryId is provided and valid, return paginated blogs for that specific category
+        if (cleanCategoryId) {
+            console.log('CategoryId provided:', cleanCategoryId);
+            
+            const query = { 
+                status: 'published',
+                category: cleanCategoryId
+            };
+            
+            // Filter by subcategory ID
+            if (cleanSubCategoryId) {
+                query.subCategory = cleanSubCategoryId;
+            }
+            
+            // Search by blog title
+            if (cleanSearch) {
+                query.title = { $regex: cleanSearch, $options: 'i' };
+            }
+
+            console.log('Query for category blogs:', JSON.stringify(query, null, 2));
+
+            const skip = (parseInt(page) - 1) * parseInt(limit);
+            
+            // Get category information
+            const LogCategory = (await import('../../models/admin/logCategory.js')).default;
+            const category = await LogCategory.findById(cleanCategoryId);
+            
+            console.log('Found category:', category ? category.title : 'NOT FOUND');
+            
+            if (!category) {
+                return errorResponseHelper(res, {
+                    message: 'Category not found',
+                    code: 'CATEGORY_NOT_FOUND'
+                });
+            }
+
+            // First, let's check if there are any blogs for this category at all
+            const totalBlogsInCategory = await Blog.countDocuments(query);
+            console.log('Total blogs in category:', totalBlogsInCategory);
+
+            // First, let's try a simple query to see if blogs exist
+            const simpleBlogs = await Blog.find(query)
+                .populate('category', '_id title description')
+                .populate('subCategory', '_id title description')
+                .populate({
+                    path: 'author',
+                    select: 'name email'
+                })
+                .sort({ createdAt: -1 })
+                .skip(skip)
+                .limit(parseInt(limit))
+                .select('-__v');
+
+            console.log('Simple query result count:', simpleBlogs.length);
+            console.log('Simple query blogs:', simpleBlogs.map(b => ({ id: b._id, title: b.title })));
+
+            // Get blogs with comment counts for this specific category
+            const blogsWithCommentCounts = await Blog.aggregate([
+                { $match: query },
+                { $lookup: {
+                    from: 'comments',
+                    localField: '_id',
+                    foreignField: 'blogId',
+                    as: 'comments',
+                    pipeline: [
+                        { $match: { status: 'active' } }
+                    ]
+                }},
+                { $addFields: {
+                    commentCount: { $size: '$comments' }
+                }},
+                { $lookup: {
+                    from: 'users',
+                    localField: 'author',
+                    foreignField: '_id',
+                    as: 'authorInfo',
+                    pipeline: [
+                        { $project: { name: 1, email: 1 } }
+                    ]
+                }},
+                { $lookup: {
+                    from: 'logsubcategories',
+                    localField: 'subCategory',
+                    foreignField: '_id',
+                    as: 'subCategoryInfo',
+                    pipeline: [
+                        { $project: { _id: 1, title: 1, description: 1 } }
+                    ]
+                }},
+                { $addFields: {
+                    author: { $arrayElemAt: ['$authorInfo', 0] },
+                    subCategory: { $arrayElemAt: ['$subCategoryInfo', 0] }
+                }},
+                { $project: {
+                    _id: 1,
+                    title: 1,
+                    description: 1,
+                    content: 1,
+                    coverImage: 1,
+                    author: 1,
+                    authorName: 1,
+                    authorEmail: 1,
+                    subCategory: 1,
+                    tags: 1,
+                    publishedAt: 1,
+                    views: 1,
+                    likes: 1,
+                    shares: 1,
+                    commentCount: 1,
+                    createdAt: 1,
+                    updatedAt: 1
+                }},
+                { $sort: { createdAt: -1 } },
+                { $skip: skip },
+                { $limit: parseInt(limit) }
+            ]);
+
+            console.log('Aggregation result count:', blogsWithCommentCounts.length);
+            console.log('First few blogs:', blogsWithCommentCounts.slice(0, 2));
+
+            const total = await Blog.countDocuments(query);
+            console.log('Total count for pagination:', total);
+
+            // Return in the same structure as without categoryId
+            // Temporarily use simple query result to test
+            const blogsToReturn = simpleBlogs.length > 0 ? simpleBlogs : blogsWithCommentCounts;
+            
+            return successResponseHelper(res, {
+                data: [{
+                    category: {
+                        _id: category._id,
+                        title: category.title,
+                        description: category.description,
+                        image: category.image
+                    },
+                    blogs: blogsToReturn
+                }],
+                pagination: {
+                    page: parseInt(page),
+                    limit: parseInt(limit),
+                    total,
+                    pages: Math.ceil(total / parseInt(limit))
+                }
+            });
         }
         
-        // Filter by subcategory ID
-        if (subCategoryId) {
-            query.subCategory = subCategoryId;
+        // If no categoryId provided, return blogs grouped by category with max 4 most commented blogs per category
+        const baseQuery = { status: 'published' };
+        
+        console.log('No categoryId - getting all categories');
+        
+        // Apply search filter if provided
+        if (cleanSearch) {
+            baseQuery.title = { $regex: cleanSearch, $options: 'i' };
         }
         
-        // Search by blog title
-        if (search) {
-            query.title = { $regex: search, $options: 'i' };
+        // Apply subcategory filter if provided
+        if (cleanSubCategoryId) {
+            baseQuery.subCategory = cleanSubCategoryId;
         }
 
-        const skip = (parseInt(page) - 1) * parseInt(limit);
-        
-        const blogs = await Blog.find(query)
-            .populate('category', '_id title description')
-            .populate('subCategory', '_id title description')
-            .populate({
-                path: 'author',
-                select: 'name email' // Fixed: changed from firstName lastName to name for User model
+        console.log('Base query for all categories:', JSON.stringify(baseQuery, null, 2));
+
+        // Get all categories that have blogs
+        const categoriesWithBlogs = await Blog.aggregate([
+            { $match: baseQuery },
+            { $group: { _id: '$category' } },
+            { $lookup: {
+                from: 'logcategories',
+                localField: '_id',
+                foreignField: '_id',
+                as: 'categoryInfo'
+            }},
+            { $unwind: '$categoryInfo' },
+            { $match: { 'categoryInfo.status': 'active' } },
+            { $project: {
+                _id: 1,
+                title: '$categoryInfo.title',
+                description: '$categoryInfo.description',
+                image: '$categoryInfo.image'
+            }}
+        ]);
+
+        // For each category, get the top 4 most commented blogs
+        const categoriesWithBlogsData = await Promise.all(
+            categoriesWithBlogs.map(async (category) => {
+                // Get comment counts for blogs in this category
+                const blogsWithCommentCounts = await Blog.aggregate([
+                    { $match: { ...baseQuery, category: category._id } },
+                    { $lookup: {
+                        from: 'comments',
+                        localField: '_id',
+                        foreignField: 'blogId',
+                        as: 'comments',
+                        pipeline: [
+                            { $match: { status: 'active' } }
+                        ]
+                    }},
+                    { $addFields: {
+                        commentCount: { $size: '$comments' }
+                    }},
+                    { $lookup: {
+                        from: 'users',
+                        localField: 'author',
+                        foreignField: '_id',
+                        as: 'authorInfo',
+                        pipeline: [
+                            { $project: { name: 1, email: 1 } }
+                        ]
+                    }},
+                    { $lookup: {
+                        from: 'logsubcategories',
+                        localField: 'subCategory',
+                        foreignField: '_id',
+                        as: 'subCategoryInfo',
+                        pipeline: [
+                            { $project: { _id: 1, title: 1, description: 1 } }
+                        ]
+                    }},
+                    { $addFields: {
+                        author: { $arrayElemAt: ['$authorInfo', 0] },
+                        subCategory: { $arrayElemAt: ['$subCategoryInfo', 0] }
+                    }},
+                    { $project: {
+                        _id: 1,
+                        title: 1,
+                        description: 1,
+                        content: 1,
+                        coverImage: 1,
+                        author: 1,
+                        authorName: 1,
+                        authorEmail: 1,
+                        subCategory: 1,
+                        tags: 1,
+                        publishedAt: 1,
+                        views: 1,
+                        likes: 1,
+                        shares: 1,
+                        commentCount: 1,
+                        createdAt: 1,
+                        updatedAt: 1
+                    }},
+                    { $sort: { commentCount: -1, createdAt: -1 } },
+                    { $limit: 4 }
+                ]);
+
+                return {
+                    category: {
+                        _id: category._id,
+                        title: category.title,
+                        description: category.description,
+                        image: category.image
+                    },
+                    blogs: blogsWithCommentCounts
+                };
             })
-            .sort({ createdAt: -1 })
-            .skip(skip)
-            .limit(parseInt(limit))
-            .select('-__v'); // Exclude version key
+        );
 
-        const total = await Blog.countDocuments(query);
+        // Filter out categories that have no blogs (shouldn't happen but just in case)
+        const filteredCategories = categoriesWithBlogsData.filter(cat => cat.blogs.length > 0);
 
         return successResponseHelper(res, {
-            data:blogs,
-            pagination: {
-                page: parseInt(page),
-                limit: parseInt(limit),
-                total,
-                pages: Math.ceil(total / parseInt(limit))
-            }
+            data: filteredCategories
         });
     } catch (error) {
         console.error('Error in getAllBlogs:', error);
         return errorResponseHelper(res, {
             message: 'Failed to retrieve blogs',
             code: 'BLOG_FETCH_ERROR'
+        });
+    }
+};
+
+// Get recent articles (4 most recent blogs across all categories)
+const getRecentArticles = async (req, res) => {
+    try {
+        const { 
+            subCategoryId, 
+            search,
+            limit = 4
+        } = req.query;
+        
+        // Clean and validate parameters
+        const cleanSubCategoryId = subCategoryId && subCategoryId !== 'null' && subCategoryId !== 'undefined' ? subCategoryId : null;
+        const cleanSearch = search && search !== 'null' && search !== 'undefined' && search.trim() !== '' ? search.trim() : null;
+        
+        const baseQuery = { status: 'published' };
+        
+        // Apply search filter if provided
+        if (cleanSearch) {
+            baseQuery.title = { $regex: cleanSearch, $options: 'i' };
+        }
+        
+        // Apply subcategory filter if provided
+        if (cleanSubCategoryId) {
+            baseQuery.subCategory = cleanSubCategoryId;
+        }
+
+        // Get recent articles (most recent blogs across all categories)
+        const recentArticles = await Blog.find(baseQuery)
+            .populate('category', '_id title description')
+            .populate('subCategory', '_id title description')
+            .populate({
+                path: 'author',
+                select: 'name email'
+            })
+            .sort({ createdAt: -1 })
+            .limit(parseInt(limit))
+            .select('-__v');
+
+        return successResponseHelper(res, {
+            data: recentArticles
+        });
+    } catch (error) {
+        console.error('Error in getRecentArticles:', error);
+        return errorResponseHelper(res, {
+            message: 'Failed to retrieve recent articles',
+            code: 'RECENT_ARTICLES_FETCH_ERROR'
         });
     }
 };
@@ -384,6 +662,7 @@ const getSubCategoriesByCategory = async (req, res) => {
 export {
     createBlog,
     getAllBlogs,
+    getRecentArticles,
     getBlogById,
     getAllCategories,
     getSubCategoriesByCategory

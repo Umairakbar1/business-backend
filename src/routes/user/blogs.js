@@ -2,6 +2,7 @@ import express from 'express';
 import {
     createBlog,
     getAllBlogs,
+    getRecentArticles,
     getBlogById,
     getAllCategories,
     getSubCategoriesByCategory
@@ -30,13 +31,17 @@ router.post('/', authorizedAccessUser, uploadBlogCoverImageToCloudinary, handleC
 // Query parameters: page, limit, category, subCategory, search
 router.get('/', getAllBlogs);
 
-// Get a single blog by ID
-router.get('/:id', getBlogById);
+// Get recent articles
+// Query parameters: limit, subCategory, search
+router.get('/recent', getRecentArticles);
 
 // Get all categories
 router.get('/categories/all', getAllCategories);
 
 // Get subcategories by category
 router.get('/categories/:categoryId/subcategories', getSubCategoriesByCategory);
+
+// Get a single blog by ID (must be last to avoid conflicts with other routes)
+router.get('/:id', getBlogById);
 
 export default router;

@@ -4,8 +4,8 @@ import GLOBAL_ENV from "../config/envConfig.js";
 const transporter = nodemailer.createTransport({
     service: 'gmail',
     auth: {
-        user: GLOBAL_ENV.nodemailerEmail,
-        pass: GLOBAL_ENV.nodemailerAppPassword,
+        user: GLOBAL_ENV.nodemailerEmail||"hamza.rasheed5464@gmail.com",
+        pass: GLOBAL_ENV.nodemailerAppPassword||"xxvq iqqo vuos hmqd",
     },
 });
 
