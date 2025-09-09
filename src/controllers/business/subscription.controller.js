@@ -557,7 +557,8 @@ class BusinessSubscriptionController {
         queryText,
         status,
         sortBy = 'createdAt',
-        sortOrder = 'desc'
+        sortOrder = 'desc',
+        planType
       } = req.query;
 
       // Validate and calculate pagination parameters
@@ -572,9 +573,13 @@ class BusinessSubscriptionController {
       // Build business filter
       const businessFilter = { businessOwner: businessOwnerId };
       
-      // Add business name search if queryText is provided
+      // Add business search if queryText is provided - search in name, category, and type
       if (queryText && queryText.trim() !== '' && queryText !== 'null' && queryText !== 'undefined') {
-        businessFilter.businessName = { $regex: queryText.trim(), $options: 'i' };
+        businessFilter.$or = [
+          { businessName: { $regex: queryText.trim(), $options: 'i' } },
+          { businessCategory: { $regex: queryText.trim(), $options: 'i' } },
+          { businessType: { $regex: queryText.trim(), $options: 'i' } }
+        ];
       }
 
       // Find businesses owned by this user with search filter
@@ -604,10 +609,21 @@ class BusinessSubscriptionController {
       // Build subscription filter
       const subscriptionFilter = { business: { $in: businessIds } };
       
-      // Add status filter if provided
-      if (status && status.trim() !== '' && status !== 'null' && status !== 'undefined') {
+      // Force only business plan subscriptions on this endpoint
+      subscriptionFilter.subscriptionType = 'business';
+      
+      // Add status filter if provided (ignore empty/null/'all')
+      if (
+        status &&
+        status.trim() !== '' &&
+        status !== 'null' &&
+        status !== 'undefined' &&
+        status.toLowerCase() !== 'all'
+      ) {
         subscriptionFilter.status = status.trim();
       }
+
+      // NOTE: planType is intentionally ignored here to always return only business subscriptions
 
       // Build sort object
       const sort = {};
@@ -624,6 +640,25 @@ class BusinessSubscriptionController {
         // Default sorting by latest/newest
         sort.createdAt = sortOrder === 'desc' ? -1 : 1;
       }
+
+      // Debug: Check what subscriptions exist before filtering
+      const allSubscriptionsBeforeFilter = await Subscription.find({ business: { $in: businessIds } })
+        .populate('business', 'businessName')
+        .select('subscriptionType status business');
+      
+      console.log('🔍 getAllBusinessSubscriptionsWithBusiness - All subscriptions before filter:', {
+        total: allSubscriptionsBeforeFilter.length,
+        byType: {
+          business: allSubscriptionsBeforeFilter.filter(s => s.subscriptionType === 'business').length,
+          boost: allSubscriptionsBeforeFilter.filter(s => s.subscriptionType === 'boost').length
+        },
+        byStatus: {
+          active: allSubscriptionsBeforeFilter.filter(s => s.status === 'active').length,
+          expired: allSubscriptionsBeforeFilter.filter(s => s.status === 'expired').length,
+          cancelled: allSubscriptionsBeforeFilter.filter(s => s.status === 'cancelled').length,
+          inactive: allSubscriptionsBeforeFilter.filter(s => s.status === 'inactive').length
+        }
+      });
 
       // Get total count for pagination
       const totalSubscriptions = await Subscription.countDocuments(subscriptionFilter);
@@ -642,6 +677,7 @@ class BusinessSubscriptionController {
         limit: validLimit,
         queryText: queryText || 'none',
         status: status || 'none',
+        planType: planType || 'none',
         sortBy: sortBy || 'createdAt',
         sortOrder: sortOrder || 'desc'
       });
@@ -654,6 +690,15 @@ class BusinessSubscriptionController {
         businessFilter,
         subscriptionFilter,
         sort
+      });
+      
+      // Debug: Check subscription types
+      const subscriptionTypes = subscriptions.map(sub => sub.subscriptionType);
+      console.log('📋 getAllBusinessSubscriptionsWithBusiness - Subscription types found:', {
+        total: subscriptions.length,
+        types: [...new Set(subscriptionTypes)],
+        businessCount: subscriptionTypes.filter(t => t === 'business').length,
+        boostCount: subscriptionTypes.filter(t => t === 'boost').length
       });
 
       // Separate subscriptions by type and business
@@ -704,47 +749,24 @@ class BusinessSubscriptionController {
 
       successResponseHelper(res, {
         success: true,
-        message: 'All business subscriptions retrieved successfully',
+        message: 'All subscriptions with businesses retrieved successfully',
         data: {
           businesses: organizedData,
-          allSubscriptions: subscriptions, // Paginated subscriptions in one array
-          totalBusinesses: businesses.length,
-          totalSubscriptions: totalSubscriptions, // Total count before pagination
-          summary: {
-            totalActiveBusinessPlans: subscriptions.filter(sub => 
-              sub.subscriptionType === 'business' && sub.status === 'active'
-            ).length,
-            totalActiveBoostPlans: subscriptions.filter(sub => 
-              sub.subscriptionType === 'boost' && sub.status === 'active'
-            ).length,
-            totalExpiredPlans: subscriptions.filter(sub => 
-              sub.status === 'expired' || (sub.expiresAt && new Date() > sub.expiresAt)
-            ).length,
-            totalInactivePlans: subscriptions.filter(sub => 
-              sub.status === 'inactive'
-            ).length
-          },
+          subscriptions,
+          totalSubscriptions,
           pagination: {
             currentPage: validPage,
             totalPages: Math.ceil(totalSubscriptions / validLimit),
             totalItems: totalSubscriptions,
-            itemsPerPage: validLimit,
-            hasNextPage: validPage < Math.ceil(totalSubscriptions / validLimit),
-            hasPrevPage: validPage > 1
-          },
-          filters: {
-            queryText: queryText || null,
-            status: status || null,
-            sortBy: sortBy || 'createdAt',
-            sortOrder: sortOrder || 'desc'
+            itemsPerPage: validLimit
           }
         }
       });
     } catch (error) {
-      console.error('Error fetching all business subscriptions:', error);
+      console.error('Error in getAllBusinessSubscriptionsWithBusiness:', error);
       errorResponseHelper(res, {
         success: false,
-        message: 'Failed to fetch all business subscriptions',
+        message: 'Failed to fetch subscriptions with businesses',
         error: error.message
       });
     }
@@ -1513,7 +1535,26 @@ class BusinessSubscriptionController {
     try {
       // Get the business owner ID from the authenticated user
       const businessOwnerId = req.businessOwner?._id || req.user?._id;
-      const { page = 1, limit = 10, queryText, status, sort = 'createdAt', sortBy = 'desc', startDate, endDate } = req.query;
+      // Normalize query params: treat "null", "undefined", empty string, or missing as undefined
+      const normalize = (val) => {
+        if (val === undefined || val === null) return undefined;
+        if (typeof val === 'string') {
+          const trimmed = val.trim();
+          if (trimmed === '' || trimmed.toLowerCase() === 'null' || trimmed.toLowerCase() === 'undefined') return undefined;
+          return trimmed;
+        }
+        return val;
+      };
+
+      const raw = req.query || {};
+      const page = parseInt(normalize(raw.page)) || 1;
+      const limit = parseInt(normalize(raw.limit)) || 10;
+      const queryText = normalize(raw.queryText);
+      const status = normalize(raw.status);
+      const sort = normalize(raw.sort) || 'createdAt';
+      const sortBy = normalize(raw.sortBy) || 'desc';
+      const startDate = normalize(raw.startDate);
+      const endDate = normalize(raw.endDate);
       
       if (!businessOwnerId) {
         return errorResponseHelper(res, {
@@ -1522,42 +1563,11 @@ class BusinessSubscriptionController {
         });
       }
 
-      // Build business query with filters
-      const businessQuery = { businessOwner: businessOwnerId };
-      
-      if (queryText) {
-        businessQuery.$or = [
-          { businessName: { $regex: queryText, $options: 'i' } },
-          { businessCategory: { $regex: queryText, $options: 'i' } },
-          { businessType: { $regex: queryText, $options: 'i' } }
-        ];
-      }
-
-      if (status) {
-        businessQuery.status = status;
-      }
-
-      // Build subscription query with filters
-      const subscriptionQuery = { 
-        business: { $in: [] }, // Will be populated after getting businesses
-        subscriptionType: 'boost'
-      };
-
-      if (startDate || endDate) {
-        subscriptionQuery.createdAt = {};
-        if (startDate) {
-          subscriptionQuery.createdAt.$gte = new Date(startDate);
-        }
-        if (endDate) {
-          subscriptionQuery.createdAt.$lte = new Date(endDate);
-        }
-      }
-
-      // Find all businesses owned by this user with filters
-      const businesses = await Business.find(businessQuery)
+      // First, get all businesses owned by this user (no filters yet)
+      const allBusinesses = await Business.find({ businessOwner: businessOwnerId })
         .select('_id businessName businessCategory businessType status createdAt businessLogo businessAddress businessOwner');
 
-      if (businesses.length === 0) {
+      if (allBusinesses.length === 0) {
         return errorResponseHelper(res, {
           success: true,
           message: 'No businesses found for this user',
@@ -1580,12 +1590,28 @@ class BusinessSubscriptionController {
         });
       }
 
-      const businessIds = businesses.map(b => b._id);
-      subscriptionQuery.business.$in = businessIds;
+      const allBusinessIds = allBusinesses.map(b => b._id);
+
+      // Build subscription query with filters
+      const subscriptionQuery = { 
+        business: { $in: allBusinessIds },
+        subscriptionType: 'boost'
+      };
+
+      // Apply status filter to subscriptions - handle null, empty, and valid status values
+      if (status && status !== null && status !== 'null' && status !== '' && status !== 'all') {
+        subscriptionQuery.status = status.trim();
+      }
+
+      if (startDate || endDate) {
+        subscriptionQuery.createdAt = {};
+        if (startDate) subscriptionQuery.createdAt.$gte = new Date(startDate);
+        if (endDate) subscriptionQuery.createdAt.$lte = new Date(endDate);
+      }
 
       // Apply pagination to subscriptions
-      const pageNum = parseInt(page);
-      const limitNum = parseInt(limit);
+      const pageNum = page;
+      const limitNum = limit;
       const skip = (pageNum - 1) * limitNum;
 
       // Build sort object
@@ -1603,11 +1629,31 @@ class BusinessSubscriptionController {
         .skip(skip)
         .limit(limitNum);
 
+      // Apply queryText filter to subscriptions if provided
+      let filteredSubscriptions = allSubscriptions;
+      if (queryText && queryText.trim() !== '') {
+        filteredSubscriptions = allSubscriptions.filter(subscription => {
+          const business = subscription.business;
+          if (!business) return false;
+          
+          const searchText = queryText.toLowerCase();
+          return (
+            (business.businessName && business.businessName.toLowerCase().includes(searchText)) ||
+            (business.businessCategory && business.businessCategory.toLowerCase().includes(searchText)) ||
+            (business.businessType && business.businessType.toLowerCase().includes(searchText))
+          );
+        });
+      }
 
+      // Get unique businesses from filtered subscriptions
+      const businessIdsFromSubscriptions = [...new Set(filteredSubscriptions.map(sub => sub.business._id.toString()))];
+      const businesses = allBusinesses.filter(business => 
+        businessIdsFromSubscriptions.includes(business._id.toString())
+      );
 
       // Organize data by business with their boost subscriptions
       const organizedData = businesses.map(business => {
-        const businessBoostSubscriptions = allSubscriptions.filter(sub => 
+        const businessBoostSubscriptions = filteredSubscriptions.filter(sub => 
           sub.business._id.toString() === business._id.toString()
         );
 
@@ -1654,38 +1700,38 @@ class BusinessSubscriptionController {
         };
       });
 
-      // Calculate summary statistics
-      const totalActiveBoostSubscriptions = allSubscriptions.filter(sub => sub.status === 'active').length;
-      const totalPendingBoostSubscriptions = allSubscriptions.filter(sub => sub.status === 'pending').length;
-      const totalCancelledBoostSubscriptions = allSubscriptions.filter(sub => sub.status === 'cancelled').length;
+      // Calculate summary statistics based on filtered subscriptions
+      const totalActiveBoostSubscriptions = filteredSubscriptions.filter(sub => sub.status === 'active').length;
+      const totalPendingBoostSubscriptions = filteredSubscriptions.filter(sub => sub.status === 'pending').length;
+      const totalCancelledBoostSubscriptions = filteredSubscriptions.filter(sub => sub.status === 'cancelled').length;
 
-      const totalExpiredBoostSubscriptions = allSubscriptions.filter(sub => 
+      const totalExpiredBoostSubscriptions = filteredSubscriptions.filter(sub => 
         sub.status === 'expired' || (sub.expiresAt && new Date() > sub.expiresAt)
       ).length;
-      const totalInactiveBoostSubscriptions = allSubscriptions.filter(sub => sub.status === 'inactive').length;
+      const totalInactiveBoostSubscriptions = filteredSubscriptions.filter(sub => sub.status === 'inactive').length;
 
       successResponseHelper(res, {
         success: true,
         message: 'All boost subscriptions retrieved successfully',
         data: {
           businesses: organizedData,
-          allSubscriptions: allSubscriptions, // All boost subscriptions in one array
+          allSubscriptions: filteredSubscriptions, // Filtered boost subscriptions in one array
           summary: {
             totalBusinesses: businesses.length,
-            totalSubscriptions: allSubscriptions.length,
+            totalSubscriptions: filteredSubscriptions.length,
             totalActiveBoostSubscriptions: totalActiveBoostSubscriptions,
             totalPendingBoostSubscriptions: totalPendingBoostSubscriptions,
             totalCancelledBoostSubscriptions: totalCancelledBoostSubscriptions,
             totalExpiredBoostSubscriptions: totalExpiredBoostSubscriptions,
             totalInactiveBoostSubscriptions: totalInactiveBoostSubscriptions,
-            averageBoostSubscriptionsPerBusiness: businesses.length > 0 ? (allSubscriptions.length / businesses.length).toFixed(2) : 0
+            averageBoostSubscriptionsPerBusiness: businesses.length > 0 ? (filteredSubscriptions.length / businesses.length).toFixed(2) : 0
           },
           pagination: {
             currentPage: pageNum,
-            totalPages: Math.ceil(totalSubscriptions / limitNum),
-            totalItems: totalSubscriptions,
+            totalPages: Math.ceil(filteredSubscriptions.length / limitNum),
+            totalItems: filteredSubscriptions.length,
             itemsPerPage: limitNum,
-            hasNextPage: pageNum < Math.ceil(totalSubscriptions / limitNum),
+            hasNextPage: pageNum < Math.ceil(filteredSubscriptions.length / limitNum),
             hasPrevPage: pageNum > 1
           }
         }
@@ -3993,6 +4039,15 @@ class BusinessSubscriptionController {
         });
       }
 
+      // Extract query parameters
+      const raw = req.query || {};
+      const page = parseInt(raw.page) || 1;
+      const limit = parseInt(raw.limit) || 10;
+      const queryText = raw.queryText;
+      const status = raw.status;
+      const startDate = raw.startDate;
+      const endDate = raw.endDate;
+
       // Find all businesses owned by this user
       const businesses = await Business.find({ businessOwner: businessOwnerId })
         .select('_id businessName businessCategory businessType status createdAt businessLogo businessAddress');
@@ -4022,28 +4077,64 @@ class BusinessSubscriptionController {
 
       const businessIds = businesses.map(b => b._id);
 
-      // Find all confirmed payments (active, expired, or canceled subscriptions)
-      const allSubscriptions = await Subscription.find({ 
+      // Build subscription query with filters
+      const subscriptionQuery = { 
         business: { $in: businessIds },
         status: { $in: ['active', 'expired', 'canceled'] }
-      })
+      };
+
+      // Apply status filter if provided (override the default status filter)
+      if (status && status !== null && status !== 'null' && status !== '' && status !== 'all') {
+        subscriptionQuery.status = status;
+      }
+
+      // Apply date range filter
+      if (startDate || endDate) {
+        subscriptionQuery.createdAt = {};
+        if (startDate) subscriptionQuery.createdAt.$gte = new Date(startDate);
+        if (endDate) subscriptionQuery.createdAt.$lte = new Date(endDate);
+      }
+
+      // Apply pagination
+      const skip = (page - 1) * limit;
+
+      // Find all confirmed payments with filters
+      const allSubscriptions = await Subscription.find(subscriptionQuery)
         .populate('business', 'businessName businessCategory businessType status businessLogo businessAddress businessOwner')
         .populate('paymentPlan', 'name planType price features maxBusinesses maxReviews maxBoostPerDay validityDays description')
-        .sort({ createdAt: -1 });
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit);
+
+      // Apply queryText filter to subscriptions if provided
+      let filteredSubscriptions = allSubscriptions;
+      if (queryText && queryText.trim() !== '') {
+        filteredSubscriptions = allSubscriptions.filter(subscription => {
+          const business = subscription.business;
+          if (!business) return false;
+          
+          const searchText = queryText.toLowerCase();
+          return (
+            (business.businessName && business.businessName.toLowerCase().includes(searchText)) ||
+            (business.businessCategory && business.businessCategory.toLowerCase().includes(searchText)) ||
+            (business.businessType && business.businessType.toLowerCase().includes(searchText))
+          );
+        });
+      }
 
       // Separate subscriptions by type
-      const businessSubscriptions = allSubscriptions.filter(sub => sub.subscriptionType === 'business');
-      const boostSubscriptions = allSubscriptions.filter(sub => sub.subscriptionType === 'boost');
+      const businessSubscriptions = filteredSubscriptions.filter(sub => sub.subscriptionType === 'business');
+      const boostSubscriptions = filteredSubscriptions.filter(sub => sub.subscriptionType === 'boost');
 
       // Calculate summary statistics
-      const totalAmountSpent = allSubscriptions.reduce((total, sub) => {
+      const totalAmountSpent = filteredSubscriptions.reduce((total, sub) => {
         if (sub.status === 'active' || sub.status === 'expired') {
           return total + (sub.amount || 0);
         }
         return total;
       }, 0);
 
-      const totalRefunds = allSubscriptions.reduce((total, sub) => {
+      const totalRefunds = filteredSubscriptions.reduce((total, sub) => {
         if (sub.status === 'canceled' && sub.metadata?.refundProcessed) {
           return total + (sub.amount || 0);
         }
@@ -4052,7 +4143,7 @@ class BusinessSubscriptionController {
 
       // Organize data by business with their payment history
       const organizedData = businesses.map(business => {
-        const businessPayments = allSubscriptions.filter(sub => 
+        const businessPayments = filteredSubscriptions.filter(sub => 
           sub.business._id.toString() === business._id.toString()
         );
 
@@ -4131,19 +4222,27 @@ class BusinessSubscriptionController {
           paymentHistory: {
             businessSubscriptions: businessSubscriptions,
             boostSubscriptions: boostSubscriptions,
-            allPayments: allSubscriptions
+            allPayments: filteredSubscriptions
           },
           summary: {
             totalBusinesses: businesses.length,
-            totalPayments: allSubscriptions.length,
+            totalPayments: filteredSubscriptions.length,
             totalBusinessPayments: businessSubscriptions.length,
             totalBoostPayments: boostSubscriptions.length,
             totalAmountSpent: totalAmountSpent,
             totalRefunds: totalRefunds,
             netAmount: totalAmountSpent - totalRefunds,
-            activePayments: allSubscriptions.filter(sub => sub.status === 'active').length,
-            expiredPayments: allSubscriptions.filter(sub => sub.status === 'expired').length,
-            canceledPayments: allSubscriptions.filter(sub => sub.status === 'canceled').length
+            activePayments: filteredSubscriptions.filter(sub => sub.status === 'active').length,
+            expiredPayments: filteredSubscriptions.filter(sub => sub.status === 'expired').length,
+            canceledPayments: filteredSubscriptions.filter(sub => sub.status === 'canceled').length
+          },
+          pagination: {
+            currentPage: page,
+            totalPages: Math.ceil(filteredSubscriptions.length / limit),
+            totalItems: filteredSubscriptions.length,
+            itemsPerPage: limit,
+            hasNextPage: page < Math.ceil(filteredSubscriptions.length / limit),
+            hasPrevPage: page > 1
           }
         }
       });

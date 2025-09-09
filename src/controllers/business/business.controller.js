@@ -1370,6 +1370,16 @@ export const getBusinessesWithReviews = async (req, res) => {
     if (status) {
       filter.status = status;
     }
+
+    // Import Review model early to use in aggregation
+    const Review = (await import('../../models/admin/review.js')).default;
+    
+    // Get businesses that have at least one review
+    const businessesWithReviews = await Review.distinct('businessId');
+    console.log('Businesses with reviews:', businessesWithReviews.length);
+    
+    // Add filter to only include businesses that have reviews
+    filter._id = { $in: businessesWithReviews };
     
     // Build sort object
     const sort = {};
@@ -1390,7 +1400,6 @@ export const getBusinessesWithReviews = async (req, res) => {
     // Import Category and SubCategory models
     const Category = (await import('../../models/admin/category.js')).default;
     const SubCategory = (await import('../../models/admin/subCategory.js')).default;
-    const Review = (await import('../../models/admin/review.js')).default;
     
     // Populate category, subcategory, and reviews data for each business
     const populatedBusinesses = await Promise.all(

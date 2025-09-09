@@ -55,6 +55,7 @@ const UserSchema = new Schema({
     avatar: { type: String, default: GLOBAL_ENUMS.defaultProfilePhoto }, // URL to profile image
     lastVisit: { type: Date },
     visitCount: { type: Number, default: 0 },
+    lastActivityTime: { type: Date },
 }, {
     timestamps: true // adds createdAt and updatedAt
 });

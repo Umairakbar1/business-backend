@@ -9,6 +9,7 @@ import {
 } from "../../helpers/utilityHelper.js";
 import { signAccessToken, signPasswordResetToken, verifyPasswordResetToken } from "../../helpers/jwtHelper.js";
 import { sendEmail } from "../../helpers/nodemailerHelper.js";
+import { trackLoginActivity, trackUserActivity, updateUserLastActivity } from "../../helpers/userActivityHelper.js";
 
 // Generate unique username from name
 const generateUniqueUsername = async (name) => {
@@ -216,6 +217,15 @@ const loginUser = async (req, res) => {
   // Generate JWT token
   const token = signAccessToken(user._id);
 
+  // Track login activity
+  try {
+    const sessionId = req.sessionID || `session_${Date.now()}_${user._id}`;
+    await trackLoginActivity(req, user, sessionId);
+  } catch (trackingError) {
+    console.error('Error tracking login activity:', trackingError);
+    // Don't fail the login if tracking fails
+  }
+
   return successResponseHelper(res, {
     message: "Login successful",
     user: {
@@ -315,6 +325,29 @@ const updateProfile = async (req, res) => {
   if (error) return serverErrorHelper(req, res, 500, error);
   if (!user) return errorResponseHelper(res, { message: "User not found" });
 
+  // Track profile update activity
+  try {
+    await trackUserActivity({
+      userId: user._id,
+      action: 'profile_update',
+      description: `User ${user.name} updated profile`,
+      details: {
+        updatedFields: Object.keys(updateData),
+        userEmail: user.email,
+        userName: user.userName
+      },
+      ipAddress: req.ip || req.connection.remoteAddress || req.socket.remoteAddress,
+      userAgent: req.get('User-Agent') || 'Unknown',
+      sessionId: req.sessionID,
+      metadata: {
+        updateTime: new Date(),
+        changes: updateData
+      }
+    });
+  } catch (trackingError) {
+    console.error('Error tracking profile update activity:', trackingError);
+  }
+
   return successResponseHelper(res, {
     message: "Profile updated successfully",
     user: {
@@ -354,6 +387,32 @@ const googleAuth = async (req, res) => {
   if (user) {
     // User exists, generate token and return
     const token = signAccessToken(user._id);
+    
+    // Track Google login activity
+    try {
+      const sessionId = req.sessionID || `session_${Date.now()}_${user._id}`;
+      await trackUserActivity({
+        userId: user._id,
+        action: 'login',
+        description: `User ${user.name} logged in via Google`,
+        details: {
+          loginMethod: 'google',
+          userEmail: user.email,
+          userName: user.userName,
+          googleId: googleId
+        },
+        ipAddress: req.ip || req.connection.remoteAddress || req.socket.remoteAddress,
+        userAgent: req.get('User-Agent') || 'Unknown',
+        sessionId,
+        metadata: {
+          loginTime: new Date(),
+          authProvider: 'google'
+        }
+      });
+    } catch (trackingError) {
+      console.error('Error tracking Google login activity:', trackingError);
+    }
+    
     return successResponseHelper(res, {
       message: "Login successful",
       user: {

@@ -21,6 +21,7 @@ import adminNotificationRoutes from "./admin/notification.js";
 import adminBrandLogoRoutes from "./admin/brandLogo.js";
 import adminLegalDocumentRoutes from "./admin/legalDocument.js";
 import adminBoostStatsRoutes from "./admin/boostStats.js";
+import adminUserActivityRoutes from "./admin/userActivity.routes.js";
 // import adminPaymentsRoutes from "./admin/payments.js";
 import businessAuthRoutes from "./business/auth.js";
 import businessBusinessRoutes from "./business/business.js";
@@ -80,6 +81,7 @@ router.use("/admin/notifications", adminNotificationRoutes);
 router.use("/admin/brand-logo", adminBrandLogoRoutes);
 router.use("/admin/legal-documents", adminLegalDocumentRoutes);
 router.use("/admin/boost-stats", adminBoostStatsRoutes);
+router.use("/admin/user-activity", adminUserActivityRoutes);
 // router.use("/admin/payments", adminPaymentsRoutes);
 
 // Business routes

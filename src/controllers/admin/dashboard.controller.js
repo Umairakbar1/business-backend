@@ -1,12 +1,13 @@
 import User from '../../models/user/user.js';
 import Business from '../../models/business/business.js';
 import Subscription from '../../models/admin/subscription.js';
-import AdminAdminPayment from '../../models/admin/payment.js';
+import { AdminPayment } from '../../models/index.js';
 import { errorResponseHelper, successResponseHelper } from '../../helpers/utilityHelper.js';
 
 /**
  * Get comprehensive dashboard statistics
  * Includes total users, businesses, subscriptions, earnings, and month-over-month comparisons
+ * Total earnings includes both completed and pending payments
  */
 export const getDashboardStats = async (req, res) => {
   try {
@@ -19,27 +20,34 @@ export const getDashboardStats = async (req, res) => {
       totalUsers,
       totalBusinesses,
       totalPaidSubscriptions,
+      totalActiveBoosts,
       totalEarnings,
       currentMonthUsers,
       currentMonthBusinesses,
       currentMonthSubscriptions,
+      currentMonthBoosts,
       currentMonthEarnings
     ] = await Promise.all([
       // Total counts
-      User.countDocuments({ status: 'Active' }),
+      User.countDocuments({ status: 'active' }),
       Business.countDocuments({ status: 'active' }),
       Subscription.countDocuments({ 
         status: 'active', 
         subscriptionType: 'business' 
       }),
+      Subscription.countDocuments({ 
+        status: 'active', 
+        subscriptionType: 'boost',
+        expiresAt: { $gt: currentDate }
+      }),
       AdminPayment.aggregate([
-        { $match: { status: 'completed' } },
+        { $match: { status: { $in: ['completed', 'pending'] } } },
         { $group: { _id: null, total: { $sum: '$finalAmount' } } }
       ]),
       
       // Current month counts
       User.countDocuments({ 
-        status: 'Active',
+        status: 'active',
         createdAt: { $gte: currentMonth }
       }),
       Business.countDocuments({ 
@@ -51,10 +59,15 @@ export const getDashboardStats = async (req, res) => {
         subscriptionType: 'business',
         createdAt: { $gte: currentMonth }
       }),
+      Subscription.countDocuments({ 
+        status: 'active',
+        subscriptionType: 'boost',
+        createdAt: { $gte: currentMonth }
+      }),
       AdminPayment.aggregate([
         { 
           $match: { 
-            status: 'completed',
+            status: { $in: ['completed', 'pending'] },
             createdAt: { $gte: currentMonth }
           }
         },
@@ -67,10 +80,11 @@ export const getDashboardStats = async (req, res) => {
       previousMonthUsers,
       previousMonthBusinesses,
       previousMonthSubscriptions,
+      previousMonthBoosts,
       previousMonthEarnings
     ] = await Promise.all([
       User.countDocuments({ 
-        status: 'Active',
+        status: 'active',
         createdAt: { $gte: previousMonth, $lt: currentMonth }
       }),
       Business.countDocuments({ 
@@ -82,10 +96,15 @@ export const getDashboardStats = async (req, res) => {
         subscriptionType: 'business',
         createdAt: { $gte: previousMonth, $lt: currentMonth }
       }),
+      Subscription.countDocuments({ 
+        status: 'active',
+        subscriptionType: 'boost',
+        createdAt: { $gte: previousMonth, $lt: currentMonth }
+      }),
       AdminPayment.aggregate([
         { 
           $match: { 
-            status: 'completed',
+            status: { $in: ['completed', 'pending'] },
             createdAt: { $gte: previousMonth, $lt: currentMonth }
           }
         },
@@ -102,6 +121,7 @@ export const getDashboardStats = async (req, res) => {
     const userChange = calculateChange(currentMonthUsers, previousMonthUsers);
     const businessChange = calculateChange(currentMonthBusinesses, previousMonthBusinesses);
     const subscriptionChange = calculateChange(currentMonthSubscriptions, previousMonthSubscriptions);
+    const boostChange = calculateChange(currentMonthBoosts, previousMonthBoosts);
     const earningsChange = calculateChange(
       currentMonthEarnings[0]?.total || 0, 
       previousMonthEarnings[0]?.total || 0
@@ -112,18 +132,30 @@ export const getDashboardStats = async (req, res) => {
     const [
       recentUsers,
       recentBusinesses,
+      recentSubscriptions,
+      recentBoosts,
       recentAdminPayments
     ] = await Promise.all([
       User.countDocuments({ 
-        status: 'Active',
+        status: 'active',
         createdAt: { $gte: lastWeek }
       }),
       Business.countDocuments({ 
         status: 'active',
         createdAt: { $gte: lastWeek }
       }),
+      Subscription.countDocuments({ 
+        status: 'active',
+        subscriptionType: 'business',
+        createdAt: { $gte: lastWeek }
+      }),
+      Subscription.countDocuments({ 
+        status: 'active',
+        subscriptionType: 'boost',
+        createdAt: { $gte: lastWeek }
+      }),
       AdminPayment.countDocuments({ 
-        status: 'completed',
+        status: { $in: ['completed', 'pending'] },
         createdAt: { $gte: lastWeek }
       })
     ]);
@@ -138,11 +170,45 @@ export const getDashboardStats = async (req, res) => {
       { $group: { _id: '$status', count: { $sum: 1 } } }
     ]);
 
+    // Get subscription type breakdown (business vs boost)
+    const subscriptionTypeBreakdown = await Subscription.aggregate([
+      { 
+        $group: { 
+          _id: '$subscriptionType', 
+          count: { $sum: 1 },
+          totalEarnings: { $sum: '$amount' }
+        } 
+      }
+    ]);
+
+    // Get earnings breakdown by subscription type
+    const earningsByType = await AdminPayment.aggregate([
+      { $match: { status: { $in: ['completed', 'pending'] } } },
+      { 
+        $group: { 
+          _id: '$subscriptionType', 
+          totalEarnings: { $sum: '$finalAmount' },
+          count: { $sum: 1 }
+        } 
+      }
+    ]);
+
+    // Get detailed payment breakdown (completed vs pending)
+    const paymentBreakdown = await AdminPayment.aggregate([
+      { 
+        $group: { 
+          _id: '$status', 
+          totalEarnings: { $sum: '$finalAmount' },
+          count: { $sum: 1 }
+        } 
+      }
+    ]);
+
     // Get top earning months (last 6 months)
     const monthlyEarnings = await AdminPayment.aggregate([
       { 
         $match: { 
-          status: 'completed',
+          status: { $in: ['completed', 'pending'] },
           createdAt: { $gte: new Date(currentDate.getFullYear(), currentDate.getMonth() - 5, 1) }
         }
       },
@@ -164,18 +230,21 @@ export const getDashboardStats = async (req, res) => {
         totalUsers: totalUsers || 0,
         totalBusinesses: totalBusinesses || 0,
         totalPaidSubscriptions: totalPaidSubscriptions || 0,
+        totalActiveBoosts: totalActiveBoosts || 0,
         totalEarnings: totalEarnings[0]?.total || 0
       },
       currentMonth: {
         users: currentMonthUsers || 0,
         businesses: currentMonthBusinesses || 0,
         subscriptions: currentMonthSubscriptions || 0,
+        boosts: currentMonthBoosts || 0,
         earnings: currentMonthEarnings[0]?.total || 0
       },
       previousMonth: {
         users: previousMonthUsers || 0,
         businesses: previousMonthBusinesses || 0,
         subscriptions: previousMonthSubscriptions || 0,
+        boosts: previousMonthBoosts || 0,
         earnings: previousMonthEarnings[0]?.total || 0
       },
       monthOverMonth: {
@@ -191,6 +260,10 @@ export const getDashboardStats = async (req, res) => {
           change: subscriptionChange,
           trend: subscriptionChange >= 0 ? 'increase' : 'decrease'
         },
+        boosts: {
+          change: boostChange,
+          trend: boostChange >= 0 ? 'increase' : 'decrease'
+        },
         earnings: {
           change: earningsChange,
           trend: earningsChange >= 0 ? 'increase' : 'decrease'
@@ -200,12 +273,17 @@ export const getDashboardStats = async (req, res) => {
         last7Days: {
           users: recentUsers || 0,
           businesses: recentBusinesses || 0,
+          subscriptions: recentSubscriptions || 0,
+          boosts: recentBoosts || 0,
           payments: recentAdminPayments || 0
         }
       },
       breakdowns: {
         subscriptionStatus: subscriptionStatusBreakdown,
-        paymentStatus: paymentStatusBreakdown
+        subscriptionType: subscriptionTypeBreakdown,
+        paymentStatus: paymentStatusBreakdown,
+        paymentBreakdown: paymentBreakdown,
+        earningsByType: earningsByType
       },
       monthlyTrends: monthlyEarnings.map(item => ({
         month: `${item._id.year}-${String(item._id.month).padStart(2, '0')}`,
@@ -244,7 +322,7 @@ export const getQuickStats = async (req, res) => {
       totalEarnings,
       currentMonthEarnings
     ] = await Promise.all([
-      User.countDocuments({ status: 'Active' }),
+      User.countDocuments({ status: 'active' }),
       Business.countDocuments({ status: 'active' }),
       Subscription.countDocuments({ 
         status: 'active', 
@@ -256,13 +334,13 @@ export const getQuickStats = async (req, res) => {
         expiresAt: { $gt: currentDate }
       }),
       AdminPayment.aggregate([
-        { $match: { status: 'completed' } },
+        { $match: { status: { $in: ['completed', 'pending'] } } },
         { $group: { _id: null, total: { $sum: '$finalAmount' } } }
       ]),
       AdminPayment.aggregate([
         { 
           $match: { 
-            status: 'completed',
+            status: { $in: ['completed', 'pending'] },
             createdAt: { $gte: currentMonth }
           }
         },

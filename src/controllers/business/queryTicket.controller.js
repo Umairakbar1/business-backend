@@ -9,7 +9,7 @@ import mongoose from 'mongoose';
 export const getBusinessQueryTickets = async (req, res) => {
   try {
     const businessOwnerId = req.businessOwner?._id;
-    const { page = 1, limit = 10, status, businessId, sortBy = 'createdAt', sortOrder = 'desc' } = req.query;
+    const { page = 1, limit = 10, status, businessId, sortBy = 'createdAt', sortOrder = 'desc', queryText } = req.query;
     
     if (!businessOwnerId) {
       return errorResponseHelper(res, { message: 'Business owner not authenticated', code: '00401' });
@@ -33,6 +33,11 @@ export const getBusinessQueryTickets = async (req, res) => {
     }
     
     if (status) filter.status = status;
+    
+    // Add text search for business name if queryText is provided
+    if (queryText) {
+      filter.businessName = { $regex: queryText, $options: 'i' };
+    }
     
     // Debug logging for filter
     console.log('Filter being applied:', JSON.stringify(filter, null, 2));
@@ -468,7 +473,13 @@ export const createQueryTicket = async (req, res) => {
       businessId: ticket.businessId?.toString()
     });
     
-    // Populate comments and replies for response
+    // Populate all necessary fields for consistent response
+    await ticket.populate('businessId', 'businessName contactPerson email businessOwner');
+    await ticket.populate({
+      path: 'assignedTo',
+      select: 'firstName lastName email businessName contactPerson email'
+    });
+    await ticket.populate('assignedBy', 'firstName lastName email');
     await ticket.populate({
       path: 'comments',
       populate: {
@@ -476,9 +487,33 @@ export const createQueryTicket = async (req, res) => {
       }
     });
     
+    // Process ticket to have consistent author structure
+    const processedTicket = ticket.toObject();
+    processedTicket.comments = processedTicket.comments.map(comment => ({
+      ...comment,
+      author: {
+        _id: comment.authorId,
+        name: comment.authorName,
+        type: comment.authorType
+      }
+    }));
+    
+    processedTicket.comments.forEach(comment => {
+      if (comment.replies && comment.replies.length > 0) {
+        comment.replies = comment.replies.map(reply => ({
+          ...reply,
+          author: {
+            _id: reply.authorId,
+            name: reply.authorName,
+            type: reply.authorType
+          }
+        }));
+      }
+    });
+    
     return successResponseHelper(res, {
       message: 'Query ticket created successfully',
-      data: ticket
+      data: processedTicket
     });
   } catch (error) {
     return errorResponseHelper(res, { message: error.message, code: '00500' });
@@ -748,7 +783,13 @@ export const updateQueryTicket = async (req, res) => {
       businessId: ticket.businessId?.toString()
     });
     
-    // Populate comments and replies for response
+    // Populate all necessary fields for consistent response
+    await ticket.populate('businessId', 'businessName contactPerson email businessOwner');
+    await ticket.populate({
+      path: 'assignedTo',
+      select: 'firstName lastName email businessName contactPerson email'
+    });
+    await ticket.populate('assignedBy', 'firstName lastName email');
     await ticket.populate({
       path: 'comments',
       populate: {
@@ -756,9 +797,33 @@ export const updateQueryTicket = async (req, res) => {
       }
     });
     
+    // Process ticket to have consistent author structure
+    const processedTicket = ticket.toObject();
+    processedTicket.comments = processedTicket.comments.map(comment => ({
+      ...comment,
+      author: {
+        _id: comment.authorId,
+        name: comment.authorName,
+        type: comment.authorType
+      }
+    }));
+    
+    processedTicket.comments.forEach(comment => {
+      if (comment.replies && comment.replies.length > 0) {
+        comment.replies = comment.replies.map(reply => ({
+          ...reply,
+          author: {
+            _id: reply.authorId,
+            name: reply.authorName,
+            type: reply.authorType
+          }
+        }));
+      }
+    });
+    
     return successResponseHelper(res, {
       message: 'Query ticket updated successfully',
-      data: ticket
+      data: processedTicket
     });
   } catch (error) {
     return errorResponseHelper(res, { message: error.message, code: '00500' });
@@ -863,7 +928,13 @@ export const updateTicketStatus = async (req, res) => {
     ticket.updatedAt = new Date();
     await ticket.save();
     
-    // Populate comments and replies for response
+    // Populate all necessary fields for consistent response
+    await ticket.populate('businessId', 'businessName contactPerson email businessOwner');
+    await ticket.populate({
+      path: 'assignedTo',
+      select: 'firstName lastName email businessName contactPerson email'
+    });
+    await ticket.populate('assignedBy', 'firstName lastName email');
     await ticket.populate({
       path: 'comments',
       populate: {
@@ -871,9 +942,33 @@ export const updateTicketStatus = async (req, res) => {
       }
     });
     
+    // Process ticket to have consistent author structure
+    const processedTicket = ticket.toObject();
+    processedTicket.comments = processedTicket.comments.map(comment => ({
+      ...comment,
+      author: {
+        _id: comment.authorId,
+        name: comment.authorName,
+        type: comment.authorType
+      }
+    }));
+    
+    processedTicket.comments.forEach(comment => {
+      if (comment.replies && comment.replies.length > 0) {
+        comment.replies = comment.replies.map(reply => ({
+          ...reply,
+          author: {
+            _id: reply.authorId,
+            name: reply.authorName,
+            type: reply.authorType
+          }
+        }));
+      }
+    });
+    
     return successResponseHelper(res, {
       message: 'Ticket status updated successfully',
-      data: ticket
+      data: processedTicket
     });
   } catch (error) {
     return errorResponseHelper(res, { message: error.message, code: '00500' });
@@ -909,7 +1004,13 @@ export const closeQueryTicket = async (req, res) => {
     ticket.updatedAt = new Date();
     await ticket.save();
     
-    // Populate comments and replies for response
+    // Populate all necessary fields for consistent response
+    await ticket.populate('businessId', 'businessName contactPerson email businessOwner');
+    await ticket.populate({
+      path: 'assignedTo',
+      select: 'firstName lastName email businessName contactPerson email'
+    });
+    await ticket.populate('assignedBy', 'firstName lastName email');
     await ticket.populate({
       path: 'comments',
       populate: {
@@ -917,9 +1018,33 @@ export const closeQueryTicket = async (req, res) => {
       }
     });
     
+    // Process ticket to have consistent author structure
+    const processedTicket = ticket.toObject();
+    processedTicket.comments = processedTicket.comments.map(comment => ({
+      ...comment,
+      author: {
+        _id: comment.authorId,
+        name: comment.authorName,
+        type: comment.authorType
+      }
+    }));
+    
+    processedTicket.comments.forEach(comment => {
+      if (comment.replies && comment.replies.length > 0) {
+        comment.replies = comment.replies.map(reply => ({
+          ...reply,
+          author: {
+            _id: reply.authorId,
+            name: reply.authorName,
+            type: reply.authorType
+          }
+        }));
+      }
+    });
+    
     return successResponseHelper(res, {
       message: 'Query ticket closed successfully',
-      data: ticket
+      data: processedTicket
     });
   } catch (error) {
     return errorResponseHelper(res, { message: error.message, code: '00500' });

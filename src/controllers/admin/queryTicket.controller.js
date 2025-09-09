@@ -461,7 +461,14 @@ export const createQueryTicket = async (req, res) => {
       businessId: ticket.businessId?.toString()
     });
     
-    // Populate comments and replies for response
+    // Populate all necessary fields for consistent response
+    await ticket.populate('businessId', 'businessId contactPerson email businessOwner');
+    await ticket.populate('createdBy', 'firstName lastName email');
+    await ticket.populate({
+      path: 'assignedTo',
+      select: 'firstName lastName email businessName contactPerson email'
+    });
+    await ticket.populate('assignedBy', 'firstName lastName email');
     await ticket.populate({
       path: 'comments',
       populate: {
@@ -469,9 +476,76 @@ export const createQueryTicket = async (req, res) => {
       }
     });
     
+    // Process ticket to populate author information for comments and replies (same as getAllQueryTickets)
+    const ticketObj = ticket.toObject();
+    
+    // Process comments
+    if (ticketObj.comments && ticketObj.comments.length > 0) {
+      ticketObj.comments = ticketObj.comments.map(comment => {
+        const commentObj = comment.toObject ? comment.toObject() : comment;
+        
+        // Replace authorId with author details for comments
+        if (commentObj.authorType === 'admin') {
+          commentObj.author = {
+            _id: commentObj.authorId,
+            name: commentObj.authorName,
+            email: commentObj.authorEmail || null,
+            type: 'admin'
+          };
+        } else if (commentObj.authorType === 'business') {
+          commentObj.author = {
+            _id: commentObj.authorId,
+            name: commentObj.authorName,
+            email: commentObj.authorEmail || null,
+            type: 'business'
+          };
+        }
+        
+        // Remove the old authorId field
+        delete commentObj.authorId;
+        delete commentObj.authorType;
+        delete commentObj.authorName;
+        delete commentObj.authorEmail;
+        
+        // Process replies
+        if (commentObj.replies && commentObj.replies.length > 0) {
+          commentObj.replies = commentObj.replies.map(reply => {
+            const replyObj = reply.toObject ? reply.toObject() : reply;
+            
+            // Replace authorId with author details for replies
+            if (replyObj.authorType === 'admin') {
+              replyObj.author = {
+                _id: replyObj.authorId,
+                name: replyObj.authorName,
+                email: replyObj.authorEmail || null,
+                type: 'admin'
+              };
+            } else if (replyObj.authorType === 'business') {
+              replyObj.author = {
+                _id: replyObj.authorId,
+                name: replyObj.authorName,
+                email: replyObj.authorEmail || null,
+                type: 'business'
+              };
+            }
+            
+            // Remove the old authorId field
+            delete replyObj.authorId;
+            delete replyObj.authorType;
+            delete replyObj.authorName;
+            delete replyObj.authorEmail;
+            
+            return replyObj;
+          });
+        }
+        
+        return commentObj;
+      });
+    }
+    
     return successResponseHelper(res, {
       message: 'Query ticket created successfully',
-      data: ticket
+      data: ticketObj
     });
   } catch (error) {
     return errorResponseHelper(res, { message: error.message, code: '00500' });
@@ -716,7 +790,14 @@ export const updateQueryTicket = async (req, res) => {
       businessId: ticket.businessId?.toString()
     });
     
-    // Populate comments and replies for response
+    // Populate all necessary fields for consistent response
+    await ticket.populate('businessId', 'businessId contactPerson email businessOwner');
+    await ticket.populate('createdBy', 'firstName lastName email');
+    await ticket.populate({
+      path: 'assignedTo',
+      select: 'firstName lastName email businessName contactPerson email'
+    });
+    await ticket.populate('assignedBy', 'firstName lastName email');
     await ticket.populate({
       path: 'comments',
       populate: {
@@ -724,9 +805,76 @@ export const updateQueryTicket = async (req, res) => {
       }
     });
     
+    // Process ticket to populate author information for comments and replies (same as getAllQueryTickets)
+    const ticketObj = ticket.toObject();
+    
+    // Process comments
+    if (ticketObj.comments && ticketObj.comments.length > 0) {
+      ticketObj.comments = ticketObj.comments.map(comment => {
+        const commentObj = comment.toObject ? comment.toObject() : comment;
+        
+        // Replace authorId with author details for comments
+        if (commentObj.authorType === 'admin') {
+          commentObj.author = {
+            _id: commentObj.authorId,
+            name: commentObj.authorName,
+            email: commentObj.authorEmail || null,
+            type: 'admin'
+          };
+        } else if (commentObj.authorType === 'business') {
+          commentObj.author = {
+            _id: commentObj.authorId,
+            name: commentObj.authorName,
+            email: commentObj.authorEmail || null,
+            type: 'business'
+          };
+        }
+        
+        // Remove the old authorId field
+        delete commentObj.authorId;
+        delete commentObj.authorType;
+        delete commentObj.authorName;
+        delete commentObj.authorEmail;
+        
+        // Process replies
+        if (commentObj.replies && commentObj.replies.length > 0) {
+          commentObj.replies = commentObj.replies.map(reply => {
+            const replyObj = reply.toObject ? reply.toObject() : reply;
+            
+            // Replace authorId with author details for replies
+            if (replyObj.authorType === 'admin') {
+              replyObj.author = {
+                _id: replyObj.authorId,
+                name: replyObj.authorName,
+                email: replyObj.authorEmail || null,
+                type: 'admin'
+              };
+            } else if (replyObj.authorType === 'business') {
+              replyObj.author = {
+                _id: replyObj.authorId,
+                name: replyObj.authorName,
+                email: replyObj.authorEmail || null,
+                type: 'business'
+              };
+            }
+            
+            // Remove the old authorId field
+            delete replyObj.authorId;
+            delete replyObj.authorType;
+            delete replyObj.authorName;
+            delete replyObj.authorEmail;
+            
+            return replyObj;
+          });
+        }
+        
+        return commentObj;
+      });
+    }
+    
     return successResponseHelper(res, {
       message: 'Query ticket updated successfully',
-      data: ticket
+      data: ticketObj
     });
   } catch (error) {
     return errorResponseHelper(res, { message: error.message, code: '00500' });
@@ -797,7 +945,14 @@ export const closeQueryTicket = async (req, res) => {
     ticket.updatedAt = new Date();
     await ticket.save();
     
-    // Populate comments and replies for response
+    // Populate all necessary fields for consistent response
+    await ticket.populate('businessId', 'businessId contactPerson email businessOwner');
+    await ticket.populate('createdBy', 'firstName lastName email');
+    await ticket.populate({
+      path: 'assignedTo',
+      select: 'firstName lastName email businessName contactPerson email'
+    });
+    await ticket.populate('assignedBy', 'firstName lastName email');
     await ticket.populate({
       path: 'comments',
       populate: {
@@ -805,9 +960,76 @@ export const closeQueryTicket = async (req, res) => {
       }
     });
     
+    // Process ticket to populate author information for comments and replies (same as getAllQueryTickets)
+    const ticketObj = ticket.toObject();
+    
+    // Process comments
+    if (ticketObj.comments && ticketObj.comments.length > 0) {
+      ticketObj.comments = ticketObj.comments.map(comment => {
+        const commentObj = comment.toObject ? comment.toObject() : comment;
+        
+        // Replace authorId with author details for comments
+        if (commentObj.authorType === 'admin') {
+          commentObj.author = {
+            _id: commentObj.authorId,
+            name: commentObj.authorName,
+            email: commentObj.authorEmail || null,
+            type: 'admin'
+          };
+        } else if (commentObj.authorType === 'business') {
+          commentObj.author = {
+            _id: commentObj.authorId,
+            name: commentObj.authorName,
+            email: commentObj.authorEmail || null,
+            type: 'business'
+          };
+        }
+        
+        // Remove the old authorId field
+        delete commentObj.authorId;
+        delete commentObj.authorType;
+        delete commentObj.authorName;
+        delete commentObj.authorEmail;
+        
+        // Process replies
+        if (commentObj.replies && commentObj.replies.length > 0) {
+          commentObj.replies = commentObj.replies.map(reply => {
+            const replyObj = reply.toObject ? reply.toObject() : reply;
+            
+            // Replace authorId with author details for replies
+            if (replyObj.authorType === 'admin') {
+              replyObj.author = {
+                _id: replyObj.authorId,
+                name: replyObj.authorName,
+                email: replyObj.authorEmail || null,
+                type: 'admin'
+              };
+            } else if (replyObj.authorType === 'business') {
+              replyObj.author = {
+                _id: replyObj.authorId,
+                name: replyObj.authorName,
+                email: replyObj.authorEmail || null,
+                type: 'business'
+              };
+            }
+            
+            // Remove the old authorId field
+            delete replyObj.authorId;
+            delete replyObj.authorType;
+            delete replyObj.authorName;
+            delete replyObj.authorEmail;
+            
+            return replyObj;
+          });
+        }
+        
+        return commentObj;
+      });
+    }
+    
     return successResponseHelper(res, {
       message: 'Query ticket closed successfully',
-      data: ticket
+      data: ticketObj
     });
   } catch (error) {
     return errorResponseHelper(res, { message: error.message, code: '00500' });
@@ -872,7 +1094,14 @@ export const updateTicketStatus = async (req, res) => {
     ticket.updatedAt = new Date();
     await ticket.save();
     
-    // Populate comments and replies for response
+    // Populate all necessary fields for consistent response
+    await ticket.populate('businessId', 'businessId contactPerson email businessOwner');
+    await ticket.populate('createdBy', 'firstName lastName email');
+    await ticket.populate({
+      path: 'assignedTo',
+      select: 'firstName lastName email businessName contactPerson email'
+    });
+    await ticket.populate('assignedBy', 'firstName lastName email');
     await ticket.populate({
       path: 'comments',
       populate: {
@@ -880,9 +1109,76 @@ export const updateTicketStatus = async (req, res) => {
       }
     });
     
+    // Process ticket to populate author information for comments and replies (same as getAllQueryTickets)
+    const ticketObj = ticket.toObject();
+    
+    // Process comments
+    if (ticketObj.comments && ticketObj.comments.length > 0) {
+      ticketObj.comments = ticketObj.comments.map(comment => {
+        const commentObj = comment.toObject ? comment.toObject() : comment;
+        
+        // Replace authorId with author details for comments
+        if (commentObj.authorType === 'admin') {
+          commentObj.author = {
+            _id: commentObj.authorId,
+            name: commentObj.authorName,
+            email: commentObj.authorEmail || null,
+            type: 'admin'
+          };
+        } else if (commentObj.authorType === 'business') {
+          commentObj.author = {
+            _id: commentObj.authorId,
+            name: commentObj.authorName,
+            email: commentObj.authorEmail || null,
+            type: 'business'
+          };
+        }
+        
+        // Remove the old authorId field
+        delete commentObj.authorId;
+        delete commentObj.authorType;
+        delete commentObj.authorName;
+        delete commentObj.authorEmail;
+        
+        // Process replies
+        if (commentObj.replies && commentObj.replies.length > 0) {
+          commentObj.replies = commentObj.replies.map(reply => {
+            const replyObj = reply.toObject ? reply.toObject() : reply;
+            
+            // Replace authorId with author details for replies
+            if (replyObj.authorType === 'admin') {
+              replyObj.author = {
+                _id: replyObj.authorId,
+                name: replyObj.authorName,
+                email: replyObj.authorEmail || null,
+                type: 'admin'
+              };
+            } else if (replyObj.authorType === 'business') {
+              replyObj.author = {
+                _id: replyObj.authorId,
+                name: replyObj.authorName,
+                email: replyObj.authorEmail || null,
+                type: 'business'
+              };
+            }
+            
+            // Remove the old authorId field
+            delete replyObj.authorId;
+            delete replyObj.authorType;
+            delete replyObj.authorName;
+            delete replyObj.authorEmail;
+            
+            return replyObj;
+          });
+        }
+        
+        return commentObj;
+      });
+    }
+    
     return successResponseHelper(res, {
       message: 'Ticket status updated successfully',
-      data: ticket
+      data: ticketObj
     });
   } catch (error) {
     return errorResponseHelper(res, { message: error.message, code: '00500' });

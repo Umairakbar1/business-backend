@@ -1,6 +1,8 @@
 import Review from '../../models/admin/review.js';
+import { Business } from '../../models/index.js';
 import { errorResponseHelper, successResponseHelper } from '../../helpers/utilityHelper.js';
 import { uploadImageWithThumbnail, uploadVideo } from '../../helpers/cloudinaryHelper.js';
+import { trackUserActivity } from '../../helpers/userActivityHelper.js';
 import mongoose from 'mongoose';
 
 // POST /user/review
@@ -96,6 +98,40 @@ export const submitReview = async (req, res) => {
       createdAt: new Date(),
     });
     await review.save();
+    
+    // Track review submission activity
+    try {
+      // Get business information for activity tracking
+      const business = await Business.findById(businessId).select('businessName category');
+      
+      await trackUserActivity({
+        userId: userId,
+        action: 'review_posted',
+        description: `User ${req.user?.name || 'User'} posted a review for ${business?.businessName || 'a business'}`,
+        details: {
+          reviewId: review._id,
+          businessId: businessId,
+          businessName: business?.businessName || 'Unknown Business',
+          rating: rating,
+          title: title,
+          hasMedia: media.length > 0,
+          mediaCount: media.length,
+          reviewStatus: review.status
+        },
+        ipAddress: req.ip || req.connection.remoteAddress || req.socket.remoteAddress,
+        userAgent: req.get('User-Agent') || 'Unknown',
+        sessionId: req.sessionID,
+        metadata: {
+          submissionTime: new Date(),
+          reviewLength: comment ? comment.length : 0,
+          hasImages: media.some(m => m.type === 'image'),
+          hasVideos: media.some(m => m.type === 'video')
+        }
+      });
+    } catch (trackingError) {
+      console.error('Error tracking review submission activity:', trackingError);
+      // Don't fail the request if tracking fails
+    }
     
     // Send notifications for new review submission
     try {
@@ -257,6 +293,30 @@ export const addComment = async (req, res) => {
     review.updatedAt = new Date();
     await review.save();
     
+    // Track comment activity
+    try {
+      await trackUserActivity({
+        userId: userId,
+        action: 'review_comment_posted',
+        description: `User ${req.user?.name || 'User'} added a comment to a review`,
+        details: {
+          reviewId: review._id,
+          commentId: comment._id,
+          commentLength: content.length,
+          businessId: review.businessId
+        },
+        ipAddress: req.ip || req.connection.remoteAddress || req.socket.remoteAddress,
+        userAgent: req.get('User-Agent') || 'Unknown',
+        sessionId: req.sessionID,
+        metadata: {
+          commentTime: new Date(),
+          authorType: 'user'
+        }
+      });
+    } catch (trackingError) {
+      console.error('Error tracking comment activity:', trackingError);
+    }
+    
     // Populate and return the complete review object
     await review.populate('businessId', 'businessName businessCategory');
     await review.populate('userId', 'firstName lastName email');
@@ -320,6 +380,31 @@ export const addReply = async (req, res) => {
     comment.replies.push(reply);
     review.updatedAt = new Date();
     await review.save();
+    
+    // Track reply activity
+    try {
+      await trackUserActivity({
+        userId: userId,
+        action: 'review_reply_posted',
+        description: `User ${req.user?.name || 'User'} added a reply to a review comment`,
+        details: {
+          reviewId: review._id,
+          commentId: commentId,
+          replyId: reply._id,
+          replyLength: content.length,
+          businessId: review.businessId
+        },
+        ipAddress: req.ip || req.connection.remoteAddress || req.socket.remoteAddress,
+        userAgent: req.get('User-Agent') || 'Unknown',
+        sessionId: req.sessionID,
+        metadata: {
+          replyTime: new Date(),
+          authorType: 'user'
+        }
+      });
+    } catch (trackingError) {
+      console.error('Error tracking reply activity:', trackingError);
+    }
     
     // Populate and return the complete review object
     await review.populate('businessId', 'businessName businessCategory');
