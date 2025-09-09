@@ -12,7 +12,8 @@ import {
   sendToAllBusinesses,
   sendToTopic,
   subscribeToTopic,
-  unsubscribeFromTopic
+  unsubscribeFromTopic,
+  createTestAdminNotification
 } from '../../controllers/admin/notification.controller.js';
 
 const router = express.Router();
@@ -38,5 +39,8 @@ router.post('/send/topic/:topic', authorizedAccessAdmin, sendToTopic);
 // Topic Management
 router.post('/subscribe-topic', authorizedAccessAdmin, subscribeToTopic);
 router.post('/unsubscribe-topic', authorizedAccessAdmin, unsubscribeFromTopic);
+
+// Test endpoint
+router.post('/test/:adminId', authorizedAccessAdmin, createTestAdminNotification);
 
 export default router;

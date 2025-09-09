@@ -122,7 +122,10 @@ const authorizedAccessBusiness = async (req, res, next) => {
 };
 
 const verifyBusinessOwnerToken = async (req, res, next) => {
+  console.log('verifyBusinessOwnerToken middleware called for:', req.path);
   let token = req.header("Authorization");
+  console.log('Authorization header:', token ? 'Present' : 'Missing');
+  
   if (!token) return errorResponseHelper(res, {message:GLOBAL_MESSAGES.jwtRequired,code:"00401"});
 
   if (token.includes("Bearer"))
@@ -130,16 +133,21 @@ const verifyBusinessOwnerToken = async (req, res, next) => {
 
   try {
     const data = verify(token, GLOBAL_ENV.jwtSecretKeyBusiness, { expiresIn: GLOBAL_ENV.jwtExpiresInBusiness });
+    console.log('Token verified, user ID:', data._id);
+    
     if (!mongoose.Types.ObjectId.isValid(data._id))
       return errorResponseHelper(res, {message:GLOBAL_MESSAGES.invalidData,code:"00401"});
 
     const businessOwner = await BusinessOwner.findById(data._id);
+    console.log('Business owner found:', businessOwner ? 'Yes' : 'No');
 
     if (!businessOwner)
       return errorResponseHelper(res, {message:GLOBAL_MESSAGES.dataNotFound,code:"00401"});
     req.businessOwner = businessOwner;
+    console.log('Middleware passed, calling next()');
     next();
   } catch (error) {
+    console.log('Middleware error:', error.message);
     return serverErrorHelper(req, res, 500, error);
   }
 };

@@ -8,7 +8,11 @@ import { uploadImageWithThumbnail, deleteFile } from '../../helpers/cloudinaryHe
 
 const createCategory = async (req, res) => {
   try {
-    const { error, value } = categoryValidator.validate(req.body);
+    // Create a copy of req.body without the image field for validation
+    const validationData = { ...req.body };
+    delete validationData.image;
+    
+    const { error, value } = categoryValidator.validate(validationData);
     if (error) {
       return errorResponseHelper(res, { message: error.details[0].message, code: '00400' });
     }
@@ -34,21 +38,31 @@ const createCategory = async (req, res) => {
     // Handle image upload to Cloudinary
     if (req.file) {
       try {
-        console.log('Starting image upload for category:', {
+        console.log('Starting image upload for category creation:', {
           fileName: req.file.originalname,
           fileSize: req.file.size,
           mimeType: req.file.mimetype
         });
         
+        // Check file size (5MB = 5 * 1024 * 1024 bytes)
+        const maxSize = 5 * 1024 * 1024; // 5MB in bytes
+        if (req.file.size > maxSize) {
+          return errorResponseHelper(res, { 
+            message: 'Image size must be less than 5MB. Please choose a smaller image.', 
+            code: '00400' 
+          });
+        }
+        
+        // Upload new image to Cloudinary
         const uploadResult = await uploadImageWithThumbnail(req.file.buffer, 'business-app/categories');
         value.image = {
           url: uploadResult.original.url,
           public_id: uploadResult.original.public_id
         };
         
-        console.log('Category image upload successful:', value.image.public_id);
+        console.log('Category image upload successful for creation:', value.image.public_id);
       } catch (uploadError) {
-        console.error('Cloudinary upload error details:', {
+        console.error('Cloudinary upload error details for category creation:', {
           message: uploadError.message,
           stack: uploadError.stack,
           fileName: req.file?.originalname,
@@ -68,6 +82,7 @@ const createCategory = async (req, res) => {
         return errorResponseHelper(res, {message: errorMessage, code:'00500'});
       }
     }
+    // If no image is uploaded, don't set the image field (it's optional in the model)
 
     const category = new Category(value);
     await category.save();
@@ -75,35 +90,43 @@ const createCategory = async (req, res) => {
     // Handle subcategories if provided
     let createdSubcategories = [];
     if (req.body.subcategories) {
-      let subcategoriesArray = req.body.subcategories;
-      
-      // If subcategories is a JSON string (from FormData), parse it
-      if (typeof subcategoriesArray === 'string') {
-        try {
-          subcategoriesArray = JSON.parse(subcategoriesArray);
-        } catch (parseError) {
-          console.error('Error parsing subcategories JSON:', parseError);
-          return errorResponseHelper(res, { message: 'Invalid subcategories format', code: '00400' });
+      try {
+        let subcategoriesArray = req.body.subcategories;
+        
+        // If subcategories is a JSON string (from FormData), parse it
+        if (typeof subcategoriesArray === 'string') {
+          try {
+            subcategoriesArray = JSON.parse(subcategoriesArray);
+          } catch (parseError) {
+            console.error('Error parsing subcategories JSON:', parseError);
+            return errorResponseHelper(res, { message: 'Invalid subcategories format', code: '00400' });
+          }
         }
-      }
-      
-      // Check if it's an array
-      if (Array.isArray(subcategoriesArray)) {
-        const subcategoryPromises = subcategoriesArray.map(subcat => {
-          // Generate slug for subcategory
-          const subCategorySlug = generateSlug(subcat.title || subcat.subCategoryName);
+        
+        // Check if it's an array
+        if (Array.isArray(subcategoriesArray)) {
+          console.log('Processing subcategories for creation:', subcategoriesArray.length);
           
-          return new SubCategory({
-            title: subcat.title || subcat.subCategoryName,
-            slug: subCategorySlug,
-            description: subcat.description,
-            categoryId: category._id,
-            status: subcat.status || 'active',
-            createdBy: req.user.id
-          }).save();
-        });
+          const subcategoryPromises = subcategoriesArray.map(subcat => {
+            // Generate slug for subcategory
+            const subCategorySlug = generateSlug(subcat.title || subcat.subCategoryName);
+            
+            return new SubCategory({
+              title: subcat.title || subcat.subCategoryName,
+              slug: subCategorySlug,
+              description: subcat.description,
+              categoryId: category._id,
+              status: subcat.status || 'active',
+              createdBy: req.user.id
+            }).save();
+          });
 
-        createdSubcategories = await Promise.all(subcategoryPromises);
+          createdSubcategories = await Promise.all(subcategoryPromises);
+          console.log('Subcategories created successfully:', createdSubcategories.length);
+        }
+      } catch (subcategoryError) {
+        console.error('Error creating subcategories:', subcategoryError);
+        return errorResponseHelper(res, { message: 'Failed to create subcategories', code: '00500' });
       }
     }
 
@@ -255,9 +278,11 @@ const updateCategory = async (req, res) => {
     delete cleanBody.subcategories;
     delete cleanBody.businessCount;
     
-    // If image is an object (from getAllCategories response), extract the URL for validation
-    // But only if we're not uploading a new image (no req.file)
-    if (!req.file && cleanBody.image && typeof cleanBody.image === 'object' && cleanBody.image.url) {
+    // Remove image field from validation if we're uploading a new file
+    if (req.file) {
+      delete cleanBody.image;
+    } else if (cleanBody.image && typeof cleanBody.image === 'object' && cleanBody.image.url) {
+      // If image is an object (from getAllCategories response), extract the URL for validation
       cleanBody.image = cleanBody.image.url;
     }
     
@@ -301,6 +326,15 @@ const updateCategory = async (req, res) => {
           fileSize: req.file.size,
           mimeType: req.file.mimetype
         });
+        
+        // Check file size (5MB = 5 * 1024 * 1024 bytes)
+        const maxSize = 5 * 1024 * 1024; // 5MB in bytes
+        if (req.file.size > maxSize) {
+          return errorResponseHelper(res, { 
+            message: 'Image size must be less than 5MB. Please choose a smaller image.', 
+            code: '00400' 
+          });
+        }
         
         // Delete old image from Cloudinary if it exists
         if (existingCategory.image && existingCategory.image.public_id) {

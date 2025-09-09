@@ -4,6 +4,113 @@ import User from '../../models/user/user.js';
 import { errorResponseHelper, successResponseHelper } from '../../helpers/utilityHelper.js';
 import mongoose from 'mongoose';
 
+// Helper function to get business data in the same format as getBusinessWithReviews
+const getBusinessDataWithReviews = async (businessId) => {
+  try {
+    // Get business details
+    const business = await Business.findById(businessId)
+      .populate('category', 'name')
+      .populate('businessOwner', 'name email phoneNumber')
+      .populate('subcategories', 'name');
+    
+    if (!business) {
+      return null;
+    }
+    
+    // Get review statistics
+    const reviewStats = await Review.aggregate([
+      { $match: { businessId: business._id } },
+      {
+        $group: {
+          _id: '$businessId',
+          totalReviews: { $sum: 1 },
+          approvedReviews: {
+            $sum: { $cond: [{ $eq: ['$status', 'approved'] }, 1, 0] }
+          },
+          pendingReviews: {
+            $sum: { $cond: [{ $eq: ['$status', 'pending'] }, 1, 0] }
+          },
+          rejectedReviews: {
+            $sum: { $cond: [{ $eq: ['$status', 'rejected'] }, 1, 0] }
+          },
+          averageRating: { $avg: '$rating' },
+          ratingDistribution: {
+            $push: '$rating'
+          }
+        }
+      }
+    ]);
+    
+    // Get recent reviews (limit to 5)
+    const reviews = await Review.find({ businessId: business._id })
+      .populate('userId', 'name email profilePhoto')
+      .populate('approvedBy', 'name email')
+      .populate('businessManagementGrantedBy', 'name email')
+      .populate('replies.admin.authorId', 'name email')
+      .sort({ createdAt: -1 })
+      .limit(5);
+    
+    const totalReviews = await Review.countDocuments({ businessId: business._id });
+    
+    // Calculate rating distribution
+    const stats = reviewStats[0] || {
+      totalReviews: 0,
+      approvedReviews: 0,
+      pendingReviews: 0,
+      rejectedReviews: 0,
+      averageRating: 0,
+      ratingDistribution: []
+    };
+    
+    const ratingDistribution = {
+      1: stats.ratingDistribution.filter(r => r === 1).length,
+      2: stats.ratingDistribution.filter(r => r === 2).length,
+      3: stats.ratingDistribution.filter(r => r === 3).length,
+      4: stats.ratingDistribution.filter(r => r === 4).length,
+      5: stats.ratingDistribution.filter(r => r === 5).length
+    };
+    
+    return {
+      _id: business._id,
+      businessName: business.businessName,
+      logo: business.logo,
+      category: business.category,
+      subcategories: business.subcategories,
+      email: business.email,
+      phoneNumber: business.phoneNumber,
+      status: business.status,
+      plan: business.plan,
+      about: business.about,
+      serviceOffer: business.serviceOffer,
+      location: business.location,
+      city: business.city,
+      state: business.state,
+      zipCode: business.zipCode,
+      country: business.country,
+      facebook: business.facebook,
+      linkedIn: business.linkedIn,
+      website: business.website,
+      twitter: business.twitter,
+      businessOwner: business.businessOwner,
+      reviewManagementAccess: business.reviewManagementAccess,
+      features: business.features,
+      createdAt: business.createdAt,
+      updatedAt: business.updatedAt,
+      reviewStats: {
+        total: stats.totalReviews,
+        approved: stats.approvedReviews,
+        pending: stats.pendingReviews,
+        manageable: stats.rejectedReviews, // or calculate manageable reviews
+        overallRating: Math.round(stats.averageRating * 10) / 10 || 0
+      },
+      reviews: reviews
+    };
+  } catch (error) {
+    console.error('Error in getBusinessDataWithReviews:', error);
+    return null;
+  }
+};
+
 // GET /admin/reviews - Get all reviews with business and user information
 export const getAllReviews = async (req, res) => {
   try {
@@ -105,9 +212,12 @@ export const approveReview = async (req, res) => {
     
     await review.save();
     
+    // Get business data with reviews in the same format as getBusinessWithReviews
+    const businessData = await getBusinessDataWithReviews(review.businessId);
+    
     return successResponseHelper(res, {
       message: 'Review approved successfully',
-      data: review
+      data: businessData
     });
   } catch (error) {
     return errorResponseHelper(res, { message: error.message, code: '00500' });
@@ -140,9 +250,12 @@ export const rejectReview = async (req, res) => {
     
     await review.save();
     
+    // Get business data with reviews in the same format as getBusinessWithReviews
+    const businessData = await getBusinessDataWithReviews(review.businessId);
+    
     return successResponseHelper(res, {
       message: 'Review rejected successfully',
-      data: review
+      data: businessData
     });
   } catch (error) {
     return errorResponseHelper(res, { message: error.message, code: '00500' });
@@ -197,9 +310,12 @@ export const grantBusinessAccess = async (req, res) => {
     
     await review.save();
     
+    // Get business data with reviews in the same format as getBusinessWithReviews
+    const businessData = await getBusinessDataWithReviews(review.businessId);
+    
     return successResponseHelper(res, {
       message: 'Business access granted successfully',
-      data: review
+      data: businessData
     });
   } catch (error) {
     return errorResponseHelper(res, { message: error.message, code: '00500' });
@@ -232,9 +348,12 @@ export const revokeBusinessAccess = async (req, res) => {
     
     await review.save();
     
+    // Get business data with reviews in the same format as getBusinessWithReviews
+    const businessData = await getBusinessDataWithReviews(review.businessId);
+    
     return successResponseHelper(res, {
       message: 'Business access revoked successfully',
-      data: review
+      data: businessData
     });
   } catch (error) {
     return errorResponseHelper(res, { message: error.message, code: '00500' });
@@ -858,15 +977,12 @@ export const addComment = async (req, res) => {
     review.updatedAt = new Date();
     await review.save();
     
-    // Populate and return the complete review object
-    await review.populate('businessId', 'businessName contactPerson email phone businessCategory');
-    await review.populate('userId', 'name email profilePhoto');
-    await review.populate('approvedBy', 'name email');
-    await review.populate('businessManagementGrantedBy', 'name email');
+    // Get business data with reviews in the same format as getBusinessWithReviews
+    const businessData = await getBusinessDataWithReviews(review.businessId);
     
     return successResponseHelper(res, {
       message: 'Comment added successfully',
-      data: review
+      data: businessData
     });
   } catch (error) {
     return errorResponseHelper(res, { message: error.message, code: '00500' });
@@ -924,15 +1040,12 @@ export const addReply = async (req, res) => {
     review.updatedAt = new Date();
     await review.save();
     
-    // Populate and return the complete review object
-    await review.populate('businessId', 'businessName contactPerson email phone businessCategory');
-    await review.populate('userId', 'name email profilePhoto');
-    await review.populate('approvedBy', 'name email');
-    await review.populate('businessManagementGrantedBy', 'name email');
+    // Get business data with reviews in the same format as getBusinessWithReviews
+    const businessData = await getBusinessDataWithReviews(review.businessId);
     
     return successResponseHelper(res, {
       message: 'Reply added successfully',
-      data: review
+      data: businessData
     });
   } catch (error) {
     return errorResponseHelper(res, { message: error.message, code: '00500' });
@@ -1228,15 +1341,12 @@ export const addReplyToReview = async (req, res) => {
     review.updatedAt = new Date();
     await review.save();
     
-    // Populate and return the complete review object
-    await review.populate('businessId', 'businessName contactPerson email phone businessCategory');
-    await review.populate('userId', 'name email profilePhoto');
-    await review.populate('approvedBy', 'name email');
-    await review.populate('businessManagementGrantedBy', 'name email');
+    // Get business data with reviews in the same format as getBusinessWithReviews
+    const businessData = await getBusinessDataWithReviews(review.businessId);
     
     return successResponseHelper(res, {
       message: 'Reply added successfully',
-      data: review
+      data: businessData
     });
   } catch (error) {
     return errorResponseHelper(res, { message: error.message, code: '00500' });

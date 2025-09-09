@@ -307,7 +307,12 @@ export const sendBusinessNotifications = {
 
   // Business registration notification for admin
   async businessRegistrationAdminNotification(adminId, businessData) {
-    return await NotificationService.sendToUser(adminId, 'admin', {
+    console.log('🔔 Sending admin notification for business registration:', {
+      adminId,
+      businessName: businessData.businessName
+    });
+    
+    const result = await NotificationService.sendToUser(adminId, 'admin', {
       title: 'New Business Registration',
       body: `New business "${businessData.businessName}" has been registered and requires review.`,
       type: 'system',
@@ -322,6 +327,9 @@ export const sendBusinessNotifications = {
       },
       priority: 'normal'
     });
+    
+    console.log('🔔 Admin notification result:', result);
+    return result;
   },
 
   // Business profile updated
@@ -487,7 +495,13 @@ export const sendEnhancedSubscriptionNotifications = {
 
   // Subscription purchase notification for admin
   async subscriptionPurchaseAdminNotification(adminId, subscriptionData) {
-    return await NotificationService.sendToUser(adminId, 'admin', {
+    console.log('🔔 Sending admin notification for subscription purchase:', {
+      adminId,
+      businessName: subscriptionData.businessName,
+      planName: subscriptionData.planName
+    });
+    
+    const result = await NotificationService.sendToUser(adminId, 'admin', {
       title: 'New Subscription Purchase',
       body: `Business "${subscriptionData.businessName}" purchased ${subscriptionData.planName} subscription.`,
       type: 'subscription',
@@ -503,6 +517,9 @@ export const sendEnhancedSubscriptionNotifications = {
       },
       priority: 'normal'
     });
+    
+    console.log('🔔 Admin subscription notification result:', result);
+    return result;
   },
 
   // Subscription upgraded

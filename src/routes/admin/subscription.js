@@ -11,7 +11,8 @@ router.post('/', authorizedAccessAdmin, validate(subscriptionValidator), subscri
 
 // Get all subscriptions
 router.get('/', authorizedAccessAdmin, subscriptionController.getAllSubscriptions);
-
+// Get boost performance statistics for admin dashboard
+router.get('/boost-performance-stats', authorizedAccessAdmin, subscriptionController.getBoostPerformanceStats);
 // Get all business boost subscriptions
 router.get('/boost', authorizedAccessAdmin, subscriptionController.getAllBusinessBoostSubscriptions);
 
@@ -46,5 +47,7 @@ router.post('/boost/:businessId/use', authorizedAccessAdmin, subscriptionControl
 router.post('/boost/expiry/check', authorizedAccessAdmin, subscriptionController.checkAndUpdateExpiredBoosts);
 router.get('/boost/expiry/stats', authorizedAccessAdmin, subscriptionController.getBoostExpiryStats);
 router.post('/boost/:businessId/expire', authorizedAccessAdmin, subscriptionController.expireBusinessBoost);
+
+
 
 export default router;

@@ -75,9 +75,15 @@ router.get('/:businessId/boost/queue-status', authorizedAccessBusiness, business
 router.post('/boost-queue-management', businessSubscriptionController.handleBoostQueueManagement);
 
 // Get payment history for all businesses owned by the user
-router.get('/payment-history', verifyBusinessOwnerToken, businessSubscriptionController.getPaymentHistory);
+router.get('/payment-history', verifyBusinessOwnerToken, (req, res) => {
+  console.log('Payment history route hit!');
+  businessSubscriptionController.getPaymentHistory(req, res);
+});
 
 // Get payment history for a specific business
 router.get('/:businessId/payment-history', authorizedAccessBusiness, businessSubscriptionController.getBusinessPaymentHistory);
+
+// Get boost performance statistics for dashboard
+router.get('/boost-performance-stats', verifyBusinessOwnerToken, businessSubscriptionController.getBoostPerformanceStats);
 
 export default router;
